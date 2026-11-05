@@ -42,10 +42,11 @@ all views for free:
 ```bash
 cargo run -p scene-cli -- --version
 cargo run -p scene-cli -- check examples/chair.model
-cargo run -p scene-cli -- check examples/classroom.scene
+cargo run -p scene-cli -- eval examples/chair.model
+cargo run -p scene-cli -- eval examples/classroom.scene
 ```
 
-The lexer and parser are implemented. Evaluation and render backends are next.
+The lexer, parser and evaluator are implemented. Render backends are next.
 The normative documents are:
 
 - [`docs/spec.md`](docs/spec.md) — language semantics;

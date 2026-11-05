@@ -18,12 +18,16 @@ version = "0.1.0"
 name = "scene-cli"
 version = "0.1.0"
 dependencies = [
+ "scene-core",
  "scene-syntax",
 ]
 
 [[package]]
 name = "scene-core"
 version = "0.1.0"
+dependencies = [
+ "scene-syntax",
+]
 
 [[package]]
 name = "scene-export-tiled"

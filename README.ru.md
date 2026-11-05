@@ -41,10 +41,11 @@
 ```bash
 cargo run -p scene-cli -- --version
 cargo run -p scene-cli -- check examples/chair.model
-cargo run -p scene-cli -- check examples/classroom.scene
+cargo run -p scene-cli -- eval examples/chair.model
+cargo run -p scene-cli -- eval examples/classroom.scene
 ```
 
-Лексер и парсер уже реализованы. Вычисление и бэкенды — следующий этап.
+Лексер, парсер и вычислитель уже реализованы. Бэкенды рендера — следующий этап.
 Нормативные документы:
 
 - [`docs/spec.md`](docs/spec.md) — семантика языка;

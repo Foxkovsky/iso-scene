@@ -1,5 +1,8 @@
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+use scene_syntax::Diagnostic;
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -28,6 +31,7 @@ fn main() -> ExitCode {
             };
             check(&path)
         }
+        "eval" => eval(args.collect()),
         other => {
             eprintln!("iso-scene: unknown command `{other}`");
             eprintln!("Try `iso-scene --help`.");
@@ -37,12 +41,8 @@ fn main() -> ExitCode {
 }
 
 fn check(path: &str) -> ExitCode {
-    let source = match fs::read_to_string(path) {
-        Ok(source) => source,
-        Err(error) => {
-            eprintln!("iso-scene: cannot read `{path}`: {error}");
-            return ExitCode::from(2);
-        }
+    let Some(source) = read(path) else {
+        return ExitCode::from(2);
     };
     match scene_syntax::parse(&source) {
         Ok(program) => {
@@ -53,15 +53,115 @@ fn check(path: &str) -> ExitCode {
             );
             ExitCode::SUCCESS
         }
-        Err(diagnostic) => {
-            let (line, column) = line_column(&source, diagnostic.span.start);
-            eprintln!(
-                "{path}:{line}:{column}: error[{}]: {}",
-                diagnostic.code, diagnostic.message
-            );
-            ExitCode::from(1)
+        Err(diagnostic) => report(path, &source, &diagnostic),
+    }
+}
+
+fn eval(args: Vec<String>) -> ExitCode {
+    let mut path: Option<String> = None;
+    let mut fuel = scene_core::DEFAULT_FUEL;
+    let mut args = args.into_iter();
+
+    while let Some(argument) = args.next() {
+        if argument == "--fuel" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--fuel` needs a number");
+                return ExitCode::from(2);
+            };
+            match value.parse() {
+                Ok(value) => fuel = value,
+                Err(error) => {
+                    eprintln!("iso-scene: invalid fuel `{value}`: {error}");
+                    return ExitCode::from(2);
+                }
+            }
+        } else if path.is_none() {
+            path = Some(argument);
+        } else {
+            eprintln!("iso-scene: unexpected argument `{argument}`");
+            return ExitCode::from(2);
         }
     }
+
+    let Some(path) = path else {
+        eprintln!("iso-scene: `eval` needs a file");
+        return ExitCode::from(2);
+    };
+    let Some(source) = read(&path) else {
+        return ExitCode::from(2);
+    };
+    let program = match scene_syntax::parse(&source) {
+        Ok(program) => program,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+
+    let file = Path::new(&path);
+    let base = file.parent().unwrap_or_else(|| Path::new("."));
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+
+    match file.extension().and_then(|value| value.to_str()) {
+        Some("model") => match scene_core::compile_model(&program) {
+            Ok(model) => {
+                let parts: usize = model
+                    .objects
+                    .values()
+                    .map(|object| object.parts.len())
+                    .sum();
+                println!(
+                    "{path}: model ok: {} objects, {} parts, bounds {}",
+                    model.objects.len(),
+                    parts,
+                    format_bounds(model.bounds)
+                );
+                ExitCode::SUCCESS
+            }
+            Err(diagnostic) => report(&path, &source, &diagnostic),
+        },
+        Some("scene") => match scene_core::compile_scene_with_fuel(&program, base, &root, fuel) {
+            Ok(scene) => {
+                println!(
+                    "{path}: scene ok: {} instances, materials: {}, render {:?}, scale {}, bounds {}",
+                    scene.instances.len(),
+                    scene.materials.len(),
+                    scene.render,
+                    scene.scale,
+                    format_bounds(scene.bounds)
+                );
+                ExitCode::SUCCESS
+            }
+            Err(diagnostic) => report(&path, &source, &diagnostic),
+        },
+        _ => {
+            eprintln!("iso-scene: `eval` expects a .model or .scene file");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn read(path: &str) -> Option<String> {
+    match fs::read_to_string(path) {
+        Ok(source) => Some(source),
+        Err(error) => {
+            eprintln!("iso-scene: cannot read `{path}`: {error}");
+            None
+        }
+    }
+}
+
+fn report(path: &str, source: &str, diagnostic: &Diagnostic) -> ExitCode {
+    let (line, column) = line_column(source, diagnostic.span.start);
+    eprintln!(
+        "{path}:{line}:{column}: error[{}]: {}",
+        diagnostic.code, diagnostic.message
+    );
+    ExitCode::from(1)
+}
+
+fn format_bounds(bounds: scene_core::Bounds) -> String {
+    format!(
+        "({:.3}, {:.3}, {:.3})..({:.3}, {:.3}, {:.3})",
+        bounds.min[0], bounds.min[1], bounds.min[2], bounds.max[0], bounds.max[1], bounds.max[2]
+    )
 }
 
 /// Convert a byte offset to a 1-based line and column.
@@ -90,13 +190,20 @@ fn print_help() {
     println!();
     println!("Commands:");
     println!("  check <file>    parse a .model or .scene file and report diagnostics");
+    println!("  eval <file>     parse and evaluate to a scene graph");
     println!("  spec-version    print the implemented language version");
     println!();
     println!("Options:");
     println!("  -h, --help      show this help");
     println!("  -V, --version   show the program version");
     println!();
-    println!("Evaluation and render backends are not implemented yet.");
+    println!("Evaluation options:");
+    println!(
+        "  --fuel <n>      evaluation budget for `eval` (default {})",
+        scene_core::DEFAULT_FUEL
+    );
+    println!();
+    println!("Render backends are not implemented yet.");
 }
 
 #[cfg(test)]

@@ -43,8 +43,8 @@ Before claiming success, run `cargo test --workspace` and `cargo clippy
 ## Current state
 
 - Specification: draft v1.
-- Implementation: lexer and parser are complete; evaluator and backends are next.
-- Tests: lexer, parser (31 unit tests), examples-parsing integration test, CLI.
+- Implementation: lexer, parser and evaluator (fuel, includes, scene graph) are complete; backends are next.
+- Tests: lexer, parser, evaluator (19 integration tests), examples, CLI.
 
 ## Adding a feature
 
