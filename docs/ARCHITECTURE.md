@@ -31,6 +31,7 @@ Backends never parse source and never know about `.model` or `.scene`.
 |---|---|
 | `scene-syntax` | tokens, spans, parser, AST, diagnostics |
 | `scene-core` | validation, evaluation, fuel, `SceneGraph` |
+| `scene-render` | shared rasterizer, image, palettes, primitive meshes |
 | `scene-backend-iso` | 2:1 isometric rasterizer |
 | `scene-backend-ortho` | top / front / side rasterizer |
 | `scene-backend-voxel` | occupancy sampling → VOX |

@@ -86,14 +86,19 @@ dependencies = [
 name = "scene-backend-iso"
 version = "0.1.0"
 dependencies = [
- "png",
  "scene-core",
+ "scene-render",
  "scene-syntax",
 ]
 
 [[package]]
 name = "scene-backend-ortho"
 version = "0.1.0"
+dependencies = [
+ "scene-core",
+ "scene-render",
+ "scene-syntax",
+]
 
 [[package]]
 name = "scene-backend-voxel"
@@ -104,7 +109,9 @@ name = "scene-cli"
 version = "0.1.0"
 dependencies = [
  "scene-backend-iso",
+ "scene-backend-ortho",
  "scene-core",
+ "scene-render",
  "scene-syntax",
 ]
 
@@ -118,6 +125,14 @@ dependencies = [
 [[package]]
 name = "scene-export-tiled"
 version = "0.1.0"
+
+[[package]]
+name = "scene-render"
+version = "0.1.0"
+dependencies = [
+ "png",
+ "scene-core",
+]
 
 [[package]]
 name = "scene-server"

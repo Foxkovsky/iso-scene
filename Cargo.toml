@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/scene-syntax",
     "crates/scene-core",
+    "crates/scene-render",
     "crates/scene-backend-iso",
     "crates/scene-backend-ortho",
     "crates/scene-backend-voxel",

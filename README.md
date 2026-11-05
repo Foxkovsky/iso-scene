@@ -45,14 +45,16 @@ cargo run -p scene-cli -- check examples/chair.model
 cargo run -p scene-cli -- eval examples/chair.model
 cargo run -p scene-cli -- eval examples/classroom.scene
 cargo run -p scene-cli -- render examples/classroom.scene -o out/classroom.png
+cargo run -p scene-cli -- render examples/classroom_top.scene -o out/classroom_top.png
 ```
 
-The lexer, parser, evaluator and 2:1 isometric backend are implemented.
-Top/ortho, voxel and Tiled backends are next. The normative documents are:
+The lexer, parser, evaluator, iso and orthographic backends are implemented.
+Voxel and Tiled backends are next. The normative documents are:
 
 - [`docs/spec.md`](docs/spec.md) — language semantics;
 - [`docs/grammar.ebnf`](docs/grammar.ebnf) — grammar;
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — pipeline and crates.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — pipeline and crates;
+- [`docs/projections.md`](docs/projections.md) — projection formulas and their tests.
 
 Examples: [`examples/chair.model`](examples/chair.model),
 [`examples/classroom.scene`](examples/classroom.scene).
@@ -65,6 +67,7 @@ the sources with the commands above.
 ```
 crates/scene-syntax/        lexer, parser, AST, diagnostics
 crates/scene-core/          validation, evaluation, scene graph
+crates/scene-render/       shared rasterizer, image, materials, mesh
 crates/scene-backend-iso/   2:1 isometric renderer
 crates/scene-backend-ortho/ top / front / side renderer
 crates/scene-backend-voxel/ voxelizer

@@ -44,14 +44,16 @@ cargo run -p scene-cli -- check examples/chair.model
 cargo run -p scene-cli -- eval examples/chair.model
 cargo run -p scene-cli -- eval examples/classroom.scene
 cargo run -p scene-cli -- render examples/classroom.scene -o out/classroom.png
+cargo run -p scene-cli -- render examples/classroom_top.scene -o out/classroom_top.png
 ```
 
-Лексер, парсер, вычислитель и изометрический бэкенд 2:1 уже реализованы.
-Top/ortho, воксели и Tiled — следующий этап. Нормативные документы:
+Лексер, парсер, вычислитель, изометрический и ортогональные бэкенды реализованы.
+Воксели и Tiled — следующий этап. Нормативные документы:
 
 - [`docs/spec.md`](docs/spec.md) — семантика языка;
 - [`docs/grammar.ebnf`](docs/grammar.ebnf) — грамматика;
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — устройство и крейты.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — устройство и крейты;
+- [`docs/projections.md`](docs/projections.md) — формулы проекций и их проверки.
 
 Примеры: [`examples/chair.model`](examples/chair.model),
 [`examples/classroom.scene`](examples/classroom.scene).

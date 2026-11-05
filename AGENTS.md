@@ -43,8 +43,8 @@ Before claiming success, run `cargo test --workspace` and `cargo clippy
 ## Current state
 
 - Specification: draft v1.
-- Implementation: lexer, parser, evaluator and iso backend are complete; ortho/voxel/Tiled backends are next.
-- Tests: lexer, parser, evaluator, iso renderer, examples, CLI. Generated PNGs are not committed.
+- Implementation: lexer, parser, evaluator, iso and ortho backends are complete; voxel/Tiled are next.
+- Tests: lexer, parser, evaluator, iso/ortho projections and renders, examples, CLI. Generated PNGs are not committed.
 
 ## Adding a feature
 

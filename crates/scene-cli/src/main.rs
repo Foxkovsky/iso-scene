@@ -185,7 +185,13 @@ fn render_scene(args: Vec<String>) -> ExitCode {
         Ok(scene) => scene,
         Err(diagnostic) => return report(&path, &source, &diagnostic),
     };
-    let image = match scene_backend_iso::render(&scene) {
+    let image = match scene.render {
+        scene_syntax::ast::RenderKind::Iso => scene_backend_iso::render(&scene),
+        scene_syntax::ast::RenderKind::Top
+        | scene_syntax::ast::RenderKind::Front
+        | scene_syntax::ast::RenderKind::Side => scene_backend_ortho::render(&scene),
+    };
+    let image = match image {
         Ok(image) => image,
         Err(diagnostic) => return report(&path, &source, &diagnostic),
     };
@@ -204,8 +210,9 @@ fn render_scene(args: Vec<String>) -> ExitCode {
             }
         }
     }
-    if let Err(diagnostic) = scene_backend_iso::write_png(&image, &output) {
-        return report(&path, &source, &diagnostic);
+    if let Err(message) = scene_render::write_png(&image, &output) {
+        eprintln!("iso-scene: {message}");
+        return ExitCode::from(2);
     }
     println!(
         "wrote {} ({}x{}, {} instances)",
@@ -270,7 +277,7 @@ fn print_help() {
     println!("Commands:");
     println!("  check <file>    parse a .model or .scene file and report diagnostics");
     println!("  eval <file>     parse and evaluate to a scene graph");
-    println!("  render <file>   render a .scene with the iso backend");
+    println!("  render <file>   render a .scene with the iso or ortho backend");
     println!("  spec-version    print the implemented language version");
     println!();
     println!("Options:");
