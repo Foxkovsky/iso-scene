@@ -215,10 +215,18 @@ fn include_resolves_relative_model() {
 
 #[test]
 fn include_cannot_escape_the_root() {
-    assert_eq!(
-        compile_error("version 1; include \"/etc/passwd\"; render iso; scale 8;"),
-        "E0502"
-    );
+    let temp = TempDir::new();
+    let root = temp.path().join("root");
+    fs::create_dir_all(&root).expect("create root");
+    fs::write(
+        temp.path().join("outside.model"),
+        "version 1; object outside (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; }",
+    )
+    .expect("write outside model");
+    let source = "version 1; include \"../outside.model\"; render iso; scale 8;";
+    let program = parse_ok(source);
+    let error = compile_scene(&program, &root, &root).expect_err("path must escape");
+    assert_eq!(error.code, "E0502");
 }
 
 #[test]
