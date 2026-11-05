@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use scene_core::{compile_model, compile_scene, compile_scene_with_fuel};
@@ -241,13 +242,18 @@ fn include_must_be_a_model() {
 
 struct TempDir(PathBuf);
 
+static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
 impl TempDir {
     fn new() -> Self {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        let path =
-            std::env::temp_dir().join(format!("iso-scene-test-{}-{nanos}", std::process::id()));
+        let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "iso-scene-test-{}-{nanos}-{sequence}",
+            std::process::id()
+        ));
         fs::create_dir_all(&path).expect("create temp dir");
         Self(path)
     }
