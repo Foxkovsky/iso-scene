@@ -43,7 +43,8 @@ cargo run -p scene-cli -- --version
 cargo run -p scene-cli -- --help
 ```
 
-Парсер и бэкенды ещё не реализованы. Нормативные документы:
+Лексер и парсер уже реализованы. Вычисление и бэкенды — следующий этап.
+Нормативные документы:
 
 - [`docs/spec.md`](docs/spec.md) — семантика языка;
 - [`docs/grammar.ebnf`](docs/grammar.ebnf) — грамматика;

@@ -44,7 +44,8 @@ cargo run -p scene-cli -- --version
 cargo run -p scene-cli -- --help
 ```
 
-The parser and backends are not implemented yet. The normative documents are:
+The lexer and parser are implemented. Evaluation and render backends are next.
+The normative documents are:
 
 - [`docs/spec.md`](docs/spec.md) — language semantics;
 - [`docs/grammar.ebnf`](docs/grammar.ebnf) — grammar;

@@ -3,9 +3,12 @@
 //! The normative grammar lives in `docs/grammar.ebnf`. This crate must never
 //! panic on malformed input: every failure is a [`Diagnostic`].
 
+pub mod ast;
 pub mod lexer;
+pub mod parser;
 
 pub use lexer::{Token, TokenKind, lex};
+pub use parser::parse;
 
 /// Version of the language specification implemented by this crate.
 pub const SPEC_VERSION: u32 = 1;

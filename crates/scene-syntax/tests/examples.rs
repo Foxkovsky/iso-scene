@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 #[test]
-fn every_example_lexes() {
+fn every_example_parses() {
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
     let mut checked = 0;
     for entry in fs::read_dir(&examples).expect("examples directory") {
@@ -12,7 +12,7 @@ fn every_example_lexes() {
             continue;
         }
         let source = fs::read_to_string(&path).expect("read example");
-        scene_syntax::lex(&source).unwrap_or_else(|error| {
+        scene_syntax::parse(&source).unwrap_or_else(|error| {
             panic!(
                 "{}: {} {} at {}..{}",
                 path.display(),

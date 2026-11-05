@@ -78,6 +78,10 @@ pub enum TokenKind {
     Star,
     Slash,
     Percent,
+    PlusAssign,
+    MinusAssign,
+    StarAssign,
+    SlashAssign,
     EqEq,
     NotEq,
     Lt,
@@ -189,10 +193,26 @@ impl<'a> Lexer<'a> {
             b')' => self.single(TokenKind::RParen),
             b';' => self.single(TokenKind::Semicolon),
             b',' => self.single(TokenKind::Comma),
+            b'+' if self.peek_at(1) == Some(b'=') => {
+                self.pos += 2;
+                TokenKind::PlusAssign
+            }
             b'+' => self.single(TokenKind::Plus),
+            b'-' if self.peek_at(1) == Some(b'=') => {
+                self.pos += 2;
+                TokenKind::MinusAssign
+            }
             b'-' => self.single(TokenKind::Minus),
+            b'*' if self.peek_at(1) == Some(b'=') => {
+                self.pos += 2;
+                TokenKind::StarAssign
+            }
             b'*' => self.single(TokenKind::Star),
             b'%' => self.single(TokenKind::Percent),
+            b'/' if self.peek_at(1) == Some(b'=') => {
+                self.pos += 2;
+                TokenKind::SlashAssign
+            }
             b'/' => self.single(TokenKind::Slash),
             b'=' if self.peek_at(1) == Some(b'=') => {
                 self.pos += 2;
@@ -501,6 +521,31 @@ mod tests {
                 TokenKind::Background,
                 TokenKind::Color([0x1a, 0x1C, 0x22]),
                 TokenKind::Semicolon
+            ]
+        );
+    }
+
+    #[test]
+    fn compound_assignment_is_one_token() {
+        assert_eq!(
+            kinds("a += 1; b -= 2; c *= 3; d /= 4;"),
+            vec![
+                TokenKind::Ident("a".to_owned()),
+                TokenKind::PlusAssign,
+                TokenKind::Number(1.0),
+                TokenKind::Semicolon,
+                TokenKind::Ident("b".to_owned()),
+                TokenKind::MinusAssign,
+                TokenKind::Number(2.0),
+                TokenKind::Semicolon,
+                TokenKind::Ident("c".to_owned()),
+                TokenKind::StarAssign,
+                TokenKind::Number(3.0),
+                TokenKind::Semicolon,
+                TokenKind::Ident("d".to_owned()),
+                TokenKind::SlashAssign,
+                TokenKind::Number(4.0),
+                TokenKind::Semicolon,
             ]
         );
     }
