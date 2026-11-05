@@ -101,7 +101,7 @@ fn eval(args: Vec<String>) -> ExitCode {
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
 
     match file.extension().and_then(|value| value.to_str()) {
-        Some("model") => match scene_core::compile_model(&program) {
+        Some("model") => match scene_core::compile_model(&program, base) {
             Ok(model) => {
                 let parts: usize = model
                     .objects

@@ -10,6 +10,7 @@
     clippy::cast_precision_loss
 )]
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use scene_core::{Instance, SceneGraph, rotate_xy};
@@ -56,7 +57,8 @@ pub fn render(scene: &SceneGraph) -> Result<IsoImage, Diagnostic> {
         ));
     }
 
-    let faces = collect_faces(scene)?;
+    let palettes = load_palettes(scene)?;
+    let faces = collect_faces(scene, &palettes)?;
     let scale = f64::from(scene.scale);
 
     let mut min_x = f64::INFINITY;
@@ -179,11 +181,14 @@ struct Face {
     outline: bool,
 }
 
-fn collect_faces(scene: &SceneGraph) -> Result<Vec<Face>, Diagnostic> {
+fn collect_faces(
+    scene: &SceneGraph,
+    palettes: &BTreeMap<String, Palette>,
+) -> Result<Vec<Face>, Diagnostic> {
     let mut faces = Vec::new();
     for instance in &scene.instances {
         for part in &instance.object.parts {
-            let palette = palette_for(part.material.as_deref(), scene)?;
+            let palette = palette_for(part.material.as_deref(), scene, palettes)?;
             for MeshFace {
                 points,
                 normal,
@@ -231,16 +236,30 @@ fn world_point(point: [f64; 3], instance: &Instance) -> [f64; 3] {
     ]
 }
 
-fn palette_for(name: Option<&str>, scene: &SceneGraph) -> Result<Palette, Diagnostic> {
+fn load_palettes(scene: &SceneGraph) -> Result<BTreeMap<String, Palette>, Diagnostic> {
+    let mut palettes = BTreeMap::new();
+    for (name, path) in &scene.materials {
+        let palette = scene_render::material::load(path)
+            .map_err(|message| error("E0601", format!("material `{name}`: {message}")))?;
+        palettes.insert(name.clone(), palette);
+    }
+    Ok(palettes)
+}
+
+fn palette_for(
+    name: Option<&str>,
+    scene: &SceneGraph,
+    palettes: &BTreeMap<String, Palette>,
+) -> Result<Palette, Diagnostic> {
     let name = name.unwrap_or("wood");
     if let Some(palette) = builtin(name) {
         return Ok(palette);
     }
-    if let Some(path) = scene.materials.get(name) {
-        return Err(error(
-            "E0601",
-            format!("material files are not loaded yet: `{name}` ({path})"),
-        ));
+    if let Some(palette) = palettes.get(name) {
+        return Ok(*palette);
+    }
+    if scene.materials.contains_key(name) {
+        return Err(error("E0601", format!("material `{name}` was not loaded")));
     }
     Err(error("E0605", format!("unknown material `{name}`")))
 }

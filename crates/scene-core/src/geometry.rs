@@ -1,6 +1,7 @@
 //! Geometry primitives, compiled objects and the scene graph.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use scene_syntax::ast::{Axis, Background, RenderKind};
@@ -219,7 +220,7 @@ pub struct SceneGraph {
     pub sun: [f64; 2],
     pub ambient: f64,
     pub background: Background,
-    pub materials: BTreeMap<String, String>,
+    pub materials: BTreeMap<String, PathBuf>,
     pub instances: Vec<Instance>,
     pub bounds: Bounds,
 }
@@ -227,7 +228,7 @@ pub struct SceneGraph {
 /// A compiled model library, used for model previews.
 #[derive(Clone, Debug)]
 pub struct CompiledModel {
-    pub materials: BTreeMap<String, String>,
+    pub materials: BTreeMap<String, PathBuf>,
     pub objects: BTreeMap<String, Arc<CompiledObject>>,
     pub bounds: Bounds,
 }

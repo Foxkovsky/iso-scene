@@ -1,5 +1,8 @@
 version 1;
 
+material oak = "materials/oak.toml";
+material steel = "materials/steel.toml";
+
 // Стул: план 1.8 × 1.8 блока, высота 3.4 блока.
 // Все размеры — в блоках. 1 блок = клетка карты.
 
@@ -9,13 +12,13 @@ object chair (1.8, 1.8) {
     let seat_h = 0.16;
 
     // Две передние ножки, затем зеркало по Y даёт задние.
-    box at (0.08, 0.08, 0) size (leg, leg, leg_h) material metal;
-    box at (1.56, 0.08, 0) size (leg, leg, leg_h) material metal;
+    box at (0.08, 0.08, 0) size (leg, leg, leg_h) material steel;
+    box at (1.56, 0.08, 0) size (leg, leg, leg_h) material steel;
     mirror y;
 
     // Сиденье.
-    box at (0, 0, leg_h) size (w, d, seat_h) material wood;
+    box at (0, 0, leg_h) size (w, d, seat_h) material oak;
 
     // Спинка у дальнего края.
-    box at (0.24, 0, leg_h + seat_h) size (w - 0.48, 0.16, 1.6) material wood;
+    box at (0.24, 0, leg_h + seat_h) size (w - 0.48, 0.16, 1.6) material oak;
 }

@@ -32,7 +32,8 @@ fn compile_error(source: &str) -> String {
 fn chair_model_compiles() {
     let source = fs::read_to_string(examples().join("chair.model")).expect("read chair");
     let program = parse_ok(&source);
-    let model = compile_model(&program).expect("compile chair");
+    let model = compile_model(&program, &examples()).expect("compile chair");
+    assert_eq!(model.materials.len(), 2, "oak and steel");
     let chair = model.objects.get("chair").expect("chair object");
     assert_eq!(chair.width, 1.8);
     assert_eq!(chair.parts.len(), 6, "four legs, seat and backrest");
@@ -52,6 +53,11 @@ fn classroom_scene_compiles_with_includes_and_loops() {
     assert_eq!(scene.render, scene_syntax::ast::RenderKind::Iso);
     assert_eq!(scene.scale, 32);
     assert_eq!(scene.canvas, Some([34.0, 20.0, 4.0]));
+    assert_eq!(
+        scene.materials.len(),
+        2,
+        "oak and steel from included models"
+    );
     assert!(scene.bounds.size()[0] > 30.0);
     assert!(scene.bounds.size()[2] > 3.0);
 }
@@ -129,7 +135,9 @@ fn unknown_material_is_reported() {
     let program =
         parse_ok("version 1; object a (1, 1) { box at (0, 0, 0) size (1, 1, 1) material gold; }");
     assert_eq!(
-        compile_model(&program).expect_err("unknown material").code,
+        compile_model(&program, Path::new("."))
+            .expect_err("unknown material")
+            .code,
         "E0305"
     );
 }
@@ -149,7 +157,9 @@ fn zero_size_is_reported() {
     let program =
         parse_ok("version 1; object a (1, 1) { box at (0, 0, 0) size (0, 1, 1) material wood; }");
     assert_eq!(
-        compile_model(&program).expect_err("zero size").code,
+        compile_model(&program, Path::new("."))
+            .expect_err("zero size")
+            .code,
         "E0307"
     );
 }

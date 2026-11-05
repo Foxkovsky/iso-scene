@@ -1,5 +1,8 @@
 version 1;
 
+material oak = "materials/oak.toml";
+material steel = "materials/steel.toml";
+
 // Стол: 5 × 2 блока, высота 1.8 блока.
 // Ножки описаны одной и двумя зеркалами; столешница — после mirror,
 // чтобы она не удвоилась.
@@ -8,10 +11,10 @@ object desk (5, 2) {
     let leg = 0.16;
     let h = 2.8;
 
-    box at (0.16, 0.16, 0) size (leg, leg, h) material metal;
+    box at (0.16, 0.16, 0) size (leg, leg, h) material steel;
     mirror x;
     mirror y;
 
-    box at (0, 0, h) size (w, d, 0.16) material wood;
-    box at (0.4, 0, 1.2) size (w - 0.8, 0.16, h - 1.2) material wood;
+    box at (0, 0, h) size (w, d, 0.16) material oak;
+    box at (0.4, 0, 1.2) size (w - 0.8, 0.16, h - 1.2) material oak;
 }

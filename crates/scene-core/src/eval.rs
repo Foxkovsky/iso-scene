@@ -29,8 +29,8 @@ const BUILTIN_MATERIALS: [&str; 7] = ["wood", "metal", "light", "glass", "dark",
 /// # Errors
 ///
 /// Returns the first semantic [`Diagnostic`].
-pub fn compile_model(program: &Program) -> Result<CompiledModel, Diagnostic> {
-    Evaluator::new(DEFAULT_FUEL).model(program)
+pub fn compile_model(program: &Program, base_dir: &Path) -> Result<CompiledModel, Diagnostic> {
+    Evaluator::new(DEFAULT_FUEL).model(program, base_dir)
 }
 
 /// Compile a `.scene` program.
@@ -158,7 +158,7 @@ struct Evaluator {
     shapes: usize,
     instances: usize,
     objects: BTreeMap<String, Arc<CompiledObject>>,
-    materials: BTreeMap<String, String>,
+    materials: BTreeMap<String, PathBuf>,
     include_stack: Vec<PathBuf>,
     included_bytes: usize,
 }
@@ -188,10 +188,10 @@ impl Evaluator {
         Ok(())
     }
 
-    fn model(&mut self, program: &Program) -> Result<CompiledModel, Diagnostic> {
+    fn model(&mut self, program: &Program, base_dir: &Path) -> Result<CompiledModel, Diagnostic> {
         for item in &program.items {
             if let ItemKind::Material(material) = &item.kind {
-                self.add_material(material, item.span)?;
+                self.add_material(material, item.span, base_dir)?;
             }
         }
         for item in &program.items {
@@ -229,7 +229,7 @@ impl Evaluator {
     ) -> Result<SceneGraph, Diagnostic> {
         for item in &program.items {
             if let ItemKind::Material(material) = &item.kind {
-                self.add_material(material, item.span)?;
+                self.add_material(material, item.span, base_dir)?;
             }
         }
 
@@ -338,11 +338,16 @@ impl Evaluator {
         Ok(value)
     }
 
-    fn add_material(&mut self, material: &Material, span: Span) -> Result<(), Diagnostic> {
-        if is_builtin(&material.name) || self.materials.contains_key(&material.name) {
+    fn add_material(
+        &mut self,
+        material: &Material,
+        span: Span,
+        base_dir: &Path,
+    ) -> Result<(), Diagnostic> {
+        if is_builtin(&material.name) {
             return Err(diag(
                 "E0303",
-                format!("material `{}` is already defined", material.name),
+                format!("material `{}` collides with a built-in name", material.name),
                 span,
             ));
         }
@@ -356,8 +361,18 @@ impl Evaluator {
                 span,
             ));
         }
-        self.materials
-            .insert(material.name.clone(), material.path.clone());
+        let path = base_dir.join(&material.path);
+        if let Some(existing) = self.materials.get(&material.name) {
+            if existing == &path {
+                return Ok(());
+            }
+            return Err(diag(
+                "E0303",
+                format!("material `{}` is already defined", material.name),
+                span,
+            ));
+        }
+        self.materials.insert(material.name.clone(), path);
         Ok(())
     }
 
@@ -1111,16 +1126,25 @@ impl Evaluator {
         })?;
         let program = parse(&source)?;
 
+        let model_dir = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
         self.include_stack.push(path);
-        let result = self.included_model(&program, span);
+        let result = self.included_model(&program, span, &model_dir);
         self.include_stack.pop();
         result
     }
 
-    fn included_model(&mut self, program: &Program, span: Span) -> Result<(), Diagnostic> {
+    fn included_model(
+        &mut self,
+        program: &Program,
+        span: Span,
+        base_dir: &Path,
+    ) -> Result<(), Diagnostic> {
         for item in &program.items {
             if let ItemKind::Material(material) = &item.kind {
-                self.add_material(material, item.span)?;
+                self.add_material(material, item.span, base_dir)?;
             }
         }
         for item in &program.items {

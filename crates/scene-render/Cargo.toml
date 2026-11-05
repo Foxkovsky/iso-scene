@@ -12,3 +12,4 @@ workspace = true
 [dependencies]
 png = "0.17"
 scene-core = { path = "../scene-core" }
+toml = "0.8"

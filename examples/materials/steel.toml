@@ -1,0 +1,6 @@
+name = "Окрашенная сталь"
+color = "#626A73"
+roughness = 0.38
+metallic = 0.0
+specular = 0.65
+outline = "#22272E"

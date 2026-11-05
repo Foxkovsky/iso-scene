@@ -5,9 +5,12 @@ on. It will grow with the implementation.
 
 ## Built-in materials
 
-v0.1 uses only these palettes. TOML material files are parsed by the language
-but loading them into the renderer is the next step; using an alias currently
-reports `E0601`.
+Built-in names are always available. A scene or model may declare a TOML
+material alias; the renderer loads the file once per render. Flat tones are
+derived from `color`: `top = color`, `right = 0.78 * color`,
+`left = 0.59 * color`; `outline` is used as-is. `roughness`, `metallic` and
+`specular` are validated but not used by flat shading yet, and texture blocks
+are accepted but ignored.
 
 Used when a shape omits `material`. Values are RGB, one tone per visible face
 plus an outline. A project should normally declare `.toml` materials instead.

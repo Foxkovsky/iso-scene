@@ -103,7 +103,7 @@ fn background_colour_fills_empty_pixels() {
 }
 
 #[test]
-fn material_files_are_reported_as_not_loaded() {
+fn missing_material_file_is_reported() {
     let error = render_source(
         r#"
         version 1;
@@ -144,4 +144,40 @@ fn png_is_written_with_a_signature() {
     let bytes = fs::read(&path).expect("read png");
     assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
     fs::remove_file(&path).expect("remove png");
+}
+
+#[test]
+fn toml_material_colours_are_loaded() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let root = std::env::temp_dir().join(format!(
+        "iso-scene-material-render-{}-{nanos}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).expect("create temp dir");
+    fs::write(
+        root.join("paint.toml"),
+        "name = \"Paint\"\ncolor = \"#3366CC\"\noutline = \"#101820\"\n",
+    )
+    .expect("write material");
+    let source = r#"
+        version 1;
+        material paint = "paint.toml";
+        object box1 (1, 1) { box at (0, 0, 0) size (1, 1, 1) material paint; }
+        render iso;
+        scale 32;
+        place box1 at (0, 0, 0);
+    "#;
+    let program = parse(source).expect("parse");
+    let scene = compile_scene(&program, &root, &root).expect("compile");
+    let image = render(&scene).expect("render");
+    assert!(
+        image
+            .rgba
+            .chunks_exact(4)
+            .any(|pixel| pixel[..3] == [0x33, 0x66, 0xCC]),
+        "the custom top colour must appear"
+    );
+    let _ = fs::remove_dir_all(root);
 }
