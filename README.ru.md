@@ -40,7 +40,8 @@
 
 ```bash
 cargo run -p scene-cli -- --version
-cargo run -p scene-cli -- --help
+cargo run -p scene-cli -- check examples/chair.model
+cargo run -p scene-cli -- check examples/classroom.scene
 ```
 
 Лексер и парсер уже реализованы. Вычисление и бэкенды — следующий этап.

@@ -41,7 +41,8 @@ all views for free:
 
 ```bash
 cargo run -p scene-cli -- --version
-cargo run -p scene-cli -- --help
+cargo run -p scene-cli -- check examples/chair.model
+cargo run -p scene-cli -- check examples/classroom.scene
 ```
 
 The lexer and parser are implemented. Evaluation and render backends are next.
