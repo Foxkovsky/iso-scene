@@ -6,12 +6,12 @@ version 1;
 
 object desk (5, 2) {
     let leg = 0.16;
-    let h = 1.64;
+    let h = 2.8;
 
     box at (0.16, 0.16, 0) size (leg, leg, h) material metal;
     mirror x;
     mirror y;
 
     box at (0, 0, h) size (w, d, 0.16) material wood;
-    box at (0.4, 0, h + 0.16) size (w - 0.8, 0.16, 0.5) material wood;
+    box at (0.4, 0, 1.2) size (w - 0.8, 0.16, h - 1.2) material wood;
 }

@@ -32,6 +32,7 @@ fn main() -> ExitCode {
             check(&path)
         }
         "eval" => eval(args.collect()),
+        "render" => render_scene(args.collect()),
         other => {
             eprintln!("iso-scene: unknown command `{other}`");
             eprintln!("Try `iso-scene --help`.");
@@ -138,6 +139,84 @@ fn eval(args: Vec<String>) -> ExitCode {
     }
 }
 
+fn render_scene(args: Vec<String>) -> ExitCode {
+    let mut path: Option<String> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut args = args.into_iter();
+
+    while let Some(argument) = args.next() {
+        if argument == "--out" || argument == "-o" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--out` needs a path");
+                return ExitCode::from(2);
+            };
+            output = Some(PathBuf::from(value));
+        } else if path.is_none() {
+            path = Some(argument);
+        } else {
+            eprintln!("iso-scene: unexpected argument `{argument}`");
+            return ExitCode::from(2);
+        }
+    }
+
+    let Some(path) = path else {
+        eprintln!("iso-scene: `render` needs a .scene file");
+        return ExitCode::from(2);
+    };
+    let Some(source) = read(&path) else {
+        return ExitCode::from(2);
+    };
+    if Path::new(&path)
+        .extension()
+        .and_then(|value| value.to_str())
+        != Some("scene")
+    {
+        eprintln!("iso-scene: `render` expects a .scene file");
+        return ExitCode::from(2);
+    }
+    let program = match scene_syntax::parse(&source) {
+        Ok(program) => program,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    let file = Path::new(&path);
+    let base = file.parent().unwrap_or_else(|| Path::new("."));
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let scene = match scene_core::compile_scene(&program, base, &root) {
+        Ok(scene) => scene,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    let image = match scene_backend_iso::render(&scene) {
+        Ok(image) => image,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    let output = output.unwrap_or_else(|| {
+        let stem = file
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("scene");
+        PathBuf::from("out").join(format!("{stem}.png"))
+    });
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                eprintln!("iso-scene: cannot create `{}`: {error}", parent.display());
+                return ExitCode::from(2);
+            }
+        }
+    }
+    if let Err(diagnostic) = scene_backend_iso::write_png(&image, &output) {
+        return report(&path, &source, &diagnostic);
+    }
+    println!(
+        "wrote {} ({}x{}, {} instances)",
+        output.display(),
+        image.width,
+        image.height,
+        scene.instances.len()
+    );
+    ExitCode::SUCCESS
+}
+
 fn read(path: &str) -> Option<String> {
     match fs::read_to_string(path) {
         Ok(source) => Some(source),
@@ -191,6 +270,7 @@ fn print_help() {
     println!("Commands:");
     println!("  check <file>    parse a .model or .scene file and report diagnostics");
     println!("  eval <file>     parse and evaluate to a scene graph");
+    println!("  render <file>   render a .scene with the iso backend");
     println!("  spec-version    print the implemented language version");
     println!();
     println!("Options:");

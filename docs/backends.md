@@ -5,6 +5,10 @@ on. It will grow with the implementation.
 
 ## Built-in materials
 
+v0.1 uses only these palettes. TOML material files are parsed by the language
+but loading them into the renderer is the next step; using an alias currently
+reports `E0601`.
+
 Used when a shape omits `material`. Values are RGB, one tone per visible face
 plus an outline. A project should normally declare `.toml` materials instead.
 

@@ -17,10 +17,17 @@ __pycache__/
 .venv/
 node_modules/
 
-# Generated artifacts
-*.vsix
-/dist/
+# Generated artifacts and binaries (rebuild them from source)
 /out/
+/dist/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.vox
+*.tmx
+*.tmj
+*.vsix
 /fuzz/target/
 /fuzz/artifacts/
 /fuzz/coverage/

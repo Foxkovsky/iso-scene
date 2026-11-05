@@ -14,5 +14,6 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+scene-backend-iso = { path = "../scene-backend-iso" }
 scene-core = { path = "../scene-core" }
 scene-syntax = { path = "../scene-syntax" }

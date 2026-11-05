@@ -44,10 +44,11 @@ cargo run -p scene-cli -- --version
 cargo run -p scene-cli -- check examples/chair.model
 cargo run -p scene-cli -- eval examples/chair.model
 cargo run -p scene-cli -- eval examples/classroom.scene
+cargo run -p scene-cli -- render examples/classroom.scene -o out/classroom.png
 ```
 
-The lexer, parser and evaluator are implemented. Render backends are next.
-The normative documents are:
+The lexer, parser, evaluator and 2:1 isometric backend are implemented.
+Top/ortho, voxel and Tiled backends are next. The normative documents are:
 
 - [`docs/spec.md`](docs/spec.md) — language semantics;
 - [`docs/grammar.ebnf`](docs/grammar.ebnf) — grammar;
@@ -55,6 +56,9 @@ The normative documents are:
 
 Examples: [`examples/chair.model`](examples/chair.model),
 [`examples/classroom.scene`](examples/classroom.scene).
+
+Render outputs and other generated binaries are gitignored; rebuild them from
+the sources with the commands above.
 
 ## Repository layout
 

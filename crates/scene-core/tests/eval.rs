@@ -50,7 +50,7 @@ fn classroom_scene_compiles_with_includes_and_loops() {
     assert_eq!(scene.instances[1].object.name, "chair");
     assert_eq!(scene.render, scene_syntax::ast::RenderKind::Iso);
     assert_eq!(scene.scale, 32);
-    assert_eq!(scene.canvas, Some([42.0, 32.0, 10.0]));
+    assert_eq!(scene.canvas, Some([34.0, 20.0, 4.0]));
     assert!(scene.bounds.size()[0] > 30.0);
     assert!(scene.bounds.size()[2] > 3.0);
 }

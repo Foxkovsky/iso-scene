@@ -5,7 +5,7 @@ include "desk.model";
 
 render iso;
 scale 32;
-canvas (42, 32, 10);
+canvas (34, 20, 4);
 sun (135, 45);
 ambient 0.35;
 background #1a1c22;

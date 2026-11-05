@@ -43,10 +43,11 @@ cargo run -p scene-cli -- --version
 cargo run -p scene-cli -- check examples/chair.model
 cargo run -p scene-cli -- eval examples/chair.model
 cargo run -p scene-cli -- eval examples/classroom.scene
+cargo run -p scene-cli -- render examples/classroom.scene -o out/classroom.png
 ```
 
-Лексер, парсер и вычислитель уже реализованы. Бэкенды рендера — следующий этап.
-Нормативные документы:
+Лексер, парсер, вычислитель и изометрический бэкенд 2:1 уже реализованы.
+Top/ortho, воксели и Tiled — следующий этап. Нормативные документы:
 
 - [`docs/spec.md`](docs/spec.md) — семантика языка;
 - [`docs/grammar.ebnf`](docs/grammar.ebnf) — грамматика;
@@ -54,6 +55,9 @@ cargo run -p scene-cli -- eval examples/classroom.scene
 
 Примеры: [`examples/chair.model`](examples/chair.model),
 [`examples/classroom.scene`](examples/classroom.scene).
+
+Результаты рендера и другие сгенерированные бинарники не коммитятся; их
+можно пересобрать командами выше.
 
 ## Лицензия
 
