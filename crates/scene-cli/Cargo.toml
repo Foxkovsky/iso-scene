@@ -1,0 +1,17 @@
+[package]
+name = "scene-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "iso-scene"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+scene-syntax = { path = "../scene-syntax" }

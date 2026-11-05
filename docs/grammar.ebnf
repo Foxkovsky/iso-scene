@@ -1,0 +1,134 @@
+(*
+  iso-scene language, version 1 — normative grammar.
+
+  Terminals are quoted. Whitespace and comments are insignificant and are
+  handled by the lexer. `;` terminates simple statements; blocks use braces.
+
+  The grammar is shared by .model and .scene files. The file role restricts
+  which top-level items are allowed; see docs/spec.md, section 2.
+*)
+
+file            = version, { item } ;
+
+version         = "version", integer, ";" ;
+
+item            = include
+                | material
+                | object
+                | render
+                | scale
+                | canvas
+                | sun
+                | ambient
+                | background
+                | statement ;
+
+(* ---------------------------------------------------------------- directives *)
+
+include         = "include", string, ";" ;
+material        = "material", ident, "=", string, ";" ;
+render          = "render", ( "iso" | "top" | "front" | "side" ), ";" ;
+scale           = "scale", integer, ";" ;
+canvas          = "canvas", tuple3, ";" ;
+sun             = "sun", pair, ";" ;
+ambient         = "ambient", expr, ";" ;
+background      = "background", ( color | "transparent" ), ";" ;
+
+(* ---------------------------------------------------------------- objects *)
+
+object          = "object", ident, "(", expr, ",", expr, ")", block ;
+
+(* ---------------------------------------------------------------- statements *)
+
+statement       = let
+                | var
+                | assign
+                | for_stmt
+                | if_stmt
+                | place
+                | shape
+                | mirror ;
+
+block           = "{", { statement }, "}" ;
+
+let             = "let", ident, "=", expr, ";" ;
+var             = "var", ident, "=", expr, ";" ;
+assign          = ident, ( "=" | "+=" | "-=" | "*=" | "/=" ), expr, ";" ;
+
+for_stmt        = "for", ident, "in", expr, "..", expr, block ;
+
+if_stmt         = "if", "(", expr, ")", block,
+                  [ "else", ( if_stmt | block ) ] ;
+
+place           = "place", ident, "at", tuple3, [ "rot", expr ], ";" ;
+
+mirror          = "mirror", ( "x" | "y" ), ";" ;
+
+(* ---------------------------------------------------------------- shapes *)
+
+shape           = shape_kind, "at", tuple3, shape_args,
+                  [ "material", ident ], ";" ;
+
+shape_kind      = "box" | "cyl" | "sphere" | "slantbox" | "slantcyl" | "ramp" ;
+
+shape_args      = "size", tuple3                          (* box        *)
+                | "radius", expr, "height", expr          (* cyl        *)
+                | "radius", expr                          (* sphere     *)
+                | "size", tuple3, "offset", pair          (* slantbox   *)
+                | "radius", expr, "height", expr,
+                  "offset", pair                          (* slantcyl   *)
+                | "size", pair, "rise", pair ;            (* ramp       *)
+
+(* ---------------------------------------------------------------- expressions *)
+
+expr            = logic_or ;
+
+logic_or        = logic_and, { "||", logic_and } ;
+logic_and       = comparison, { "&&", comparison } ;
+comparison      = additive, [ ( "==" | "!=" | "<" | "<=" | ">" | ">=" ),
+                              additive ] ;
+additive        = multiplicative, { ( "+" | "-" ), multiplicative } ;
+multiplicative  = unary, { ( "*" | "/" | "%" ), unary } ;
+unary           = [ "-" | "!" ], primary ;
+
+primary         = number
+                | "true"
+                | "false"
+                | ident
+                | "(", expr, ")" ;
+
+(* ---------------------------------------------------------------- tokens *)
+
+tuple3          = "(", expr, ",", expr, ",", expr, ")" ;
+pair            = "(", expr, ",", expr, ")" ;
+
+ident           = letter, { letter | digit | "_" } ;
+integer         = digit, { digit } ;
+number          = integer, [ ".", integer ] ;
+string          = '"', { string_char }, '"' ;
+string_char     = escape | ? any character except '"' and '\' ? ;
+escape          = "\\", ( "\\" | '"' | "n" | "t" ) ;
+color           = "#", hex, hex, hex, hex, hex, hex ;
+hex             = digit | "A" | "B" | "C" | "D" | "E" | "F"
+                | "a" | "b" | "c" | "d" | "e" | "f" ;
+letter          = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I"
+                | "J" | "K" | "L" | "M" | "N" | "O" | "P" | "Q" | "R"
+                | "S" | "T" | "U" | "V" | "W" | "X" | "Y" | "Z"
+                | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h" | "i"
+                | "j" | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r"
+                | "s" | "t" | "u" | "v" | "w" | "x" | "y" | "z" | "_" ;
+digit           = "0" | "1" | "2" | "3" | "4"
+                | "5" | "6" | "7" | "8" | "9" ;
+
+(*
+  Semantic restrictions that are not expressible in EBNF:
+
+  * `version` must be the first non-comment item.
+  * `place` is allowed only in .scene files.
+  * `include` is allowed only in .scene files; included files are .model.
+  * `render` and `scale` are required in a .scene, exactly once.
+  * `shape` and `mirror` are allowed only inside an object body.
+  * `object` bodies may not contain `place`, `include`, `render` or `scale`.
+  * Loop bounds are evaluated once and must be integral.
+  * `rot` must normalize to 0, 90, 180 or 270.
+*)

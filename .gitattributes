@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.aseprite binary
+*.vsix binary
+*.vox binary
+
+Cargo.lock text

@@ -1,0 +1,17 @@
+version 1;
+
+// Стол: 5 × 2 блока, высота 1.8 блока.
+// Ножки описаны одной и двумя зеркалами; столешница — после mirror,
+// чтобы она не удвоилась.
+
+object desk (5, 2) {
+    let leg = 0.16;
+    let h = 1.64;
+
+    box at (0.16, 0.16, 0) size (leg, leg, h) material metal;
+    mirror x;
+    mirror y;
+
+    box at (0, 0, h) size (w, d, 0.16) material wood;
+    box at (0.4, 0, h + 0.16) size (w - 0.8, 0.16, 0.5) material wood;
+}

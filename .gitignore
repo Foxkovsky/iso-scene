@@ -1,0 +1,26 @@
+# Build output
+/target/
+**/*.rs.bk
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local tooling
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+
+# Generated artifacts
+*.vsix
+/dist/
+/out/
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/coverage/

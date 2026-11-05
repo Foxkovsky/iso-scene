@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/scene-syntax",
+    "crates/scene-core",
+    "crates/scene-backend-iso",
+    "crates/scene-backend-ortho",
+    "crates/scene-backend-voxel",
+    "crates/scene-export-tiled",
+    "crates/scene-cli",
+    "crates/scene-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["iso-scene contributors"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
