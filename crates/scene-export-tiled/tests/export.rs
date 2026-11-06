@@ -48,7 +48,9 @@ fn simple_box_exports_to_a_tiled_map() {
     let objects = map["layers"][1]["objects"].as_array().expect("objects");
     assert_eq!(objects.len(), 1);
     assert_eq!(objects[0]["gid"], 2);
-    assert_eq!(objects[0]["x"], 16.0);
+    // A 1x1 object at (0, 0): its footprint corner is (1, 1), which projects
+    // to (0, 16) in a 32x16 isometric map.
+    assert_eq!(objects[0]["x"], 0.0);
     assert_eq!(objects[0]["y"], 16.0);
 
     let ts: serde_json::Value = serde_json::from_str(
@@ -203,5 +205,21 @@ fn empty_scene_exports_floor_without_an_object_layer() {
             .iter()
             .any(|value| value.as_u64().unwrap_or(0) > 0)
     );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn an_object_sits_on_the_projected_footprint_corner() {
+    let scene = compile(
+        "version 1; object b (2, 1) { box at (0, 0, 0) size (2, 1, 1) material wood; } render iso; scale 16; place b at (2, 3, 0);",
+    );
+    let dir = temp_dir("footprint");
+    let report = export(&scene, &dir).expect("export");
+    let map: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
+    let object = &map["layers"][1]["objects"][0];
+    // Footprint corner (4, 4) with a 32x16 tile: (4-4)*16 = 0, (4+4)/2*16 = 64.
+    assert_eq!(object["x"], 0.0);
+    assert_eq!(object["y"], 64.0);
     let _ = fs::remove_dir_all(dir);
 }

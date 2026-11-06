@@ -342,8 +342,9 @@ pub fn export_with_walls(
         ];
         let local_x = bottom_world[0] - min_x as f64;
         let local_y = bottom_world[1] - min_y as f64;
-        let object_x = (local_x - bottom_world[2]) * f64::from(scale);
-        let object_y = (local_y - bottom_world[2]) * f64::from(scale);
+        let screen = project_point([local_x, local_y, bottom_world[2]], f64::from(scale));
+        let object_x = screen[0];
+        let object_y = screen[1];
         objects.push(json!({
             "id": index + 1,
             "gid": 2 + sprite_index as u32,
