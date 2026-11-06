@@ -146,6 +146,7 @@ fn render_scene(args: Vec<String>) -> ExitCode {
     let mut path: Option<String> = None;
     let mut output: Option<PathBuf> = None;
     let mut view: Option<String> = None;
+    let mut base_override: Option<PathBuf> = None;
     let mut args = args.into_iter();
 
     while let Some(argument) = args.next() {
@@ -161,6 +162,12 @@ fn render_scene(args: Vec<String>) -> ExitCode {
                 return ExitCode::from(2);
             };
             view = Some(value);
+        } else if argument == "--base" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--base` needs a directory");
+                return ExitCode::from(2);
+            };
+            base_override = Some(PathBuf::from(value));
         } else if path.is_none() {
             path = Some(argument);
         } else {
@@ -188,7 +195,8 @@ fn render_scene(args: Vec<String>) -> ExitCode {
         Err(diagnostic) => return report(&path, &source, &diagnostic),
     };
     let file = Path::new(&path);
-    let base = file.parent().unwrap_or_else(|| Path::new("."));
+    let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
+    let base = base_override.as_deref().unwrap_or(fallback_base);
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
     let mut scene = if extension == Some("model") {
         let model = match scene_core::compile_model(&program, base) {
@@ -335,6 +343,7 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
     let mut output: Option<PathBuf> = None;
     let mut density: f64 = 8.0;
     let mut explicit_density = false;
+    let mut base_override: Option<PathBuf> = None;
     let mut args = args.into_iter();
 
     while let Some(argument) = args.next() {
@@ -359,6 +368,12 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 }
             }
+        } else if argument == "--base" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--base` needs a directory");
+                return ExitCode::from(2);
+            };
+            base_override = Some(PathBuf::from(value));
         } else if argument == "--voxel-size" {
             let Some(value) = args.next() else {
                 eprintln!("iso-scene: `--voxel-size` needs a number");
@@ -401,7 +416,8 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
         Err(diagnostic) => return report(&path, &source, &diagnostic),
     };
     let file = Path::new(&path);
-    let base = file.parent().unwrap_or_else(|| Path::new("."));
+    let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
+    let base = base_override.as_deref().unwrap_or(fallback_base);
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
     let scene = if extension == Some("model") {
         let model = match scene_core::compile_model(&program, base) {
@@ -466,6 +482,7 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
     let mut walls_path: Option<String> = None;
     let mut objects_as_tiles = false;
     let mut walls_in_front = false;
+    let mut base_override: Option<PathBuf> = None;
     let mut output = PathBuf::from("out/tiled");
     let mut args = args.into_iter();
 
@@ -476,6 +493,12 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
                 return ExitCode::from(2);
             };
             output = PathBuf::from(value);
+        } else if argument == "--base" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--base` needs a directory");
+                return ExitCode::from(2);
+            };
+            base_override = Some(PathBuf::from(value));
         } else if argument == "--tile-layer" {
             objects_as_tiles = true;
         } else if argument == "--walls-front" {
@@ -514,7 +537,8 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
         Err(diagnostic) => return report(&path, &source, &diagnostic),
     };
     let file = Path::new(&path);
-    let base = file.parent().unwrap_or_else(|| Path::new("."));
+    let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
+    let base = base_override.as_deref().unwrap_or(fallback_base);
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
     let scene = match scene_core::compile_scene(&program, base, &root) {
         Ok(scene) => scene,

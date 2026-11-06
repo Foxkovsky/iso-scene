@@ -1,9 +1,9 @@
 {
   "name": "iso-scene",
   "displayName": "iso-scene",
-  "description": "Preview and export iso-scene .scene and .model files",
+  "description": "Живой предпросмотр iso-scene: изометрия, чертёж, воксели",
   "publisher": "local-iso",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -41,19 +41,11 @@
     "commands": [
       {
         "command": "isoScene.preview",
-        "title": "iso-scene: Preview"
-      },
-      {
-        "command": "isoScene.exportPng",
-        "title": "iso-scene: Export PNG"
-      },
-      {
-        "command": "isoScene.exportTiled",
-        "title": "iso-scene: Export Tiled map"
+        "title": "Scene: открыть предпросмотр"
       },
       {
         "command": "isoScene.build",
-        "title": "iso-scene: Build"
+        "title": "Scene: собрать"
       }
     ],
     "menus": {
@@ -71,12 +63,18 @@
       ]
     },
     "configuration": {
-      "title": "iso-scene",
+      "title": "Iso Scene",
       "properties": {
         "isoScene.executable": {
           "type": "string",
           "default": "iso-scene",
-          "description": "Path to the iso-scene CLI. Falls back to ~/.cargo/bin/iso-scene."
+          "description": "Путь к CLI iso-scene. Если не найден в PATH, берётся ~/.cargo/bin/iso-scene."
+        },
+        "isoScene.updateDelay": {
+          "type": "number",
+          "default": 150,
+          "minimum": 0,
+          "description": "Задержка живого обновления, мс."
         }
       }
     }
