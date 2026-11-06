@@ -147,8 +147,12 @@ button.active{background:var(--vscode-button-background);color:var(--vscode-butt
 #info{padding:8px;white-space:pre-wrap;color:#9aa0a8}
 img{max-width:100%;image-rendering:pixelated;display:none}
 #image{display:block}
-#views{display:none;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 8px}
-#views figure{margin:0;background:#202226;border-radius:8px;padding:8px}
+#views{display:none;grid-template-columns:repeat(3,1fr);gap:8px;padding:8px;border-radius:8px;
+  background-color:#202226;
+  background-image:linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px);
+  background-size:32px 32px}
+#views figure{margin:0;padding:8px}
 #views figcaption{text-align:center;color:#9aa0a8;font-size:12px;margin-top:4px}
 canvas{width:100%;height:70vh;touch-action:none;display:none;background:#202226;border-radius:8px}
 #hint{padding:8px;color:#9aa0a8}
