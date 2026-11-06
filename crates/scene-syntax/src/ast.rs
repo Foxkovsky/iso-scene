@@ -149,6 +149,14 @@ pub enum StatementKind {
         rotation: Option<Expr>,
         anchor: Option<Anchor>,
     },
+    /// `use name [at (x, y, z)] [rot r];` inside an object body.
+    Use {
+        object: String,
+        at: Option<[Expr; 3]>,
+        rotation: Option<Expr>,
+    },
+    /// `merge { ... }`: the parts inside are welded into one solid.
+    Merge(Block),
     Shape(Shape),
     Mirror(Axis),
 }
@@ -202,6 +210,12 @@ pub enum Shape {
         size: [Expr; 3],
         material: Option<String>,
     },
+    /// `box from (x, y, z) to (x, y, z)`; the corners may come in any order.
+    BoxBetween {
+        from: [Expr; 3],
+        to: [Expr; 3],
+        material: Option<String>,
+    },
     Cyl {
         at: [Expr; 3],
         radius: Expr,
@@ -240,6 +254,7 @@ impl Shape {
     pub const fn at(&self) -> &[Expr; 3] {
         match self {
             Self::Box { at, .. }
+            | Self::BoxBetween { from: at, .. }
             | Self::Cyl { at, .. }
             | Self::Sphere { at, .. }
             | Self::SlantBox { at, .. }
@@ -253,6 +268,7 @@ impl Shape {
     pub fn material(&self) -> Option<&str> {
         match self {
             Self::Box { material, .. }
+            | Self::BoxBetween { material, .. }
             | Self::Cyl { material, .. }
             | Self::Sphere { material, .. }
             | Self::SlantBox { material, .. }

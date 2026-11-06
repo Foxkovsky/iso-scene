@@ -46,7 +46,9 @@ statement       = let
                 | for_stmt
                 | if_stmt
                 | place
+                | use_stmt
                 | shape
+                | merge_stmt
                 | mirror ;
 
 block           = "{", { statement }, "}" ;
@@ -63,22 +65,25 @@ if_stmt         = "if", "(", expr, ")", block,
 place           = "place", ident, "at", tuple3, [ "rot", expr ], [ "anchor", anchor ], ";" ;
 anchor          = "back" | "center" | "front" | "left" | "right" | "cell" ;
 
+use_stmt        = "use", ident, [ "at", tuple3 ], [ "rot", expr ], ";" ;
+merge_stmt      = "merge", block ;
+
 mirror          = "mirror", ( "x" | "y" ), ";" ;
 
 (* ---------------------------------------------------------------- shapes *)
 
-shape           = shape_kind, "at", tuple3, shape_args,
-                  [ "material", ident ], ";" ;
+shape           = shape_kind, shape_args, [ "material", ident ], ";" ;
 
 shape_kind      = "box" | "cyl" | "sphere" | "slantbox" | "slantcyl" | "ramp" ;
 
-shape_args      = "size", tuple3                          (* box        *)
-                | "radius", expr, "height", expr          (* cyl        *)
-                | "radius", expr                          (* sphere     *)
-                | "size", tuple3, "offset", pair          (* slantbox   *)
-                | "radius", expr, "height", expr,
+shape_args      = "at", tuple3, "size", tuple3            (* box        *)
+                | "from", tuple3, "to", tuple3           (* box        *)
+                | "at", tuple3, "radius", expr, "height", expr  (* cyl   *)
+                | "at", tuple3, "radius", expr             (* sphere     *)
+                | "at", tuple3, "size", tuple3, "offset", pair   (* slantbox *)
+                | "at", tuple3, "radius", expr, "height", expr,
                   "offset", pair                          (* slantcyl   *)
-                | "size", pair, "rise", pair ;            (* ramp       *)
+                | "at", tuple3, "size", pair, "rise", pair ;      (* ramp  *)
 
 (* ---------------------------------------------------------------- expressions *)
 

@@ -292,6 +292,8 @@ impl Parser {
             TokenKind::For => self.parse_for()?,
             TokenKind::If => self.parse_if()?,
             TokenKind::Place => self.parse_place()?,
+            TokenKind::Use => self.parse_use()?,
+            TokenKind::Merge => self.parse_merge()?,
             TokenKind::Mirror => self.parse_mirror()?,
             TokenKind::Box
             | TokenKind::Cyl
@@ -423,6 +425,34 @@ impl Parser {
         })
     }
 
+    fn parse_merge(&mut self) -> Result<StatementKind, Diagnostic> {
+        self.expect(&TokenKind::Merge, "`merge`")?;
+        let block = self.parse_block()?;
+        Ok(StatementKind::Merge(block))
+    }
+
+    fn parse_use(&mut self) -> Result<StatementKind, Diagnostic> {
+        self.expect(&TokenKind::Use, "`use`")?;
+        let (object, _) = self.expect_ident("object name")?;
+        let at = if self.eat(&TokenKind::At) {
+            let (at, _) = self.parse_tuple3()?;
+            Some(at)
+        } else {
+            None
+        };
+        let rotation = if self.eat(&TokenKind::Rot) {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+        self.expect(&TokenKind::Semicolon, "`;`")?;
+        Ok(StatementKind::Use {
+            object,
+            at,
+            rotation,
+        })
+    }
+
     fn parse_mirror(&mut self) -> Result<StatementKind, Diagnostic> {
         self.expect(&TokenKind::Mirror, "`mirror`")?;
         let (axis, span) = self.expect_ident("`x` or `y`")?;
@@ -445,13 +475,24 @@ impl Parser {
         let shape = match self.current_kind() {
             TokenKind::Box => {
                 self.bump();
-                let at = self.parse_shape_at()?;
-                self.expect(&TokenKind::Size, "`size`")?;
-                let (size, _) = self.parse_tuple3()?;
-                Shape::Box {
-                    at,
-                    size,
-                    material: self.parse_optional_material()?,
+                if self.eat(&TokenKind::From) {
+                    let (from, _) = self.parse_tuple3()?;
+                    self.expect(&TokenKind::To, "`to`")?;
+                    let (to, _) = self.parse_tuple3()?;
+                    Shape::BoxBetween {
+                        from,
+                        to,
+                        material: self.parse_optional_material()?,
+                    }
+                } else {
+                    let at = self.parse_shape_at()?;
+                    self.expect(&TokenKind::Size, "`size`")?;
+                    let (size, _) = self.parse_tuple3()?;
+                    Shape::Box {
+                        at,
+                        size,
+                        material: self.parse_optional_material()?,
+                    }
                 }
             }
             TokenKind::Cyl => {
@@ -761,6 +802,10 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::Rise => "`rise`".to_owned(),
         TokenKind::Rot => "`rot`".to_owned(),
         TokenKind::Anchor => "`anchor`".to_owned(),
+        TokenKind::From => "`from`".to_owned(),
+        TokenKind::To => "`to`".to_owned(),
+        TokenKind::Use => "`use`".to_owned(),
+        TokenKind::Merge => "`merge`".to_owned(),
         TokenKind::LBrace => "`{`".to_owned(),
         TokenKind::RBrace => "`}`".to_owned(),
         TokenKind::LParen => "`(`".to_owned(),
@@ -902,6 +947,40 @@ mod tests {
             panic!("expected a place");
         };
         *anchor
+    }
+
+    #[test]
+    fn box_can_be_given_by_two_corners() {
+        let program = parse_ok("version 1; object a (1, 1) { box from (0, 0, 0) to (1, 1, 1); }");
+        let ItemKind::Object(object) = &program.items[0].kind else {
+            panic!("expected an object");
+        };
+        let StatementKind::Shape(Shape::BoxBetween { from, to, .. }) =
+            &object.body.statements[0].kind
+        else {
+            panic!("expected a box between corners");
+        };
+        assert_eq!(from.len(), 3);
+        assert_eq!(to.len(), 3);
+    }
+
+    #[test]
+    fn use_is_parsed_inside_an_object() {
+        let program = parse_ok("version 1; object a (1, 1) { use b at (0.1, 0.2, 0) rot 90; }");
+        let ItemKind::Object(object) = &program.items[0].kind else {
+            panic!("expected an object");
+        };
+        let StatementKind::Use {
+            object: name,
+            at,
+            rotation,
+        } = &object.body.statements[0].kind
+        else {
+            panic!("expected a use");
+        };
+        assert_eq!(name, "b");
+        assert!(at.is_some());
+        assert!(rotation.is_some());
     }
 
     #[test]

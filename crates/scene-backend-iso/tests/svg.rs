@@ -123,3 +123,31 @@ fn an_orthographic_scene_is_rejected() {
     let error = render_svg(&scene).expect_err("top view has no iso SVG");
     assert_eq!(error.code, "E0604");
 }
+
+#[test]
+fn merge_hides_the_seam_between_same_colour_parts() {
+    let merged = svg(r"
+        version 1;
+        object bench (2, 1) {
+            merge {
+                box from (0, 0, 0) to (1, 1, 0.5) material wood;
+                box from (1, 0, 0) to (2, 1, 0.5) material wood;
+            }
+        }
+        render iso;
+        scale 32;
+        place bench at (0, 0, 0);
+        ");
+    let loose = svg(r"
+        version 1;
+        object bench (2, 1) {
+            box from (0, 0, 0) to (1, 1, 0.5) material wood;
+            box from (1, 0, 0) to (2, 1, 0.5) material wood;
+        }
+        render iso;
+        scale 32;
+        place bench at (0, 0, 0);
+        ");
+    assert!(merged.contains("<line "), "merged faces are drawn as edges");
+    assert!(!loose.contains("<line "), "loose parts keep their outlines");
+}

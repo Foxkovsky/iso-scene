@@ -143,6 +143,9 @@ fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnost
         }
         let projected = project_face(face, scale, origin);
         for index in 0..projected.len() {
+            if face.hidden.get(index).copied().unwrap_or(false) {
+                continue;
+            }
             framebuffer.line(
                 projected[index],
                 projected[(index + 1) % projected.len()],
@@ -235,10 +238,34 @@ pub fn render_svg(scene: &SceneGraph) -> Result<String, Diagnostic> {
         } else {
             "none".to_string()
         };
-        let _ = writeln!(
-            svg,
-            "<polygon points=\"{points}\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1\" stroke-linejoin=\"round\"/>"
-        );
+        if face.outline && face.hidden.iter().any(|&hidden| hidden) {
+            // Welded faces keep only their outer edges, so the stroke becomes
+            // individual lines instead of one polygon outline.
+            let _ = writeln!(
+                svg,
+                "<polygon points=\"{points}\" fill=\"{fill}\" stroke=\"none\"/>"
+            );
+            for edge in 0..face.points.len() {
+                if face.hidden.get(edge).copied().unwrap_or(false) {
+                    continue;
+                }
+                let start = project_point(face.points[edge], scale);
+                let end = project_point(face.points[(edge + 1) % face.points.len()], scale);
+                let _ = writeln!(
+                    svg,
+                    "<line x1=\"{:.3}\" y1=\"{:.3}\" x2=\"{:.3}\" y2=\"{:.3}\" stroke=\"{stroke}\" stroke-width=\"1\"/>",
+                    start[0] - origin[0],
+                    start[1] - origin[1],
+                    end[0] - origin[0],
+                    end[1] - origin[1]
+                );
+            }
+        } else {
+            let _ = writeln!(
+                svg,
+                "<polygon points=\"{points}\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1\" stroke-linejoin=\"round\"/>"
+            );
+        }
     }
     let _ = writeln!(svg, "</svg>");
     Ok(svg)
@@ -488,6 +515,9 @@ struct Face {
     color: [u8; 3],
     line: [u8; 3],
     outline: bool,
+    /// Parts in one merge group are welded: internal faces and shared seams go.
+    group: Option<u32>,
+    hidden: Vec<bool>,
 }
 
 fn collect_faces(
@@ -504,20 +534,138 @@ fn collect_faces(
                 outline,
             } in primitive_faces(&part.primitive)
             {
-                let points = points
+                let points: Vec<[f64; 3]> = points
                     .into_iter()
                     .map(|point| world_point(point, instance))
                     .collect();
+                let hidden = vec![false; points.len()];
                 faces.push(Face {
                     points,
                     color: iso_color(&normal, palette),
                     line: palette.line,
                     outline,
+                    group: part.group,
+                    hidden,
                 });
             }
         }
     }
+    weld_groups(&mut faces);
     Ok(faces)
+}
+
+type VertexKey = (i64, i64, i64);
+type EdgeKey = (VertexKey, VertexKey);
+
+/// Remove internal faces of a merge group and hide seams between coplanar
+/// neighbours of the same colour.
+#[allow(clippy::too_many_lines)]
+fn weld_groups(faces: &mut Vec<Face>) {
+    use std::collections::BTreeMap;
+
+    fn vertex_key(point: [f64; 3]) -> VertexKey {
+        let scale = 1_000_000.0;
+        (
+            (point[0] * scale).round() as i64,
+            (point[1] * scale).round() as i64,
+            (point[2] * scale).round() as i64,
+        )
+    }
+    fn face_key(points: &[[f64; 3]]) -> Vec<VertexKey> {
+        let mut keys: Vec<_> = points.iter().map(|point| vertex_key(*point)).collect();
+        keys.sort_unstable();
+        keys
+    }
+    fn edge_key(a: [f64; 3], b: [f64; 3]) -> EdgeKey {
+        let mut first = vertex_key(a);
+        let mut second = vertex_key(b);
+        if second < first {
+            std::mem::swap(&mut first, &mut second);
+        }
+        (first, second)
+    }
+    fn normal(points: &[[f64; 3]]) -> [f64; 3] {
+        let mut n = [0.0; 3];
+        for index in 0..points.len() {
+            let a = points[index];
+            let b = points[(index + 1) % points.len()];
+            n[0] += (a[1] - b[1]) * (a[2] + b[2]);
+            n[1] += (a[2] - b[2]) * (a[0] + b[0]);
+            n[2] += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if length > 0.0 {
+            [n[0] / length, n[1] / length, n[2] / length]
+        } else {
+            n
+        }
+    }
+    fn coplanar(a: &Face, b: &Face) -> bool {
+        let n = normal(&a.points);
+        let m = normal(&b.points);
+        let dot = n[0] * m[0] + n[1] * m[1] + n[2] * m[2];
+        if dot.abs() < 0.999 {
+            return false;
+        }
+        let anchor = a.points[0];
+        b.points.iter().all(|point| {
+            let offset = [
+                point[0] - anchor[0],
+                point[1] - anchor[1],
+                point[2] - anchor[2],
+            ];
+            (offset[0] * n[0] + offset[1] * n[1] + offset[2] * n[2]).abs() < 1e-6
+        })
+    }
+
+    // Internal faces: coincident faces in the same group.
+    let mut counts: BTreeMap<(u32, Vec<VertexKey>), usize> = BTreeMap::new();
+    for face in faces.iter() {
+        if let Some(group) = face.group {
+            *counts.entry((group, face_key(&face.points))).or_default() += 1;
+        }
+    }
+    faces.retain(|face| match face.group {
+        None => true,
+        Some(group) => {
+            counts
+                .get(&(group, face_key(&face.points)))
+                .copied()
+                .unwrap_or(0)
+                == 1
+        }
+    });
+
+    // Shared seams: hide the edge between coplanar same-colour neighbours.
+    let mut edges: BTreeMap<EdgeKey, Vec<(usize, usize)>> = BTreeMap::new();
+    for (index, face) in faces.iter().enumerate() {
+        if face.group.is_none() {
+            continue;
+        }
+        for edge in 0..face.points.len() {
+            let key = edge_key(
+                face.points[edge],
+                face.points[(edge + 1) % face.points.len()],
+            );
+            edges.entry(key).or_default().push((index, edge));
+        }
+    }
+    for entries in edges.values() {
+        for first in 0..entries.len() {
+            for second in (first + 1)..entries.len() {
+                let (face_a, edge_a) = entries[first];
+                let (face_b, edge_b) = entries[second];
+                if faces[face_a].group != faces[face_b].group
+                    || faces[face_a].color != faces[face_b].color
+                    || !coplanar(&faces[face_a], &faces[face_b])
+                {
+                    continue;
+                }
+                faces[face_a].hidden[edge_a] = true;
+                faces[face_b].hidden[edge_b] = true;
+            }
+        }
+    }
 }
 
 fn iso_color(normal: &[f64; 3], palette: Palette) -> [u8; 3] {
@@ -595,11 +743,14 @@ mod tests {
     use super::*;
 
     fn face(points: Vec<[f64; 3]>) -> Face {
+        let hidden = vec![false; points.len()];
         Face {
             points,
             color: [128, 128, 128],
             line: [30, 32, 38],
             outline: true,
+            group: None,
+            hidden,
         }
     }
 

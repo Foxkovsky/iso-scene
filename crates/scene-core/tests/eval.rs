@@ -231,6 +231,84 @@ fn the_cell_anchor_puts_the_sprite_on_the_placement_cell() {
 }
 
 #[test]
+fn box_from_to_normalises_the_corners() {
+    let scene = compile_scene_ok(
+        r"
+        version 1;
+        object b (1, 1) { box from (2, 2, 2) to (1, 1, 1) material wood; }
+        render iso;
+        scale 8;
+        place b at (0, 0, 0);
+        ",
+    );
+    let bounds = scene.instances[0].world_bounds();
+    assert!((bounds.min[0] - 1.0).abs() < 1e-9);
+    assert!((bounds.max[0] - 2.0).abs() < 1e-9);
+    assert!((bounds.min[1] - 1.0).abs() < 1e-9);
+    assert!((bounds.max[1] - 2.0).abs() < 1e-9);
+    assert!((bounds.min[2] - 1.0).abs() < 1e-9);
+    assert!((bounds.max[2] - 2.0).abs() < 1e-9);
+}
+
+#[test]
+fn use_inserts_another_object_with_an_offset() {
+    let scene = compile_scene_ok(
+        r"
+        version 1;
+        object leg (0.16, 0.16) { box at (0, 0, 0) size (w, d, 1.0) material metal; }
+        object chair (1.0, 1.0) {
+            use leg at (0.1, 0.1, 0);
+            use leg at (0.74, 0.1, 0) rot 90;
+        }
+        render iso;
+        scale 8;
+        place chair at (0, 0, 0);
+        ",
+    );
+    let object = &scene.instances[0].object;
+    assert_eq!(object.parts.len(), 2);
+    let bounds = scene.instances[0].world_bounds();
+    assert!((bounds.min[0] - 0.1).abs() < 1e-9);
+    assert!((bounds.max[0] - 0.9).abs() < 1e-9);
+}
+
+#[test]
+fn use_is_rejected_in_a_scene() {
+    let source = r"
+        version 1;
+        object leg (0.1, 0.1) { box at (0, 0, 0) size (w, d, 1) material metal; }
+        render iso;
+        scale 8;
+        use leg at (0, 0, 0);
+    ";
+    assert_eq!(compile_error(source), "E0302");
+}
+
+#[test]
+fn merge_marks_its_parts_as_one_group() {
+    let scene = compile_scene_ok(
+        r"
+        version 1;
+        object bench (2, 1) {
+            merge {
+                box from (0, 0, 0) to (1, 1, 0.5) material wood;
+                box from (1, 0, 0) to (2, 1, 0.5) material wood;
+            }
+            box from (0, 0, 0.5) to (2, 1, 0.6) material wood;
+        }
+        render iso;
+        scale 8;
+        place bench at (0, 0, 0);
+        ",
+    );
+    let parts = &scene.instances[0].object.parts;
+    assert_eq!(parts.len(), 3);
+    assert!(parts[0].group.is_some());
+    assert_eq!(parts[0].group, parts[1].group);
+    assert!(parts[2].group.is_none());
+}
+
+#[test]
 fn invalid_rotation_is_reported() {
     assert_eq!(
         compile_error(

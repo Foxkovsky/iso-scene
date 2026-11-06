@@ -143,19 +143,163 @@ impl Primitive {
     }
 }
 
+impl Primitive {
+    /// Rotate the primitive in 90 degree steps around the object footprint.
+    #[must_use]
+    pub(crate) fn rotated(&self, rotation: u16, width: f64, depth: f64) -> Self {
+        if rotation == 0 {
+            return self.clone();
+        }
+        let point = |x: f64, y: f64| rotate_xy(x, y, width, depth, rotation);
+        let vector = |dx: f64, dy: f64| match rotation {
+            90 => (-dy, dx),
+            180 => (-dx, -dy),
+            270 => (dy, -dx),
+            _ => (dx, dy),
+        };
+        match self {
+            Self::Box { at, size } => {
+                let (x1, y1) = point(at[0], at[1]);
+                let (x2, y2) = point(at[0] + size[0], at[1] + size[1]);
+                Self::Box {
+                    at: [x1.min(x2), y1.min(y2), at[2]],
+                    size: [(x2 - x1).abs(), (y2 - y1).abs(), size[2]],
+                }
+            }
+            Self::Cyl { at, radius, height } => {
+                let (x, y) = point(at[0], at[1]);
+                Self::Cyl {
+                    at: [x, y, at[2]],
+                    radius: *radius,
+                    height: *height,
+                }
+            }
+            Self::Sphere { at, radius } => {
+                let (x, y) = point(at[0], at[1]);
+                Self::Sphere {
+                    at: [x, y, at[2]],
+                    radius: *radius,
+                }
+            }
+            Self::SlantBox { at, size, offset } => {
+                let (x1, y1) = point(at[0], at[1]);
+                let (x2, y2) = point(at[0] + size[0], at[1] + size[1]);
+                let (dx, dy) = vector(offset[0], offset[1]);
+                Self::SlantBox {
+                    at: [x1.min(x2), y1.min(y2), at[2]],
+                    size: [(x2 - x1).abs(), (y2 - y1).abs(), size[2]],
+                    offset: [dx, dy],
+                }
+            }
+            Self::SlantCyl {
+                at,
+                radius,
+                height,
+                offset,
+            } => {
+                let (x, y) = point(at[0], at[1]);
+                let (dx, dy) = vector(offset[0], offset[1]);
+                Self::SlantCyl {
+                    at: [x, y, at[2]],
+                    radius: *radius,
+                    height: *height,
+                    offset: [dx, dy],
+                }
+            }
+            Self::Ramp { at, size, rise } => {
+                let (x1, y1) = point(at[0], at[1]);
+                let (x2, y2) = point(at[0] + size[0], at[1] + size[1]);
+                let (dx, dy) = vector(rise[0], rise[1]);
+                Self::Ramp {
+                    at: [x1.min(x2), y1.min(y2), at[2]],
+                    size: [(x2 - x1).abs(), (y2 - y1).abs()],
+                    rise: [dx, dy],
+                }
+            }
+        }
+    }
+
+    /// Translate the primitive by an object-local offset.
+    #[must_use]
+    pub(crate) fn translated(&self, offset: [f64; 3]) -> Self {
+        let shift = |at: &[f64; 3]| [at[0] + offset[0], at[1] + offset[1], at[2] + offset[2]];
+        match self {
+            Self::Box { at, size } => Self::Box {
+                at: shift(at),
+                size: *size,
+            },
+            Self::Cyl { at, radius, height } => Self::Cyl {
+                at: shift(at),
+                radius: *radius,
+                height: *height,
+            },
+            Self::Sphere { at, radius } => Self::Sphere {
+                at: shift(at),
+                radius: *radius,
+            },
+            Self::SlantBox {
+                at,
+                size,
+                offset: slant,
+            } => Self::SlantBox {
+                at: shift(at),
+                size: *size,
+                offset: *slant,
+            },
+            Self::SlantCyl {
+                at,
+                radius,
+                height,
+                offset: slant,
+            } => Self::SlantCyl {
+                at: shift(at),
+                radius: *radius,
+                height: *height,
+                offset: *slant,
+            },
+            Self::Ramp { at, size, rise } => Self::Ramp {
+                at: shift(at),
+                size: *size,
+                rise: *rise,
+            },
+        }
+    }
+}
+
 /// A primitive together with its material alias.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Part {
     pub primitive: Primitive,
     pub material: Option<String>,
+    /// Parts sharing a merge group are welded into one solid when rendered.
+    pub group: Option<u32>,
 }
 
 impl Part {
+    #[must_use]
+    pub(crate) fn rotated(&self, rotation: u16, width: f64, depth: f64) -> Self {
+        Self {
+            primitive: self.primitive.rotated(rotation, width, depth),
+            material: self.material.clone(),
+            group: self.group,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn translated(&self, offset: [f64; 3]) -> Self {
+        Self {
+            primitive: self.primitive.translated(offset),
+            material: self.material.clone(),
+            group: self.group,
+        }
+    }
+
     #[must_use]
     pub(crate) fn mirrored(&self, axis: Axis, width: f64, depth: f64) -> Self {
         Self {
             primitive: self.primitive.mirrored(axis, width, depth),
             material: self.material.clone(),
+            group: self.group,
         }
     }
 }

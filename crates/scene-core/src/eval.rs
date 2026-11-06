@@ -156,6 +156,7 @@ impl Scopes {
 struct Evaluator {
     fuel: u64,
     shapes: usize,
+    merge_groups: u32,
     instances: usize,
     objects: BTreeMap<String, Arc<CompiledObject>>,
     materials: BTreeMap<String, PathBuf>,
@@ -168,6 +169,7 @@ impl Evaluator {
         Self {
             fuel,
             shapes: 0,
+            merge_groups: 0,
             instances: 0,
             objects: BTreeMap::new(),
             materials: BTreeMap::new(),
@@ -558,8 +560,59 @@ impl Evaluator {
                 let part = self.compile_shape(shape, scopes, statement.span)?;
                 self.push_part(parts, part, statement.span)?;
             }
+            StatementKind::Merge(block) => {
+                let start = parts.len();
+                self.object_block(block, scopes, parts, width, depth)?;
+                self.merge_groups += 1;
+                let group = self.merge_groups;
+                for part in &mut parts[start..] {
+                    if part.group.is_none() {
+                        part.group = Some(group);
+                    }
+                }
+            }
             StatementKind::Mirror(axis) => {
                 self.mirror(parts, *axis, width, depth, statement.span)?;
+            }
+            StatementKind::Use {
+                object,
+                at,
+                rotation,
+            } => {
+                let used = self.objects.get(object).cloned().ok_or_else(|| {
+                    diag(
+                        "E0301",
+                        format!("unknown object `{object}`"),
+                        statement.span,
+                    )
+                })?;
+                let at = match at {
+                    Some(values) => self.coordinates(values, scopes, statement.span)?,
+                    None => [0.0, 0.0, 0.0],
+                };
+                let rotation = match rotation {
+                    Some(expr) => {
+                        normalize_rotation(self.number(expr, scopes, "rotation")?, expr.span)?
+                    }
+                    None => 0,
+                };
+                let copies: Vec<Part> = used
+                    .parts
+                    .iter()
+                    .map(|part| {
+                        part.rotated(rotation, used.width, used.depth)
+                            .translated(at)
+                    })
+                    .collect();
+                if self.shapes.saturating_add(copies.len()) > MAX_SHAPES {
+                    return Err(diag(
+                        "E0402",
+                        format!("more than {MAX_SHAPES} shapes"),
+                        statement.span,
+                    ));
+                }
+                self.shapes += copies.len();
+                parts.extend(copies);
             }
             StatementKind::Place { .. } => {
                 return Err(diag(
@@ -753,10 +806,13 @@ impl Evaluator {
                 }
                 instances.push(instance);
             }
-            StatementKind::Shape(_) | StatementKind::Mirror(_) => {
+            StatementKind::Shape(_)
+            | StatementKind::Mirror(_)
+            | StatementKind::Use { .. }
+            | StatementKind::Merge(_) => {
                 return Err(diag(
                     "E0302",
-                    "shapes and mirror are only allowed inside an object",
+                    "shapes, mirror, use and merge are only allowed inside an object",
                     statement.span,
                 ));
             }
@@ -783,6 +839,30 @@ impl Evaluator {
                 at,
                 size: self.positive_triple(size, scopes, span, "box size")?,
             },
+            Shape::BoxBetween { from, to, .. } => {
+                let start = self.coordinates(from, scopes, span)?;
+                let end = self.coordinates(to, scopes, span)?;
+                let size = [
+                    (end[0] - start[0]).abs(),
+                    (end[1] - start[1]).abs(),
+                    (end[2] - start[2]).abs(),
+                ];
+                if size.iter().any(|value| *value <= 0.0) {
+                    return Err(diag(
+                        "E0304",
+                        "box from/to must span a positive size on every axis",
+                        span,
+                    ));
+                }
+                Primitive::Box {
+                    at: [
+                        start[0].min(end[0]),
+                        start[1].min(end[1]),
+                        start[2].min(end[2]),
+                    ],
+                    size,
+                }
+            }
             Shape::Cyl { radius, height, .. } => Primitive::Cyl {
                 at,
                 radius: self.positive(radius, scopes, span, "radius")?,
@@ -817,6 +897,7 @@ impl Evaluator {
         Ok(Part {
             primitive,
             material,
+            group: None,
         })
     }
 

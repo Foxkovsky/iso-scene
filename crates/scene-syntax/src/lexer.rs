@@ -65,6 +65,10 @@ pub enum TokenKind {
     Rise,
     Rot,
     Anchor,
+    From,
+    To,
+    Use,
+    Merge,
 
     // Punctuation
     LBrace,
@@ -427,6 +431,10 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "rise" => TokenKind::Rise,
         "rot" => TokenKind::Rot,
         "anchor" => TokenKind::Anchor,
+        "from" => TokenKind::From,
+        "to" => TokenKind::To,
+        "use" => TokenKind::Use,
+        "merge" => TokenKind::Merge,
         _ => return None,
     })
 }
