@@ -45,6 +45,7 @@ cargo run -p scene-cli -- check examples/chair.model
 cargo run -p scene-cli -- eval examples/chair.model
 cargo run -p scene-cli -- eval examples/classroom.scene
 cargo run -p scene-cli -- render examples/classroom.scene -o out/classroom.png
+# vector export (iso only): -o out/classroom.svg
 cargo run -p scene-cli -- render examples/classroom_top.scene -o out/classroom_top.png
 cargo run -p scene-cli -- voxel examples/classroom.scene --density 7 -o out/classroom.vox
 cargo run -p scene-cli -- tiled examples/classroom.scene -o out/tiled

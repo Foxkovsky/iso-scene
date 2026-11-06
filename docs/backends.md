@@ -117,3 +117,22 @@ A `.walls` layout is exported as a third Tiled layer named `walls`, above
 `floor` and `objects`. The generated tileset has 16 tiles matching the 16
 neighbour masks and an edge Wang set named `wall`. Connected sides have no
 outline, so the wall reads as one continuous surface. See `docs/walls.md`.
+
+## SVG
+
+`render` writes an SVG document when the output ends with `.svg`
+(iso scenes only):
+
+```bash
+iso-scene render room.scene -o out/room.svg
+```
+
+The faces are the same ones the raster backend uses. They are painted from far
+to near by mean view depth, then adjacent inversions are fixed: when the later
+face lies completely behind the earlier face's plane, the two are swapped. This
+keeps a small handle behind a door from showing through the door, which a plain
+mean-depth sort gets wrong. Outlines are drawn as 1 px polygon strokes.
+
+The SVG is a painter's-algorithm vector export, not a per-pixel trace: two
+faces that physically intersect (a marker pushed into a board) can still be
+ordered the wrong way. The PNG backend stays pixel-exact.

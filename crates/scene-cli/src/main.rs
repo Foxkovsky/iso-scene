@@ -187,16 +187,6 @@ fn render_scene(args: Vec<String>) -> ExitCode {
         Ok(scene) => scene,
         Err(diagnostic) => return report(&path, &source, &diagnostic),
     };
-    let image = match scene.render {
-        scene_syntax::ast::RenderKind::Iso => scene_backend_iso::render(&scene),
-        scene_syntax::ast::RenderKind::Top
-        | scene_syntax::ast::RenderKind::Front
-        | scene_syntax::ast::RenderKind::Side => scene_backend_ortho::render(&scene),
-    };
-    let image = match image {
-        Ok(image) => image,
-        Err(diagnostic) => return report(&path, &source, &diagnostic),
-    };
     let output = output.unwrap_or_else(|| {
         let stem = file
             .file_stem()
@@ -212,6 +202,36 @@ fn render_scene(args: Vec<String>) -> ExitCode {
             }
         }
     }
+    let svg = output
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
+    if svg {
+        let document = match scene_backend_iso::render_svg(&scene) {
+            Ok(document) => document,
+            Err(diagnostic) => return report(&path, &source, &diagnostic),
+        };
+        if let Err(error) = fs::write(&output, document) {
+            eprintln!("iso-scene: cannot write `{}`: {error}", output.display());
+            return ExitCode::from(2);
+        }
+        println!(
+            "wrote {} (SVG, {} instances)",
+            output.display(),
+            scene.instances.len()
+        );
+        return ExitCode::SUCCESS;
+    }
+    let image = match scene.render {
+        scene_syntax::ast::RenderKind::Iso => scene_backend_iso::render(&scene),
+        scene_syntax::ast::RenderKind::Top
+        | scene_syntax::ast::RenderKind::Front
+        | scene_syntax::ast::RenderKind::Side => scene_backend_ortho::render(&scene),
+    };
+    let image = match image {
+        Ok(image) => image,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
     if let Err(message) = scene_render::write_png(&image, &output) {
         eprintln!("iso-scene: {message}");
         return ExitCode::from(2);
@@ -456,7 +476,7 @@ fn print_help() {
     println!("Commands:");
     println!("  check <file>    parse a .model or .scene file and report diagnostics");
     println!("  eval <file>     parse and evaluate to a scene graph");
-    println!("  render <file>   render a .scene with the iso or ortho backend");
+    println!("  render <file>   render a .scene to PNG (iso or ortho); -o out.svg writes iso SVG");
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
     println!("                  --walls <file> adds a 16-way wall tile layer with Wang set");
@@ -471,8 +491,6 @@ fn print_help() {
         "  --fuel <n>      evaluation budget for `eval` (default {})",
         scene_core::DEFAULT_FUEL
     );
-    println!();
-    println!("Render backends are not implemented yet.");
 }
 
 #[cfg(test)]
