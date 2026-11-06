@@ -76,6 +76,24 @@ pub fn export_with_walls(
     walls: Option<&WallLayout>,
     out_dir: &Path,
 ) -> Result<ExportReport, Diagnostic> {
+    export_with(scene, walls, false, out_dir)
+}
+
+/// Export a scene with an optional wall layer and object layout choice.
+///
+/// With `objects_as_tiles` the sprites go into a tile layer named `objects`
+/// (one tile per cell, Tiled tile alignment) instead of an object layer.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`export`].
+#[allow(clippy::too_many_lines)]
+pub fn export_with(
+    scene: &SceneGraph,
+    walls: Option<&WallLayout>,
+    objects_as_tiles: bool,
+    out_dir: &Path,
+) -> Result<ExportReport, Diagnostic> {
     if scene.render != RenderKind::Iso {
         return Err(error(
             "E0604",
@@ -200,7 +218,10 @@ pub fn export_with_walls(
         .iter()
         .map(|entry| entry.bottom_px[1])
         .fold(0.0_f64, f64::max);
-    let canvas_w = (2.0 * max_left.max(max_right)).ceil().max(2.0) as u32 + 2;
+    let mut canvas_w = (2.0 * max_left.max(max_right)).ceil().max(2.0) as u32 + 2;
+    if canvas_w % 2 == 1 {
+        canvas_w += 1;
+    }
     let canvas_h = max_up.ceil().max(2.0) as u32 + 1;
     let canvas_anchor = [f64::from(canvas_w) / 2.0, f64::from(canvas_h)];
     let mut offsets = Vec::with_capacity(sprites.len());
@@ -293,7 +314,11 @@ pub fn export_with_walls(
             "imageheight": canvas_h,
             "margin": 0,
             "spacing": 0,
-            "tileoffset": {"x": 0, "y": 0},
+            "tileoffset": if objects_as_tiles {
+                json!({"x": (i64::from(tile_w) - i64::from(canvas_w)) / 2, "y": 0})
+            } else {
+                json!({"x": 0, "y": 0})
+            },
             "tiles": object_tiles
         });
         let path = out_dir.join("objects.tsj");
@@ -336,6 +361,7 @@ pub fn export_with_walls(
     });
 
     let mut objects = Vec::with_capacity(ordered.len());
+    let mut object_tiles = vec![0_u32; (width as usize) * (height as usize)];
     for (index, instance) in ordered.iter().enumerate() {
         let sprite_index = sprites
             .iter()
@@ -349,6 +375,17 @@ pub fn export_with_walls(
             instance.at[1] + entry.bottom_world[1],
             instance.at[2] + entry.bottom_world[2],
         ];
+        if objects_as_tiles {
+            // The sprite's base is the footprint corner; the cell that owns that
+            // corner is the one whose bottom vertex it is.
+            let cell_x = (bottom_world[0] - 1.0).floor() as i64 - min_x;
+            let cell_y = (bottom_world[1] - 1.0).floor() as i64 - min_y;
+            if cell_x >= 0 && cell_y >= 0 && cell_x < i64::from(width) && cell_y < i64::from(height)
+            {
+                let at = (cell_y as usize) * (width as usize) + cell_x as usize;
+                object_tiles[at] = 2 + sprite_index as u32;
+            }
+        }
         let local_x = bottom_world[0] - min_x as f64;
         let local_y = bottom_world[1] - min_y as f64;
         let screen = project_point([local_x, local_y, bottom_world[2]], f64::from(scale));
@@ -360,7 +397,7 @@ pub fn export_with_walls(
         // corner lies exactly on a cell border, where Tiled rounds to the next
         // cell and highlights the wrong diamond. Nudging the anchor a thousandth
         // of a pixel up moves it inside the cell the object stands on.
-        let object_x = screen[0] + origin_x + f64::from(tile_w) / 2.0;
+        let object_x = screen[0] + origin_x;
         let object_y = screen[1] - ANCHOR_NUDGE;
         objects.push(json!({
             "id": index + 1,
@@ -394,17 +431,32 @@ pub fn export_with_walls(
     })];
     if has_objects {
         tilesets.push(json!({"firstgid": 2, "source": "objects.tsj"}));
-        layers.push(json!({
-            "type": "objectgroup",
-            "name": "objects",
-            "id": 2,
-            "x": 0,
-            "y": 0,
-            "opacity": 1,
-            "visible": true,
-            "draworder": "index",
-            "objects": objects
-        }));
+        if objects_as_tiles {
+            layers.push(json!({
+                "type": "tilelayer",
+                "name": "objects",
+                "id": 2,
+                "width": width,
+                "height": height,
+                "x": 0,
+                "y": 0,
+                "opacity": 1,
+                "visible": true,
+                "data": object_tiles
+            }));
+        } else {
+            layers.push(json!({
+                "type": "objectgroup",
+                "name": "objects",
+                "id": 2,
+                "x": 0,
+                "y": 0,
+                "opacity": 1,
+                "visible": true,
+                "draworder": "index",
+                "objects": objects
+            }));
+        }
     }
     let walls_layer_id = if has_objects { 3 } else { 2 };
     if let (Some(_), Some(data)) = (walls, wall_data) {

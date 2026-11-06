@@ -342,6 +342,7 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
 fn tiled_scene(args: Vec<String>) -> ExitCode {
     let mut path: Option<String> = None;
     let mut walls_path: Option<String> = None;
+    let mut objects_as_tiles = false;
     let mut output = PathBuf::from("out/tiled");
     let mut args = args.into_iter();
 
@@ -352,6 +353,8 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
                 return ExitCode::from(2);
             };
             output = PathBuf::from(value);
+        } else if argument == "--tile-layer" {
+            objects_as_tiles = true;
         } else if argument == "--walls" {
             let Some(value) = args.next() else {
                 eprintln!("iso-scene: `--walls` needs a .walls file");
@@ -405,10 +408,11 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
     } else {
         None
     };
-    let exported = match scene_export_tiled::export_with_walls(&scene, walls.as_ref(), &output) {
-        Ok(report) => report,
-        Err(diagnostic) => return report(&path, &source, &diagnostic),
-    };
+    let exported =
+        match scene_export_tiled::export_with(&scene, walls.as_ref(), objects_as_tiles, &output) {
+            Ok(report) => report,
+            Err(diagnostic) => return report(&path, &source, &diagnostic),
+        };
     println!(
         "wrote {} ({}x{} cells, {} instances); open it in Tiled; preview: {}",
         exported.map.display(),
@@ -480,6 +484,9 @@ fn print_help() {
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
     println!("                  --walls <file> adds a 16-way wall tile layer with Wang set");
+    println!(
+        "                  --tile-layer puts objects in a tile layer instead of an object layer"
+    );
     println!("  spec-version    print the implemented language version");
     println!();
     println!("Options:");

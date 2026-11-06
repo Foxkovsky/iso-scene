@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use scene_core::compile_scene;
-use scene_export_tiled::{export, export_with_walls};
+use scene_export_tiled::{export, export_with, export_with_walls};
 use scene_syntax::parse;
 
 fn compile(source: &str) -> scene_core::SceneGraph {
@@ -49,9 +49,9 @@ fn simple_box_exports_to_a_tiled_map() {
     assert_eq!(objects.len(), 1);
     assert_eq!(objects[0]["gid"], 2);
     // A 1x1 object at (0, 0): footprint corner (1, 1) projects to (0, 16).
-    // Tiled's isometric origin adds height * tileWidth / 2 (16) and the tile
-    // half width (16), so the object sits on the cell's bottom vertex.
-    assert_eq!(objects[0]["x"], 32.0);
+    // Tiled's isometric origin adds height * tileWidth / 2 (16), which is the
+    // cell's bottom vertex.
+    assert_eq!(objects[0]["x"], 16.0);
     assert!((objects[0]["y"].as_f64().expect("y") - 16.0).abs() < 0.01);
 
     let ts: serde_json::Value = serde_json::from_str(
@@ -220,8 +220,8 @@ fn an_object_sits_on_the_projected_footprint_corner() {
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
     let object = &map["layers"][1]["objects"][0];
     // Footprint corner (4, 4) with a 32x16 tile: (4-4)*16 = 0, (4+4)/2*16 = 64.
-    // The 4x4 map adds 4 * 32 / 2 = 64, plus half a tile (16).
-    assert_eq!(object["x"], 80.0);
+    // The 4x4 map adds 4 * 32 / 2 = 64, which is the cell's bottom vertex.
+    assert_eq!(object["x"], 64.0);
     assert!((object["y"].as_f64().expect("y") - 64.0).abs() < 0.01);
     let _ = fs::remove_dir_all(dir);
 }
@@ -234,5 +234,30 @@ fn a_canvas_sets_the_map_rectangle() {
     let dir = temp_dir("canvas");
     let report = export(&scene, &dir).expect("export");
     assert_eq!(report.cells, [6, 5]);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn objects_can_be_exported_as_a_tile_layer() {
+    let scene = compile(
+        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 16; place b at (0, 0, 0);",
+    );
+    let dir = temp_dir("tilelayer");
+    let report = export_with(&scene, None, true, &dir).expect("export");
+    let map: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
+    let layer = &map["layers"][1];
+    assert_eq!(layer["name"], "objects");
+    assert_eq!(layer["type"], "tilelayer");
+    assert_eq!(layer["data"], serde_json::json!([2]));
+
+    let ts: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(report.objects_tileset.as_ref().expect("objects tsj")).expect("read"),
+    )
+    .expect("tsj");
+    let expected = (map["tilewidth"].as_i64().expect("map tile width")
+        - ts["imagewidth"].as_i64().expect("image width"))
+        / 2;
+    assert_eq!(ts["tileoffset"]["x"], expected);
     let _ = fs::remove_dir_all(dir);
 }
