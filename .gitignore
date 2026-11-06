@@ -34,3 +34,7 @@ node_modules/
 
 # Agent working area
 .agent/
+
+# Editor build artifacts
+editors/vscode/*.vsix
+editors/vscode/node_modules/

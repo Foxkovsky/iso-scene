@@ -70,3 +70,17 @@ cargo run -p scene-cli -- tiled examples/classroom.scene -o out/tiled
 
 Код: **MIT OR Apache-2.0**. Ассеты и примеры: **CC BY 4.0**.
 См. `LICENSE-MIT`, `LICENSE-APACHE`, `LICENSE-ASSETS`.
+
+## Редактор
+
+Расширение VS Code с предпросмотром `.scene` и `.model` лежит в
+`editors/vscode`. Установка:
+
+```bash
+cargo install --path crates/scene-cli
+cd editors/vscode && npx @vscode/vsce package
+code --install-extension iso-scene-0.2.0.vsix
+```
+
+Команды: `iso-scene: Preview`, `iso-scene: Export PNG`,
+`iso-scene: Export Tiled map`.

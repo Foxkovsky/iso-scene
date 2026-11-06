@@ -1,0 +1,75 @@
+{
+  "name": "iso-scene",
+  "displayName": "iso-scene",
+  "description": "Preview and export iso-scene .scene and .model files",
+  "publisher": "local-iso",
+  "version": "0.2.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:iso-scene",
+    "onCommand:isoScene.preview"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "iso-scene",
+        "aliases": [
+          "iso-scene",
+          "Iso Scene"
+        ],
+        "extensions": [
+          ".scene",
+          ".model",
+          ".walls"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "iso-scene",
+        "scopeName": "source.iso-scene",
+        "path": "./syntaxes/iso-scene.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "isoScene.preview",
+        "title": "iso-scene: Preview"
+      },
+      {
+        "command": "isoScene.exportPng",
+        "title": "iso-scene: Export PNG"
+      },
+      {
+        "command": "isoScene.exportTiled",
+        "title": "iso-scene: Export Tiled map"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "isoScene.preview",
+          "when": "editorLangId == iso-scene",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "iso-scene",
+      "properties": {
+        "isoScene.executable": {
+          "type": "string",
+          "default": "iso-scene",
+          "description": "Path to the iso-scene CLI. Falls back to ~/.cargo/bin/iso-scene."
+        }
+      }
+    }
+  }
+}

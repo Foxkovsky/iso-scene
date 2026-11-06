@@ -168,12 +168,11 @@ fn render_scene(args: Vec<String>) -> ExitCode {
     let Some(source) = read(&path) else {
         return ExitCode::from(2);
     };
-    if Path::new(&path)
+    let extension = Path::new(&path)
         .extension()
-        .and_then(|value| value.to_str())
-        != Some("scene")
-    {
-        eprintln!("iso-scene: `render` expects a .scene file");
+        .and_then(|value| value.to_str());
+    if extension != Some("scene") && extension != Some("model") {
+        eprintln!("iso-scene: `render` expects a .scene or .model file");
         return ExitCode::from(2);
     }
     let program = match scene_syntax::parse(&source) {
@@ -183,9 +182,23 @@ fn render_scene(args: Vec<String>) -> ExitCode {
     let file = Path::new(&path);
     let base = file.parent().unwrap_or_else(|| Path::new("."));
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
-    let scene = match scene_core::compile_scene(&program, base, &root) {
-        Ok(scene) => scene,
-        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    let scene = if extension == Some("model") {
+        let model = match scene_core::compile_model(&program, base) {
+            Ok(model) => model,
+            Err(diagnostic) => return report(&path, &source, &diagnostic),
+        };
+        match model_preview(&model) {
+            Ok(scene) => scene,
+            Err(message) => {
+                eprintln!("iso-scene: {message}");
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        match scene_core::compile_scene(&program, base, &root) {
+            Ok(scene) => scene,
+            Err(diagnostic) => return report(&path, &source, &diagnostic),
+        }
     };
     let output = output.unwrap_or_else(|| {
         let stem = file
@@ -244,6 +257,55 @@ fn render_scene(args: Vec<String>) -> ExitCode {
         scene.instances.len()
     );
     ExitCode::SUCCESS
+}
+
+/// Build a one-row scene from a `.model` file so it can be previewed.
+fn model_preview(model: &scene_core::CompiledModel) -> Result<scene_core::SceneGraph, String> {
+    if model.objects.is_empty() {
+        return Err("the model defines no objects".to_string());
+    }
+    let mut extent: f64 = 1.0;
+    for object in model.objects.values() {
+        let local = object.local_bounds();
+        let size = local.size();
+        extent = extent.max(size[0]).max(size[1]).max(size[2]);
+    }
+    let scale = (220.0 / extent).round().clamp(1.0, 64.0) as u32;
+
+    let mut instances = Vec::new();
+    let mut offset = 0.0_f64;
+    for object in model.objects.values() {
+        instances.push(scene_core::Instance {
+            object: object.clone(),
+            at: [offset, 0.0, 0.0],
+            rotation: 0,
+        });
+        offset += object.width + object.width.mul_add(0.25, 1.0);
+    }
+
+    let mut bounds = scene_core::Bounds {
+        min: [f64::INFINITY; 3],
+        max: [f64::NEG_INFINITY; 3],
+    };
+    for instance in &instances {
+        let local = instance.world_bounds();
+        for axis in 0..3 {
+            bounds.min[axis] = bounds.min[axis].min(local.min[axis]);
+            bounds.max[axis] = bounds.max[axis].max(local.max[axis]);
+        }
+    }
+
+    Ok(scene_core::SceneGraph {
+        render: scene_syntax::ast::RenderKind::Iso,
+        scale,
+        canvas: None,
+        sun: [135.0, 45.0],
+        ambient: 0.35,
+        background: scene_syntax::ast::Background::Transparent,
+        materials: model.materials.clone(),
+        instances,
+        bounds,
+    })
 }
 
 fn voxel_scene(args: Vec<String>) -> ExitCode {

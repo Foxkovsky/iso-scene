@@ -1,0 +1,43 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "iso-scene",
+  "scopeName": "source.iso-scene",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#functions" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.iso-scene", "match": "//.*$" },
+        { "name": "comment.block.iso-scene", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        { "name": "string.quoted.double.iso-scene", "begin": "\"", "end": "\"", "patterns": [{ "name": "constant.character.escape.iso-scene", "match": "\\\\." }] }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.iso-scene", "match": "\\b\\d+(\\.\\d+)?\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.iso-scene", "match": "\\b(version|include|material|object|render|scale|canvas|sun|ambient|background|place|mirror|anchor|use|merge|origin|for|in|if|else|let|var|true|false)\\b" },
+        { "name": "keyword.other.iso-scene", "match": "\\b(box|cyl|sphere|slantbox|slantcyl|ramp|at|size|radius|height|offset|rise|rot|from|to|back|center|front|left|right|cell)\\b" },
+        { "name": "constant.language.iso-scene", "match": "\\b(iso|top|front|side|transparent)\\b" }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        { "name": "entity.name.function.iso-scene", "match": "(?<=\\bobject\\s+)\\w+" },
+        { "name": "entity.name.type.iso-scene", "match": "(?<=\\b(use|place)\\s+)\\w+" }
+      ]
+    }
+  }
+}
