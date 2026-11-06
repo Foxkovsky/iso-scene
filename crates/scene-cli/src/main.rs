@@ -141,9 +141,11 @@ fn eval(args: Vec<String>) -> ExitCode {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_scene(args: Vec<String>) -> ExitCode {
     let mut path: Option<String> = None;
     let mut output: Option<PathBuf> = None;
+    let mut view: Option<String> = None;
     let mut args = args.into_iter();
 
     while let Some(argument) = args.next() {
@@ -153,6 +155,12 @@ fn render_scene(args: Vec<String>) -> ExitCode {
                 return ExitCode::from(2);
             };
             output = Some(PathBuf::from(value));
+        } else if argument == "--view" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--view` needs iso, top, front or side");
+                return ExitCode::from(2);
+            };
+            view = Some(value);
         } else if path.is_none() {
             path = Some(argument);
         } else {
@@ -182,7 +190,7 @@ fn render_scene(args: Vec<String>) -> ExitCode {
     let file = Path::new(&path);
     let base = file.parent().unwrap_or_else(|| Path::new("."));
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
-    let scene = if extension == Some("model") {
+    let mut scene = if extension == Some("model") {
         let model = match scene_core::compile_model(&program, base) {
             Ok(model) => model,
             Err(diagnostic) => return report(&path, &source, &diagnostic),
@@ -200,6 +208,18 @@ fn render_scene(args: Vec<String>) -> ExitCode {
             Err(diagnostic) => return report(&path, &source, &diagnostic),
         }
     };
+    if let Some(view) = view {
+        scene.render = match view.as_str() {
+            "iso" => scene_syntax::ast::RenderKind::Iso,
+            "top" => scene_syntax::ast::RenderKind::Top,
+            "front" => scene_syntax::ast::RenderKind::Front,
+            "side" => scene_syntax::ast::RenderKind::Side,
+            other => {
+                eprintln!("iso-scene: unknown view `{other}`; expected iso, top, front or side");
+                return ExitCode::from(2);
+            }
+        };
+    }
     let output = output.unwrap_or_else(|| {
         let stem = file
             .file_stem()
@@ -260,6 +280,7 @@ fn render_scene(args: Vec<String>) -> ExitCode {
 }
 
 /// Build a one-row scene from a `.model` file so it can be previewed.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn model_preview(model: &scene_core::CompiledModel) -> Result<scene_core::SceneGraph, String> {
     if model.objects.is_empty() {
         return Err("the model defines no objects".to_string());
@@ -308,10 +329,12 @@ fn model_preview(model: &scene_core::CompiledModel) -> Result<scene_core::SceneG
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn voxel_scene(args: Vec<String>) -> ExitCode {
     let mut path: Option<String> = None;
     let mut output: Option<PathBuf> = None;
-    let mut density: u32 = 8;
+    let mut density: f64 = 8.0;
+    let mut explicit_density = false;
     let mut args = args.into_iter();
 
     while let Some(argument) = args.next() {
@@ -326,12 +349,30 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
                 eprintln!("iso-scene: `--density` needs a number");
                 return ExitCode::from(2);
             };
-            match value.parse::<u32>() {
-                Ok(0) | Err(_) => {
+            match value.parse::<f64>() {
+                Ok(value) if value.is_finite() && value > 0.0 => {
+                    density = value;
+                    explicit_density = true;
+                }
+                _ => {
                     eprintln!("iso-scene: invalid density `{value}`");
                     return ExitCode::from(2);
                 }
-                Ok(value) => density = value,
+            }
+        } else if argument == "--voxel-size" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--voxel-size` needs a number");
+                return ExitCode::from(2);
+            };
+            match value.parse::<f64>() {
+                Ok(value) if value.is_finite() && value > 0.0 => {
+                    density = 1.0 / value;
+                    explicit_density = true;
+                }
+                _ => {
+                    eprintln!("iso-scene: invalid voxel size `{value}`");
+                    return ExitCode::from(2);
+                }
             }
         } else if path.is_none() {
             path = Some(argument);
@@ -348,12 +389,11 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
     let Some(source) = read(&path) else {
         return ExitCode::from(2);
     };
-    if Path::new(&path)
+    let extension = Path::new(&path)
         .extension()
-        .and_then(|value| value.to_str())
-        != Some("scene")
-    {
-        eprintln!("iso-scene: `voxel` expects a .scene file");
+        .and_then(|value| value.to_str());
+    if extension != Some("scene") && extension != Some("model") {
+        eprintln!("iso-scene: `voxel` expects a .scene or .model file");
         return ExitCode::from(2);
     }
     let program = match scene_syntax::parse(&source) {
@@ -363,10 +403,30 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
     let file = Path::new(&path);
     let base = file.parent().unwrap_or_else(|| Path::new("."));
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
-    let scene = match scene_core::compile_scene(&program, base, &root) {
-        Ok(scene) => scene,
-        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    let scene = if extension == Some("model") {
+        let model = match scene_core::compile_model(&program, base) {
+            Ok(model) => model,
+            Err(diagnostic) => return report(&path, &source, &diagnostic),
+        };
+        match model_preview(&model) {
+            Ok(scene) => scene,
+            Err(message) => {
+                eprintln!("iso-scene: {message}");
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        match scene_core::compile_scene(&program, base, &root) {
+            Ok(scene) => scene,
+            Err(diagnostic) => return report(&path, &source, &diagnostic),
+        }
     };
+    if !explicit_density {
+        // Fit the longest axis into roughly 128 voxels.
+        let size = scene.bounds.size();
+        let extent = size[0].max(size[1]).max(size[2]).max(1.0);
+        density = (128.0 / extent).clamp(0.05, 8.0);
+    }
     let model = match scene_backend_voxel::voxelize(&scene, density) {
         Ok(model) => model,
         Err(diagnostic) => return report(&path, &source, &diagnostic),

@@ -14,7 +14,7 @@ fn compile(source: &str) -> scene_core::SceneGraph {
 }
 
 fn voxel_source(source: &str) -> VoxelModel {
-    voxelize(&compile(source), 8)
+    voxelize(&compile(source), 8.0)
         .unwrap_or_else(|error| panic!("{}: {}", error.code, error.message))
 }
 
@@ -35,7 +35,7 @@ fn rotation_swaps_plan_extents() {
         &compile(
             "version 1; object slab (2, 1) { box at (0, 0, 0) size (2, 1, 1) material wood; } render iso; scale 8; place slab at (0, 0, 0) rot 90;",
         ),
-        4,
+        4.0,
     )
     .expect("voxelize");
     assert_eq!(model.size, [4, 8, 4]);
@@ -64,7 +64,7 @@ fn custom_material_colour_reaches_the_palette() {
     "#;
     let program = parse(source).expect("parse");
     let scene = compile_scene(&program, &root, &root).expect("compile");
-    let model = voxelize(&scene, 4).expect("voxelize");
+    let model = voxelize(&scene, 4.0).expect("voxelize");
     assert_eq!(model.palette, vec![[0x33, 0x66, 0xCC]]);
     let _ = fs::remove_dir_all(root);
 }
@@ -110,7 +110,7 @@ fn too_dense_grid_is_rejected() {
     let scene = compile(
         "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 8; place b at (0, 0, 0);",
     );
-    let error = voxelize(&scene, 300).expect_err("grid is too large");
+    let error = voxelize(&scene, 300.0).expect_err("grid is too large");
     assert_eq!(error.code, "E0602");
 }
 
@@ -121,7 +121,7 @@ fn an_oversized_grid_suggests_a_density_that_fits() {
     let scene = compile(
         "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 8) material wood; } render iso; scale 8; place b at (0, 0, 0);",
     );
-    let error = voxelize(&scene, 300).expect_err("grid is too large");
+    let error = voxelize(&scene, 300.0).expect_err("grid is too large");
     assert_eq!(error.code, "E0602");
     assert!(
         error.message.contains("--density 32"),
@@ -136,7 +136,7 @@ fn a_model_without_a_valid_density_is_reported_as_too_large() {
     let scene = compile(
         "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 320) material wood; } render iso; scale 8; place b at (0, 0, 0);",
     );
-    let error = voxelize(&scene, 1).expect_err("grid is too tall");
+    let error = voxelize(&scene, 1.0).expect_err("grid is too tall");
     assert_eq!(error.code, "E0602");
     assert!(
         error.message.contains("scale it down"),
@@ -148,7 +148,7 @@ fn a_model_without_a_valid_density_is_reported_as_too_large() {
 #[test]
 fn empty_scene_is_rejected() {
     let scene = compile("version 1; render iso; scale 8;");
-    let error = voxelize(&scene, 8).expect_err("nothing to voxelize");
+    let error = voxelize(&scene, 8.0).expect_err("nothing to voxelize");
     assert_eq!(error.code, "E0602");
 }
 

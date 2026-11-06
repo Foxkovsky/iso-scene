@@ -3,7 +3,7 @@
   "displayName": "iso-scene",
   "description": "Preview and export iso-scene .scene and .model files",
   "publisher": "local-iso",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -50,12 +50,21 @@
       {
         "command": "isoScene.exportTiled",
         "title": "iso-scene: Export Tiled map"
+      },
+      {
+        "command": "isoScene.build",
+        "title": "iso-scene: Build"
       }
     ],
     "menus": {
       "editor/title": [
         {
           "command": "isoScene.preview",
+          "when": "editorLangId == iso-scene",
+          "group": "navigation"
+        },
+        {
+          "command": "isoScene.build",
           "when": "editorLangId == iso-scene",
           "group": "navigation"
         }

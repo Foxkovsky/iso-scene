@@ -86,15 +86,15 @@ impl VoxelModel {
 /// Returns `E0601` for material problems, `E0602` for an empty scene or a
 /// grid larger than 256³, and `E0604` for invalid density.
 #[allow(clippy::too_many_lines)]
-pub fn voxelize(scene: &SceneGraph, voxels_per_block: u32) -> Result<VoxelModel, Diagnostic> {
-    if voxels_per_block == 0 {
+pub fn voxelize(scene: &SceneGraph, voxels_per_block: f64) -> Result<VoxelModel, Diagnostic> {
+    if !voxels_per_block.is_finite() || voxels_per_block <= 0.0 {
         return Err(error("E0604", "voxels per block must be positive"));
     }
     if scene.instances.is_empty() {
         return Err(error("E0602", "scene has no instances to voxelize"));
     }
 
-    let step = 1.0 / f64::from(voxels_per_block);
+    let step = 1.0 / voxels_per_block;
     let bounds = scene.bounds;
     let extent = [
         bounds.max[0] - bounds.min[0],
