@@ -44,7 +44,12 @@ fn simple_box_exports_to_a_tiled_map() {
     assert_eq!(map["tilewidth"], 32);
     assert_eq!(map["tileheight"], 16);
     assert_eq!(map["layers"][0]["data"], serde_json::json!([1]));
-    assert_eq!(map["layers"][1]["data"], serde_json::json!([2]));
+    assert_eq!(map["layers"][1]["type"], "objectgroup");
+    let objects = map["layers"][1]["objects"].as_array().expect("objects");
+    assert_eq!(objects.len(), 1);
+    assert_eq!(objects[0]["gid"], 2);
+    assert!(objects[0]["x"].as_f64().is_some());
+    assert!(objects[0]["y"].as_f64().is_some());
 
     let ts: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.objects_tileset).expect("read tsj"))
@@ -71,24 +76,40 @@ fn two_rotations_produce_two_object_tiles() {
 }
 
 #[test]
-fn two_objects_in_one_cell_are_rejected() {
+fn two_objects_in_one_cell_are_allowed_in_an_object_layer() {
     let scene = compile(
         "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 16; place b at (0, 0, 0); place b at (0, 0, 0) rot 90;",
     );
     let dir = temp_dir("collision");
-    let error = export(&scene, &dir).expect_err("collision");
-    assert_eq!(error.code, "E0602");
+    let report = export(&scene, &dir).expect("export");
+    let map: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
+    assert_eq!(
+        map["layers"][1]["objects"]
+            .as_array()
+            .expect("objects")
+            .len(),
+        2
+    );
     let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
-fn elevated_objects_are_rejected() {
+fn elevated_objects_use_a_z_property() {
     let scene = compile(
         "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 16; place b at (0, 0, 1);",
     );
     let dir = temp_dir("elevated");
-    let error = export(&scene, &dir).expect_err("elevated");
-    assert_eq!(error.code, "E0602");
+    let report = export(&scene, &dir).expect("export");
+    let map: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
+    let object = &map["layers"][1]["objects"][0];
+    let properties = object["properties"].as_array().expect("properties");
+    let z = properties
+        .iter()
+        .find(|property| property["name"] == "z")
+        .expect("z property");
+    assert_eq!(z["value"], 1.0);
     let _ = fs::remove_dir_all(dir);
 }
 

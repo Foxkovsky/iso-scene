@@ -97,10 +97,11 @@ Occupancy sampling of the same `SceneGraph`:
 - `objects.tsj` + `objects.png` — atlas of unique object/rotation sprites;
 - `preview.png` — the normal iso render.
 
-Tiles are placed in a tile layer at the instance's bottom-right footprint cell.
-The tileset `tileoffset` aligns the common sprite anchor with the cell.
+Objects are written as tile objects in an `objectgroup` layer, ordered by
+depth (`x + width + y + depth + z`, far to near). This allows several objects
+in one cell and objects above the floor. The tileset has no `tileoffset`; each
+object is positioned by its sprite anchor and the map's isometric origin.
 
-A tile layer is drawn by cell row (`right-down`), not by true 3D depth. An
-object that must be occluded by another has to be placed in a lower row.
-Depth-sorted object-layer export is future work. Only ground-level (`z = 0`)
-objects and one object per cell are supported for now.
+The `floor` layer remains a regular tile layer. Because object order is stored
+in the object layer, the Tiled `draworder` is `index`; do not sort objects in
+the Tiled UI if you want to preserve the generated depth order.

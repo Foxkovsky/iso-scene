@@ -200,10 +200,7 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
         "imageheight": canvas_h,
         "margin": 0,
         "spacing": 0,
-        "tileoffset": {
-            "x": i64::from(tile_w / 2) - anchor_x as i64,
-            "y": i64::from(canvas_h) - 1 - anchor_y as i64
-        },
+        "tileoffset": {"x": 0, "y": 0},
         "tiles": object_tiles
     });
     let object_ts_path = out_dir.join("objects.tsj");
@@ -221,36 +218,44 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
     }
 
     let floor_data = vec![1_u32; (width * height) as usize];
-    let mut object_data = vec![0_u32; (width * height) as usize];
-    for instance in &scene.instances {
-        if instance.at[2].abs() > 1e-9 {
-            return Err(error(
-                "E0602",
-                "Tiled tile layers support ground-level instances only",
-            ));
-        }
-        let cell_x = (instance.at[0] + instance.object.width - 1e-9).floor() as i64 - min_x;
-        let cell_y = (instance.at[1] + instance.object.depth - 1e-9).floor() as i64 - min_y;
-        if cell_x < 0 || cell_y < 0 || cell_x >= i64::from(width) || cell_y >= i64::from(height) {
-            return Err(error(
-                "E0602",
-                format!("object `{}` is outside the Tiled map", instance.object.name),
-            ));
-        }
-        let index = (cell_y as u32 * width + cell_x as u32) as usize;
-        if object_data[index] != 0 {
-            return Err(error(
-                "E0602",
-                format!("two objects land in Tiled cell ({cell_x}, {cell_y}); move one of them"),
-            ));
-        }
+    let mut ordered: Vec<&scene_core::Instance> = scene.instances.iter().collect();
+    ordered.sort_by(|a, b| {
+        let left = a.at[0] + a.object.width + a.at[1] + a.object.depth + a.at[2];
+        let right = b.at[0] + b.object.width + b.at[1] + b.object.depth + b.at[2];
+        left.total_cmp(&right)
+    });
+
+    let mut objects = Vec::with_capacity(ordered.len());
+    for (index, instance) in ordered.iter().enumerate() {
         let sprite_index = sprites
             .iter()
             .position(|(key, _)| {
                 key.name == instance.object.name && key.rotation == instance.rotation
             })
             .ok_or_else(|| error("E0602", "internal sprite index failed"))?;
-        object_data[index] = 2 + sprite_index as u32;
+        let local_x = instance.at[0] - min_x as f64;
+        let local_y = instance.at[1] - min_y as f64;
+        let anchor_screen = [
+            (local_x - local_y) * f64::from(scale) + f64::from(height * scale),
+            local_x.midpoint(local_y) * f64::from(scale) - instance.at[2] * f64::from(scale),
+        ];
+        let object_x = anchor_screen[0] - anchor_x;
+        let object_y = anchor_screen[1] - anchor_y + f64::from(canvas_h);
+        objects.push(json!({
+            "id": index + 1,
+            "gid": 2 + sprite_index as u32,
+            "x": object_x,
+            "y": object_y,
+            "width": canvas_w,
+            "height": canvas_h,
+            "name": instance.object.name,
+            "type": instance.object.name,
+            "visible": true,
+            "properties": [
+                {"name": "rotation", "type": "int", "value": instance.rotation},
+                {"name": "z", "type": "float", "value": instance.at[2]}
+            ]
+        }));
     }
 
     let map = json!({
@@ -265,7 +270,7 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
         "tileheight": tile_h,
         "infinite": false,
         "nextlayerid": 3,
-        "nextobjectid": 1,
+        "nextobjectid": objects.len() + 1,
         "tilesets": [
             {"firstgid": 1, "source": "floor.tsj"},
             {"firstgid": 2, "source": "objects.tsj"}
@@ -284,16 +289,15 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
                 "data": floor_data
             },
             {
-                "type": "tilelayer",
+                "type": "objectgroup",
                 "name": "objects",
                 "id": 2,
-                "width": width,
-                "height": height,
                 "x": 0,
                 "y": 0,
                 "opacity": 1,
                 "visible": true,
-                "data": object_data
+                "draworder": "index",
+                "objects": objects
             }
         ]
     });
