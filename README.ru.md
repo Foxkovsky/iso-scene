@@ -50,13 +50,14 @@ cargo run -p scene-cli -- tiled examples/classroom.scene -o out/tiled
 ```
 
 Лексер, парсер, вычислитель, изометрический и ортогональные бэкенды,
-материалы, воксельный экспорт и экспорт в Tiled реализованы.
-Нормативные документы:
+материалы, воксельный экспорт и экспорт в Tiled с отдельным слоем стен
+реализованы. Нормативные документы:
 
 - [`docs/spec.md`](docs/spec.md) — семантика языка;
 - [`docs/grammar.ebnf`](docs/grammar.ebnf) — грамматика;
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — устройство и крейты;
-- [`docs/projections.md`](docs/projections.md) — формулы проекций и их проверки.
+- [`docs/projections.md`](docs/projections.md) — формулы проекций и их проверки;
+- [`docs/walls.md`](docs/walls.md) — формат `.walls`, 16 масок и слой стен в Tiled.
 
 Примеры: [`examples/chair.model`](examples/chair.model),
 [`examples/classroom.scene`](examples/classroom.scene).

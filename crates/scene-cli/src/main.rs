@@ -321,6 +321,7 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
 
 fn tiled_scene(args: Vec<String>) -> ExitCode {
     let mut path: Option<String> = None;
+    let mut walls_path: Option<String> = None;
     let mut output = PathBuf::from("out/tiled");
     let mut args = args.into_iter();
 
@@ -331,6 +332,12 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
                 return ExitCode::from(2);
             };
             output = PathBuf::from(value);
+        } else if argument == "--walls" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--walls` needs a .walls file");
+                return ExitCode::from(2);
+            };
+            walls_path = Some(value);
         } else if path.is_none() {
             path = Some(argument);
         } else {
@@ -365,7 +372,20 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
         Ok(scene) => scene,
         Err(diagnostic) => return report(&path, &source, &diagnostic),
     };
-    let exported = match scene_export_tiled::export(&scene, &output) {
+    let walls = if let Some(walls_path) = walls_path {
+        let walls_file = Path::new(&walls_path);
+        let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        match scene_walls::load(walls_file, &root) {
+            Ok(walls) => Some(walls),
+            Err(diagnostic) => {
+                let walls_source = fs::read_to_string(walls_file).unwrap_or_default();
+                return report(&walls_path, &walls_source, &diagnostic);
+            }
+        }
+    } else {
+        None
+    };
+    let exported = match scene_export_tiled::export_with_walls(&scene, walls.as_ref(), &output) {
         Ok(report) => report,
         Err(diagnostic) => return report(&path, &source, &diagnostic),
     };
@@ -436,6 +456,7 @@ fn print_help() {
     println!("  render <file>   render a .scene with the iso or ortho backend");
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
+    println!("                  --walls <file> adds a 16-way wall tile layer with Wang set");
     println!("  spec-version    print the implemented language version");
     println!();
     println!("Options:");

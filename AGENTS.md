@@ -43,7 +43,7 @@ Before claiming success, run `cargo test --workspace` and `cargo clippy
 ## Current state
 
 - Specification: draft v1.
-- Implementation: lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel and Tiled export are complete; LSP/MCP are next.
+- Implementation: lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel/Tiled export and walls are complete; LSP/MCP are next.
 - Tests: lexer, parser, evaluator, iso/ortho projections and renders, examples, CLI. Generated PNGs are not committed.
 
 ## Adding a feature

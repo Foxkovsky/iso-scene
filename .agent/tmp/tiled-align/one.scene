@@ -1,0 +1,6 @@
+version 1;
+object one (1, 1) { box at (0, 0, 0) size (1, 1, 1) material red; }
+render iso;
+scale 32;
+background #202226;
+place one at (0, 0, 0);

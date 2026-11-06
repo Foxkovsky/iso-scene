@@ -48,15 +48,18 @@ cargo run -p scene-cli -- render examples/classroom.scene -o out/classroom.png
 cargo run -p scene-cli -- render examples/classroom_top.scene -o out/classroom_top.png
 cargo run -p scene-cli -- voxel examples/classroom.scene --density 7 -o out/classroom.vox
 cargo run -p scene-cli -- tiled examples/classroom.scene -o out/tiled
+# with walls: cargo run -p scene-cli -- tiled room.scene --walls room.walls -o out/tiled
 ```
 
 The lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel export
-and an isometric Tiled exporter are implemented. The normative documents are:
+and an isometric Tiled exporter with a separate wall layer are implemented.
+The normative documents are:
 
 - [`docs/spec.md`](docs/spec.md) — language semantics;
 - [`docs/grammar.ebnf`](docs/grammar.ebnf) — grammar;
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — pipeline and crates;
-- [`docs/projections.md`](docs/projections.md) — projection formulas and their tests.
+- [`docs/projections.md`](docs/projections.md) — projection formulas and their tests;
+- [`docs/walls.md`](docs/walls.md) — `.walls` format, 16-way masks and Tiled walls.
 
 Examples: [`examples/chair.model`](examples/chair.model),
 [`examples/classroom.scene`](examples/classroom.scene).

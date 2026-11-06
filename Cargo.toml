@@ -4,6 +4,7 @@ members = [
     "crates/scene-syntax",
     "crates/scene-core",
     "crates/scene-render",
+    "crates/scene-walls",
     "crates/scene-backend-iso",
     "crates/scene-backend-ortho",
     "crates/scene-backend-voxel",

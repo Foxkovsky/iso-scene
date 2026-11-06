@@ -1,0 +1,42 @@
+{
+  "columns": 1,
+  "image": "objects.png",
+  "imageheight": 67,
+  "imagewidth": 72,
+  "margin": 0,
+  "name": "scene_objects",
+  "spacing": 0,
+  "tilecount": 1,
+  "tiledversion": "1.12.2",
+  "tileheight": 67,
+  "tileoffset": {
+    "x": 0,
+    "y": 0
+  },
+  "tiles": [
+    {
+      "id": 0,
+      "properties": [
+        {
+          "name": "rotation",
+          "type": "int",
+          "value": 0
+        },
+        {
+          "name": "walkable",
+          "type": "bool",
+          "value": false
+        },
+        {
+          "name": "collides",
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "type": "one"
+    }
+  ],
+  "tilewidth": 72,
+  "type": "tileset",
+  "version": "1.10"
+}

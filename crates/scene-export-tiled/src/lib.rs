@@ -10,14 +10,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use scene_backend_iso::{Sprite, render_object_sprite};
+use scene_backend_iso::{Sprite, project_point, render_object_sprite};
 use scene_core::SceneGraph;
 use scene_render::{Image, write_png};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::RenderKind;
+use scene_walls::{WallLayout, layer_data, render_tiles, wangid};
 use serde_json::{Value, json};
 
-const PAD: f64 = 2.0;
 const MAX_MAP_CELLS: u64 = 1_000_000;
 
 /// Files written by [`export`].
@@ -26,6 +26,7 @@ pub struct ExportReport {
     pub map: PathBuf,
     pub floor_tileset: PathBuf,
     pub objects_tileset: PathBuf,
+    pub walls_tileset: Option<PathBuf>,
     pub preview: PathBuf,
     pub instances: usize,
     pub cells: [u32; 2],
@@ -35,6 +36,13 @@ pub struct ExportReport {
 struct SpriteKey {
     name: String,
     rotation: u16,
+}
+
+struct SpriteEntry {
+    key: SpriteKey,
+    sprite: Sprite,
+    bottom_world: [f64; 3],
+    bottom_px: [f64; 2],
 }
 
 /// Export a scene to `out_dir`.
@@ -49,6 +57,20 @@ struct SpriteKey {
 /// outside the map, and `E0603` for file errors.
 #[allow(clippy::too_many_lines)]
 pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagnostic> {
+    export_with_walls(scene, None, out_dir)
+}
+
+/// Export a scene with an optional generated wall layer.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`export`], plus wall tileset failures.
+#[allow(clippy::too_many_lines)]
+pub fn export_with_walls(
+    scene: &SceneGraph,
+    walls: Option<&WallLayout>,
+    out_dir: &Path,
+) -> Result<ExportReport, Diagnostic> {
     if scene.render != RenderKind::Iso {
         return Err(error(
             "E0604",
@@ -68,6 +90,53 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
         .ok_or_else(|| error("E0602", "scale is too large for a Tiled tileset"))?;
     let tile_h = scale;
 
+    let wall_tileset_path = if let Some(layout) = walls {
+        let tiles = render_tiles(layout, scale);
+        let image_path = out_dir.join("walls.png");
+        write_png(&tiles.image, &image_path).map_err(|message| error("E0603", message))?;
+        let tileset = json!({
+            "type": "tileset",
+            "name": "walls",
+            "version": "1.10",
+            "tiledversion": "1.12.2",
+            "tilewidth": tiles.tile_width,
+            "tileheight": tiles.tile_height,
+            "tilecount": 16,
+            "columns": 16,
+            "image": "walls.png",
+            "imagewidth": tiles.tile_width * 16,
+            "imageheight": tiles.tile_height,
+            "margin": 0,
+            "spacing": 0,
+            "tileoffset": {"x": 0, "y": 0},
+            "tiles": (0..16_u8).map(|mask| json!({
+                "id": mask,
+                "type": "wall",
+                "properties": [
+                    {"name": "mask", "type": "int", "value": mask},
+                    {"name": "connections", "type": "int", "value": 4 - mask.count_ones()},
+                    {"name": "walkable", "type": "bool", "value": false},
+                    {"name": "collides", "type": "bool", "value": true}
+                ]
+            })).collect::<Vec<_>>(),
+            "wangsets": [{
+                "name": "wall",
+                "type": "edge",
+                "tile": -1,
+                "colors": [{"name": "wall", "color": "#7a8794", "tile": -1, "probability": 1}],
+                "wangtiles": (0..16_u8).map(|mask| json!({
+                    "tileid": mask,
+                    "wangid": wangid(mask)
+                })).collect::<Vec<_>>()
+            }]
+        });
+        let path = out_dir.join("walls.tsj");
+        write_json(&path, &tileset)?;
+        Some(path)
+    } else {
+        None
+    };
+
     let mut keys = Vec::new();
     for instance in &scene.instances {
         let key = SpriteKey {
@@ -79,7 +148,7 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
         }
     }
 
-    let mut sprites: Vec<(SpriteKey, Sprite)> = Vec::with_capacity(keys.len());
+    let mut sprites: Vec<SpriteEntry> = Vec::with_capacity(keys.len());
     for key in keys {
         let Some(instance) = scene
             .instances
@@ -94,30 +163,45 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
             scale,
             &scene.materials,
         )?;
-        sprites.push((key, sprite));
+        let zero = scene_core::Instance {
+            object: instance.object.clone(),
+            at: [0.0, 0.0, 0.0],
+            rotation: instance.rotation,
+        };
+        let bounds = zero.world_bounds();
+        let bottom_world = [bounds.max[0], bounds.max[1], bounds.min[2]];
+        let projected = project_point(bottom_world, f64::from(scale));
+        let bottom_px = [
+            sprite.anchor[0] + projected[0],
+            sprite.anchor[1] + projected[1],
+        ];
+        sprites.push(SpriteEntry {
+            key,
+            sprite,
+            bottom_world,
+            bottom_px,
+        });
     }
 
-    let anchor_x = sprites
+    let max_left = sprites
         .iter()
-        .map(|(_, sprite)| sprite.anchor[0])
-        .fold(f64::NEG_INFINITY, f64::max)
-        .ceil()
-        + PAD;
-    let anchor_y = sprites
+        .map(|entry| entry.bottom_px[0])
+        .fold(0.0_f64, f64::max);
+    let max_right = sprites
         .iter()
-        .map(|(_, sprite)| sprite.anchor[1])
-        .fold(f64::NEG_INFINITY, f64::max)
-        .ceil()
-        + PAD;
-
+        .map(|entry| f64::from(entry.sprite.image.width) - entry.bottom_px[0])
+        .fold(0.0_f64, f64::max);
+    let max_up = sprites
+        .iter()
+        .map(|entry| entry.bottom_px[1])
+        .fold(0.0_f64, f64::max);
+    let canvas_w = (2.0 * max_left.max(max_right)).ceil().max(2.0) as u32 + 2;
+    let canvas_h = max_up.ceil().max(2.0) as u32 + 1;
+    let canvas_anchor = [f64::from(canvas_w) / 2.0, f64::from(canvas_h)];
     let mut offsets = Vec::with_capacity(sprites.len());
-    let mut canvas_w = 1_u32;
-    let mut canvas_h = 1_u32;
-    for (_, sprite) in &sprites {
-        let offset_x = (anchor_x - sprite.anchor[0]).round().max(0.0) as u32;
-        let offset_y = (anchor_y - sprite.anchor[1]).round().max(0.0) as u32;
-        canvas_w = canvas_w.max(offset_x + sprite.image.width + 1);
-        canvas_h = canvas_h.max(offset_y + sprite.image.height + 1);
+    for entry in &sprites {
+        let offset_x = (canvas_anchor[0] - entry.bottom_px[0]).round().max(0.0) as u32;
+        let offset_y = (canvas_anchor[1] - entry.bottom_px[1]).round().max(0.0) as u32;
         offsets.push((offset_x, offset_y));
     }
 
@@ -128,12 +212,10 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
         height: canvas_h,
         rgba: vec![0; (canvas_w as usize) * (canvas_h as usize) * sprites.len() * 4],
     };
-    for (index, ((_, sprite), (offset_x, offset_y))) in
-        sprites.iter().zip(offsets.iter()).enumerate()
-    {
+    for (index, (entry, (offset_x, offset_y))) in sprites.iter().zip(offsets.iter()).enumerate() {
         blit(
             &mut atlas,
-            &sprite.image,
+            &entry.sprite.image,
             *offset_x + index as u32 * canvas_w,
             *offset_y,
         );
@@ -174,12 +256,12 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
     let object_tiles: Vec<Value> = sprites
         .iter()
         .enumerate()
-        .map(|(index, (key, _))| {
+        .map(|(index, key)| {
             json!({
                 "id": index,
-                "type": key.name,
+                "type": key.key.name,
                 "properties": [
-                    {"name": "rotation", "type": "int", "value": key.rotation},
+                    {"name": "rotation", "type": "int", "value": key.key.rotation},
                     {"name": "walkable", "type": "bool", "value": false},
                     {"name": "collides", "type": "bool", "value": true}
                 ]
@@ -206,10 +288,14 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
     let object_ts_path = out_dir.join("objects.tsj");
     write_json(&object_ts_path, &object_ts)?;
 
-    let min_x = scene.bounds.min[0].floor() as i64;
-    let min_y = scene.bounds.min[1].floor() as i64;
-    let width = ((scene.bounds.max[0].ceil() as i64) - min_x).max(1) as u32;
-    let height = ((scene.bounds.max[1].ceil() as i64) - min_y).max(1) as u32;
+    let wall_columns = walls.map_or(0.0, |layout| f64::from(layout.columns));
+    let wall_rows = walls.map_or(0.0, |layout| f64::from(layout.rows));
+    let min_x = scene.bounds.min[0].floor().min(0.0) as i64;
+    let min_y = scene.bounds.min[1].floor().min(0.0) as i64;
+    let max_x = scene.bounds.max[0].ceil().max(wall_columns);
+    let max_y = scene.bounds.max[1].ceil().max(wall_rows);
+    let width = ((max_x as i64) - min_x).max(1) as u32;
+    let height = ((max_y as i64) - min_y).max(1) as u32;
     if u64::from(width) * u64::from(height) > MAX_MAP_CELLS {
         return Err(error(
             "E0602",
@@ -218,6 +304,9 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
     }
 
     let floor_data = vec![1_u32; (width * height) as usize];
+    let wall_first_gid = 2 + sprites.len() as u32;
+    let wall_data =
+        walls.map(|layout| layer_data(layout, width, height, min_x, min_y, wall_first_gid));
     let mut ordered: Vec<&scene_core::Instance> = scene.instances.iter().collect();
     ordered.sort_by(|a, b| {
         let left = a.at[0] + a.object.width + a.at[1] + a.object.depth + a.at[2];
@@ -229,18 +318,20 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
     for (index, instance) in ordered.iter().enumerate() {
         let sprite_index = sprites
             .iter()
-            .position(|(key, _)| {
-                key.name == instance.object.name && key.rotation == instance.rotation
+            .position(|entry| {
+                entry.key.name == instance.object.name && entry.key.rotation == instance.rotation
             })
             .ok_or_else(|| error("E0602", "internal sprite index failed"))?;
-        let local_x = instance.at[0] - min_x as f64;
-        let local_y = instance.at[1] - min_y as f64;
-        let anchor_screen = [
-            (local_x - local_y) * f64::from(scale) + f64::from(height * scale),
-            local_x.midpoint(local_y) * f64::from(scale) - instance.at[2] * f64::from(scale),
+        let entry = &sprites[sprite_index];
+        let bottom_world = [
+            instance.at[0] + entry.bottom_world[0],
+            instance.at[1] + entry.bottom_world[1],
+            instance.at[2] + entry.bottom_world[2],
         ];
-        let object_x = anchor_screen[0] - anchor_x;
-        let object_y = anchor_screen[1] - anchor_y + f64::from(canvas_h);
+        let local_x = bottom_world[0] - min_x as f64;
+        let local_y = bottom_world[1] - min_y as f64;
+        let object_x = (local_x - bottom_world[2]) * f64::from(scale);
+        let object_y = (local_y - bottom_world[2]) * f64::from(scale);
         objects.push(json!({
             "id": index + 1,
             "gid": 2 + sprite_index as u32,
@@ -258,6 +349,51 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
         }));
     }
 
+    let mut tilesets = vec![
+        json!({"firstgid": 1, "source": "floor.tsj"}),
+        json!({"firstgid": 2, "source": "objects.tsj"}),
+    ];
+    let mut layers = vec![
+        json!({
+            "type": "tilelayer",
+            "name": "floor",
+            "id": 1,
+            "width": width,
+            "height": height,
+            "x": 0,
+            "y": 0,
+            "opacity": 1,
+            "visible": true,
+            "data": floor_data
+        }),
+        json!({
+            "type": "objectgroup",
+            "name": "objects",
+            "id": 2,
+            "x": 0,
+            "y": 0,
+            "opacity": 1,
+            "visible": true,
+            "draworder": "index",
+            "objects": objects
+        }),
+    ];
+    if let (Some(_), Some(data)) = (walls, wall_data) {
+        tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
+        layers.push(json!({
+            "type": "tilelayer",
+            "name": "walls",
+            "id": 3,
+            "width": width,
+            "height": height,
+            "x": 0,
+            "y": 0,
+            "opacity": 1,
+            "visible": true,
+            "data": data
+        }));
+    }
+
     let map = json!({
         "type": "map",
         "version": "1.10",
@@ -269,37 +405,10 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
         "tilewidth": tile_w,
         "tileheight": tile_h,
         "infinite": false,
-        "nextlayerid": 3,
+        "nextlayerid": if walls.is_some() { 4 } else { 3 },
         "nextobjectid": objects.len() + 1,
-        "tilesets": [
-            {"firstgid": 1, "source": "floor.tsj"},
-            {"firstgid": 2, "source": "objects.tsj"}
-        ],
-        "layers": [
-            {
-                "type": "tilelayer",
-                "name": "floor",
-                "id": 1,
-                "width": width,
-                "height": height,
-                "x": 0,
-                "y": 0,
-                "opacity": 1,
-                "visible": true,
-                "data": floor_data
-            },
-            {
-                "type": "objectgroup",
-                "name": "objects",
-                "id": 2,
-                "x": 0,
-                "y": 0,
-                "opacity": 1,
-                "visible": true,
-                "draworder": "index",
-                "objects": objects
-            }
-        ]
+        "tilesets": tilesets,
+        "layers": layers
     });
     let map_path = out_dir.join("scene.tmj");
     write_json(&map_path, &map)?;
@@ -312,6 +421,7 @@ pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagno
         map: map_path,
         floor_tileset: floor_ts_path,
         objects_tileset: object_ts_path,
+        walls_tileset: wall_tileset_path,
         preview: preview_path,
         instances: scene.instances.len(),
         cells: [width, height],

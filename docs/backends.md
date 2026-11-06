@@ -105,3 +105,10 @@ object is positioned by its sprite anchor and the map's isometric origin.
 The `floor` layer remains a regular tile layer. Because object order is stored
 in the object layer, the Tiled `draworder` is `index`; do not sort objects in
 the Tiled UI if you want to preserve the generated depth order.
+
+## Walls
+
+A `.walls` layout is exported as a third Tiled layer named `walls`, above
+`floor` and `objects`. The generated tileset has 16 tiles matching the 16
+neighbour masks and an edge Wang set named `wall`. Connected sides have no
+outline, so the wall reads as one continuous surface. See `docs/walls.md`.

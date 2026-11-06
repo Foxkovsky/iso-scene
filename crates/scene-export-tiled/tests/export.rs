@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use scene_core::compile_scene;
-use scene_export_tiled::export;
+use scene_export_tiled::{export, export_with_walls};
 use scene_syntax::parse;
 
 fn compile(source: &str) -> scene_core::SceneGraph {
@@ -48,8 +48,8 @@ fn simple_box_exports_to_a_tiled_map() {
     let objects = map["layers"][1]["objects"].as_array().expect("objects");
     assert_eq!(objects.len(), 1);
     assert_eq!(objects[0]["gid"], 2);
-    assert!(objects[0]["x"].as_f64().is_some());
-    assert!(objects[0]["y"].as_f64().is_some());
+    assert_eq!(objects[0]["x"], 16.0);
+    assert_eq!(objects[0]["y"], 16.0);
 
     let ts: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.objects_tileset).expect("read tsj"))
@@ -121,5 +121,47 @@ fn orthographic_scene_is_rejected() {
     let dir = temp_dir("top");
     let error = export(&scene, &dir).expect_err("top");
     assert_eq!(error.code, "E0604");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn walls_produce_a_separate_tile_layer_and_wang_set() {
+    let scene = compile(
+        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 16; place b at (0, 0, 0);",
+    );
+    let walls = scene_walls::parse(
+        "version 1;\nheight 2;\nlayout {\n\"###\"\n\"#.#\"\n\"###\"\n}\n",
+        Path::new("."),
+        Path::new("."),
+    )
+    .expect("walls");
+    let dir = temp_dir("walls");
+    let report = export_with_walls(&scene, Some(&walls), &dir).expect("export walls");
+    assert!(report.walls_tileset.is_some());
+
+    let map: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
+    assert_eq!(map["layers"].as_array().expect("layers").len(), 3);
+    assert_eq!(map["layers"][2]["name"], "walls");
+    let walls_data = map["layers"][2]["data"].as_array().expect("wall data");
+    assert!(
+        walls_data
+            .iter()
+            .any(|value| value.as_u64().unwrap_or(0) > 0)
+    );
+    assert_eq!(map["tilesets"].as_array().expect("tilesets").len(), 3);
+
+    let ts: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(report.walls_tileset.as_ref().expect("walls tsj")).expect("read tsj"),
+    )
+    .expect("tsj");
+    assert_eq!(ts["tilecount"], 16);
+    assert_eq!(
+        ts["wangsets"][0]["wangtiles"]
+            .as_array()
+            .expect("wangtiles")
+            .len(),
+        16
+    );
     let _ = fs::remove_dir_all(dir);
 }

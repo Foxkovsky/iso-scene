@@ -172,6 +172,7 @@ dependencies = [
  "scene-export-tiled",
  "scene-render",
  "scene-syntax",
+ "scene-walls",
 ]
 
 [[package]]
@@ -189,6 +190,7 @@ dependencies = [
  "scene-core",
  "scene-render",
  "scene-syntax",
+ "scene-walls",
  "serde_json",
 ]
 
@@ -208,6 +210,14 @@ version = "0.1.0"
 [[package]]
 name = "scene-syntax"
 version = "0.1.0"
+
+[[package]]
+name = "scene-walls"
+version = "0.1.0"
+dependencies = [
+ "scene-render",
+ "scene-syntax",
+]
 
 [[package]]
 name = "serde"

@@ -20,8 +20,10 @@ iso-scene описывает **3D-модели** и **сцены** из прос
 |---|---|---|
 | `.model` | переиспользуемый объект | `version`, `material`, `object` |
 | `.scene` | композиция | `version`, `include`, `material`, `object`, `render`, `scale`, `canvas`, `sun`, `ambient`, `background`, `let`, `var`, `for`, `if`, `place` |
+| `.walls` | раскладка стен | `version`, `height`, `thickness`, `material`, `layout` |
 
-Один и тот же синтаксис; роль определяется расширением файла. Сцена может
+Один и тот же синтаксис для `.model`/`.scene`; роль определяется расширением.
+`.walls` — отдельный формат, см. [`walls.md`](walls.md). Сцена может
 включать модели через `include`. Модель не может включать сцену.
 
 `include "path"` — путь относительно текущего файла. Абсолютные пути и выход
