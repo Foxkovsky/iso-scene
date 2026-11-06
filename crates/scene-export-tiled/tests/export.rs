@@ -225,3 +225,14 @@ fn an_object_sits_on_the_projected_footprint_corner() {
     assert!((object["y"].as_f64().expect("y") - 64.0).abs() < 0.01);
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_canvas_sets_the_map_rectangle() {
+    let scene = compile(
+        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; canvas (6, 5, 3); scale 16; place b at (0, 0, 0);",
+    );
+    let dir = temp_dir("canvas");
+    let report = export(&scene, &dir).expect("export");
+    assert_eq!(report.cells, [6, 5]);
+    let _ = fs::remove_dir_all(dir);
+}

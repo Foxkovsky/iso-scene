@@ -307,8 +307,14 @@ pub fn export_with_walls(
     let wall_rows = walls.map_or(0.0, |layout| f64::from(layout.rows));
     let min_x = scene.bounds.min[0].floor().min(0.0) as i64;
     let min_y = scene.bounds.min[1].floor().min(0.0) as i64;
-    let max_x = scene.bounds.max[0].ceil().max(wall_columns);
-    let max_y = scene.bounds.max[1].ceil().max(wall_rows);
+    let mut max_x = scene.bounds.max[0].ceil().max(wall_columns);
+    let mut max_y = scene.bounds.max[1].ceil().max(wall_rows);
+    // An explicit `canvas` also fixes the map rectangle, so the cell grid stays
+    // stable when objects move around inside it.
+    if let Some(canvas) = scene.canvas {
+        max_x = max_x.max(canvas[0].ceil());
+        max_y = max_y.max(canvas[1].ceil());
+    }
     let width = ((max_x as i64) - min_x).max(1) as u32;
     let height = ((max_y as i64) - min_y).max(1) as u32;
     if u64::from(width) * u64::from(height) > MAX_MAP_CELLS {
