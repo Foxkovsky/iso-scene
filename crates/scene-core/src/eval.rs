@@ -747,6 +747,7 @@ impl Evaluator {
                         Anchor::Front => [bounds.max[0], bounds.max[1]],
                         Anchor::Left => [bounds.min[0], bounds.max[1]],
                         Anchor::Right => [bounds.max[0], bounds.min[1]],
+                        Anchor::Cell => [bounds.max[0] - 1.0, bounds.max[1] - 1.0],
                     };
                     instance.at = [at[0] - corner[0], at[1] - corner[1], at[2]];
                 }

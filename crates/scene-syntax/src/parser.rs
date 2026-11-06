@@ -392,18 +392,20 @@ impl Parser {
             None
         };
         let anchor = if self.eat(&TokenKind::Anchor) {
-            let (name, span) = self.expect_ident("`back`, `center`, `front`, `left` or `right`")?;
+            let (name, span) =
+                self.expect_ident("`back`, `center`, `front`, `left`, `right` or `cell`")?;
             Some(match name.as_str() {
                 "back" => Anchor::Back,
                 "center" => Anchor::Center,
                 "front" => Anchor::Front,
                 "left" => Anchor::Left,
                 "right" => Anchor::Right,
+                "cell" => Anchor::Cell,
                 other => {
                     return Err(Diagnostic::new(
                         "E0202",
                         format!(
-                            "unknown anchor `{other}`; expected back, center, front, left or right"
+                            "unknown anchor `{other}`; expected back, center, front, left, right or cell"
                         ),
                         span,
                     ));
@@ -912,6 +914,10 @@ mod tests {
             place_anchor("version 1; place a at (1, 2, 0) rot 90 anchor left;"),
             Some(Anchor::Left)
         );
+        assert_eq!(
+            place_anchor("version 1; place a at (1, 2, 0) anchor cell;"),
+            Some(Anchor::Cell)
+        );
     }
 
     #[test]
@@ -923,7 +929,11 @@ mod tests {
     fn an_unknown_place_anchor_is_reported() {
         let error = parse_err("version 1; place a at (0, 0, 0) anchor corner;");
         assert_eq!(error.code, "E0202");
-        assert!(error.message.contains("back, center, front, left or right"));
+        assert!(
+            error
+                .message
+                .contains("back, center, front, left, right or cell")
+        );
     }
 
     #[test]

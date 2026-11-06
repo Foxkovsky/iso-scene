@@ -61,7 +61,7 @@ if_stmt         = "if", "(", expr, ")", block,
                   [ "else", ( if_stmt | block ) ] ;
 
 place           = "place", ident, "at", tuple3, [ "rot", expr ], [ "anchor", anchor ], ";" ;
-anchor          = "back" | "center" | "front" | "left" | "right" ;
+anchor          = "back" | "center" | "front" | "left" | "right" | "cell" ;
 
 mirror          = "mirror", ( "x" | "y" ), ";" ;
 

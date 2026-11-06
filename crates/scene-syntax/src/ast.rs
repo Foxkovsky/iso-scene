@@ -165,6 +165,9 @@ pub enum Anchor {
     Left,
     /// (max x, min y): the right corner on screen.
     Right,
+    /// The cell the sprite stands on: the near corner is nudged one cell in,
+    /// so `place at (x, y)` puts the sprite on cell (x, y) at any footprint size.
+    Cell,
 }
 
 /// Assignment operator.

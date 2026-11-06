@@ -213,6 +213,24 @@ fn the_anchor_is_applied_to_the_rotated_footprint() {
 }
 
 #[test]
+fn the_cell_anchor_puts_the_sprite_on_the_placement_cell() {
+    let scene = compile_scene_ok(
+        r"
+        version 1;
+        object cube (2, 2) { box at (0, 0, 0) size (2, 2, 2) material light; }
+        render iso;
+        scale 32;
+        place cube at (3, 5, 0) anchor cell;
+        ",
+    );
+    let bounds = scene.instances[0].world_bounds();
+    assert!((bounds.max[0] - 4.0).abs() < 1e-9);
+    assert!((bounds.max[1] - 6.0).abs() < 1e-9);
+    assert!((bounds.min[0] - 2.0).abs() < 1e-9);
+    assert!((bounds.min[1] - 4.0).abs() < 1e-9);
+}
+
+#[test]
 fn invalid_rotation_is_reported() {
     assert_eq!(
         compile_error(
