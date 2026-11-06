@@ -127,12 +127,15 @@ outline, so the wall reads as one continuous surface. See `docs/walls.md`.
 iso-scene render room.scene -o out/room.svg
 ```
 
-The faces are the same ones the raster backend uses. They are painted from far
-to near by mean view depth, then adjacent inversions are fixed: when the later
-face lies completely behind the earlier face's plane, the two are swapped. This
-keeps a small handle behind a door from showing through the door, which a plain
-mean-depth sort gets wrong. Outlines are drawn as 1 px polygon strokes.
+The faces are the same ones the raster backend uses. Their order is derived
+from the same visibility the PNG shows: a depth buffer records which face wins
+every pixel, and each meeting of two faces at a pixel becomes an ordering
+constraint (the face behind is drawn first). A topological sort turns those
+pixel constraints into a painter order, so the vector output covers exactly
+what the PNG covers. Outlines are drawn as 1 px polygon strokes.
 
-The SVG is a painter's-algorithm vector export, not a per-pixel trace: two
-faces that physically intersect (a marker pushed into a board) can still be
-ordered the wrong way. The PNG backend stays pixel-exact.
+This matters for small parts in front of a large face: a handle behind a door,
+or a jamb in front of a panel, is ordered from the pixels it actually occupies
+instead of from a mean depth. Faces that genuinely interleave (in front at one
+pixel and behind at another) cannot be ordered by a painter's algorithm; such a
+cycle is broken by mean depth.

@@ -7,7 +7,8 @@
 #![allow(
     clippy::many_single_char_names,
     clippy::cast_possible_truncation,
-    clippy::cast_precision_loss
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
 )]
 
 use std::collections::BTreeMap;
@@ -243,109 +244,173 @@ pub fn render_svg(scene: &SceneGraph) -> Result<String, Diagnostic> {
     Ok(svg)
 }
 
-/// Depth-sort faces far to near with pairwise plane tests.
+/// Order faces by the visibility the raster backend would produce.
 ///
-/// The iso camera looks along `(1, 1, 1)`, so `x + y + z` grows towards the
-/// viewer. Mean depth alone cannot order a small face behind a large one, but a
-/// face that is entirely behind another face's plane can be: that test gives a
-/// partial order, which is completed by mean depth.
+/// A depth buffer records which face wins every pixel. Each time two faces meet
+/// at a pixel, the one behind gets an ordering constraint before the one in
+/// front. A topological sort then turns the pixel-level constraints into a
+/// painter order, so the vector output covers exactly what the PNG covers.
+///
+/// Faces that genuinely interleave (in front at one pixel, behind at another)
+/// cannot be ordered this way; a cycle is broken by mean depth.
 fn order_faces(faces: &[Face], scale: f64) -> Vec<usize> {
-    const EPSILON: f64 = 1e-6;
-    const VIEW: [f64; 3] = [1.0, 1.0, 1.0];
-
     let count = faces.len();
-    let mut planes = Vec::with_capacity(count);
-    let mut boxes = Vec::with_capacity(count);
-    let mut depths = Vec::with_capacity(count);
-
-    for face in faces {
-        let mut normal = newell_normal(&face.points);
-        if dot(normal, VIEW) < 0.0 {
-            normal = [-normal[0], -normal[1], -normal[2]];
-        }
-        let anchor = face.points.first().copied().unwrap_or([0.0; 3]);
-        planes.push((normal, anchor));
-
-        let mut min = [f64::INFINITY; 2];
-        let mut max = [f64::NEG_INFINITY; 2];
-        let mut depth = 0.0;
-        for point in &face.points {
-            let projected = project_point(*point, scale);
-            min[0] = min[0].min(projected[0]);
-            min[1] = min[1].min(projected[1]);
-            max[0] = max[0].max(projected[0]);
-            max[1] = max[1].max(projected[1]);
-            depth += point[0] + point[1] + point[2];
-        }
-        boxes.push([min[0], min[1], max[0], max[1]]);
-        depths.push(if face.points.is_empty() {
-            0.0
-        } else {
-            depth / face.points.len() as f64
-        });
+    if count == 0 {
+        return Vec::new();
     }
 
-    // Classic painter's algorithm: sort by mean depth, then fix local
-    // inversions where the later face is entirely behind the earlier plane.
-    let mut order: Vec<usize> = (0..count).collect();
-    order.sort_by(|&left, &right| depths[left].total_cmp(&depths[right]));
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    for face in faces {
+        for point in &face.points {
+            let projected = project_point(*point, scale);
+            min_x = min_x.min(projected[0]);
+            min_y = min_y.min(projected[1]);
+            max_x = max_x.max(projected[0]);
+            max_y = max_y.max(projected[1]);
+        }
+    }
+    if !min_x.is_finite() || !min_y.is_finite() || !max_x.is_finite() || !max_y.is_finite() {
+        return (0..count).collect();
+    }
+    let origin = [min_x.floor() - 1.0, min_y.floor() - 1.0];
+    let width = usize::try_from((max_x.ceil() + 1.0 - origin[0]) as isize).unwrap_or(0);
+    let height = usize::try_from((max_y.ceil() + 1.0 - origin[1]) as isize).unwrap_or(0);
+    if width == 0 || height == 0 || width.saturating_mul(height) > MAX_OUTPUT_PIXELS {
+        return (0..count).collect();
+    }
+
+    let mut depths = vec![f64::NEG_INFINITY; width * height];
+    let mut owners = vec![usize::MAX; width * height];
+    let mut mean_depth = Vec::with_capacity(count);
+    let mut after: Vec<Vec<usize>> = vec![Vec::new(); count];
+
+    for (index, face) in faces.iter().enumerate() {
+        let mut depth_sum = 0.0;
+        for point in &face.points {
+            depth_sum += view_depth(*point);
+        }
+        mean_depth.push(if face.points.is_empty() {
+            0.0
+        } else {
+            depth_sum / face.points.len() as f64
+        });
+
+        let projected: Vec<[f64; 3]> = face
+            .points
+            .iter()
+            .map(|point| {
+                let screen = project_point(*point, scale);
+                [
+                    screen[0] - origin[0],
+                    screen[1] - origin[1],
+                    view_depth(*point),
+                ]
+            })
+            .collect();
+        for triangle in 1..projected.len().saturating_sub(1) {
+            rasterize_visibility(
+                projected[0],
+                projected[triangle],
+                projected[triangle + 1],
+                index,
+                width,
+                height,
+                &mut depths,
+                &mut owners,
+                &mut after,
+            );
+        }
+    }
+
+    let mut placed = vec![false; count];
+    let mut order = Vec::with_capacity(count);
     for _ in 0..count {
-        let mut swapped = false;
-        for position in 0..count.saturating_sub(1) {
-            let first = order[position];
-            let second = order[position + 1];
-            if !overlaps(boxes[first], boxes[second]) {
+        let mut pick: Option<usize> = None;
+        for index in 0..count {
+            if placed[index] || after[index].iter().any(|&other| !placed[other]) {
                 continue;
             }
-            if entirely_behind(planes[first], &faces[second].points, EPSILON) {
-                order.swap(position, position + 1);
-                swapped = true;
+            if pick.is_none_or(|best| mean_depth[index] < mean_depth[best]) {
+                pick = Some(index);
             }
         }
-        if !swapped {
+        let index = pick.or_else(|| {
+            (0..count)
+                .filter(|&index| !placed[index])
+                .min_by(|&left, &right| mean_depth[left].total_cmp(&mean_depth[right]))
+        });
+        let Some(index) = index else {
             break;
-        }
+        };
+        placed[index] = true;
+        order.push(index);
     }
     order
 }
 
-fn newell_normal(points: &[[f64; 3]]) -> [f64; 3] {
-    let mut normal = [0.0; 3];
-    if points.len() < 3 {
-        return normal;
+#[allow(clippy::too_many_arguments)]
+fn rasterize_visibility(
+    a: [f64; 3],
+    b: [f64; 3],
+    c: [f64; 3],
+    index: usize,
+    width: usize,
+    height: usize,
+    depths: &mut [f64],
+    owners: &mut [usize],
+    after: &mut [Vec<usize>],
+) {
+    const EPSILON: f64 = 1e-9;
+    let denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+    if denominator.abs() < 1e-12 {
+        return;
     }
-    for position in 0..points.len() {
-        let current = points[position];
-        let next = points[(position + 1) % points.len()];
-        normal[0] += (current[1] - next[1]) * (current[2] + next[2]);
-        normal[1] += (current[2] - next[2]) * (current[0] + next[0]);
-        normal[2] += (current[0] - next[0]) * (current[1] + next[1]);
+    let min_x = a[0].min(b[0]).min(c[0]).floor().max(0.0) as usize;
+    let max_x = a[0]
+        .max(b[0])
+        .max(c[0])
+        .ceil()
+        .min(width.saturating_sub(1) as f64) as usize;
+    let min_y = a[1].min(b[1]).min(c[1]).floor().max(0.0) as usize;
+    let max_y = a[1]
+        .max(b[1])
+        .max(c[1])
+        .ceil()
+        .min(height.saturating_sub(1) as f64) as usize;
+    if min_x > max_x || min_y > max_y || width == 0 || height == 0 {
+        return;
     }
-    normal
-}
 
-fn dot(left: [f64; 3], right: [f64; 3]) -> f64 {
-    left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
-}
-
-fn entirely_behind(plane: ([f64; 3], [f64; 3]), points: &[[f64; 3]], epsilon: f64) -> bool {
-    let (normal, anchor) = plane;
-    if dot(normal, normal) == 0.0 {
-        return false;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let px = x as f64 + 0.5;
+            let py = y as f64 + 0.5;
+            let u = ((b[1] - c[1]) * (px - c[0]) + (c[0] - b[0]) * (py - c[1])) / denominator;
+            let v = ((c[1] - a[1]) * (px - c[0]) + (a[0] - c[0]) * (py - c[1])) / denominator;
+            let w = 1.0 - u - v;
+            if u < -1e-9 || v < -1e-9 || w < -1e-9 {
+                continue;
+            }
+            let z = u * a[2] + v * b[2] + w * c[2];
+            let at = y * width + x;
+            let owner = owners[at];
+            if owner == usize::MAX {
+                depths[at] = z;
+                owners[at] = index;
+            } else if z > depths[at] + EPSILON {
+                if owner != index && !after[index].contains(&owner) {
+                    after[index].push(owner);
+                }
+                depths[at] = z;
+                owners[at] = index;
+            } else if z < depths[at] - EPSILON && owner != index && !after[owner].contains(&index) {
+                after[owner].push(index);
+            }
+        }
     }
-    !points.is_empty()
-        && points.iter().all(|point| {
-            let offset = [
-                point[0] - anchor[0],
-                point[1] - anchor[1],
-                point[2] - anchor[2],
-            ];
-            dot(offset, normal) < -epsilon
-        })
-}
-
-fn overlaps(first: [f64; 4], second: [f64; 4]) -> bool {
-    !(first[2] < second[0] || second[2] < first[0] || first[3] < second[1] || second[3] < first[1])
 }
 
 fn scene_size(

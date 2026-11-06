@@ -108,10 +108,19 @@ pub fn voxelize(scene: &SceneGraph, voxels_per_block: u32) -> Result<VoxelModel,
     ];
     let total = u64::from(size[0]) * u64::from(size[1]) * u64::from(size[2]);
     if size.iter().any(|&side| side > MAX_SIDE) || total > u64::from(MAX_GRID) {
+        // XYZI stores each voxel coordinate in one byte, so a single VOX model
+        // cannot be longer than 256 on any axis, whatever its total volume is.
+        let longest = extent.iter().copied().fold(0.0_f64, f64::max);
+        let max_density = (f64::from(MAX_SIDE) / longest).floor();
+        let hint = if max_density >= 1.0 {
+            format!("use --density {}", max_density as u32)
+        } else {
+            format!("the model is {longest} blocks on one axis; scale it down or split it")
+        };
         return Err(error(
             "E0602",
             format!(
-                "voxel grid {}x{}x{} exceeds 256 per axis; lower --density",
+                "voxel grid {}x{}x{} exceeds 256 per axis (VOX stores coordinates as bytes); {hint}",
                 size[0], size[1], size[2]
             ),
         ));

@@ -115,6 +115,37 @@ fn too_dense_grid_is_rejected() {
 }
 
 #[test]
+fn an_oversized_grid_suggests_a_density_that_fits() {
+    // 8 blocks tall at density 300 gives 2400 voxels on one axis. XYZI stores
+    // coordinates as bytes, so at most 256 fit; density 32 is the largest one.
+    let scene = compile(
+        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 8) material wood; } render iso; scale 8; place b at (0, 0, 0);",
+    );
+    let error = voxelize(&scene, 300).expect_err("grid is too large");
+    assert_eq!(error.code, "E0602");
+    assert!(
+        error.message.contains("--density 32"),
+        "message names the density: {}",
+        error.message
+    );
+}
+
+#[test]
+fn a_model_without_a_valid_density_is_reported_as_too_large() {
+    // 320 blocks cannot fit 256 voxels even at one voxel per block.
+    let scene = compile(
+        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 320) material wood; } render iso; scale 8; place b at (0, 0, 0);",
+    );
+    let error = voxelize(&scene, 1).expect_err("grid is too tall");
+    assert_eq!(error.code, "E0602");
+    assert!(
+        error.message.contains("scale it down"),
+        "message explains that no density helps: {}",
+        error.message
+    );
+}
+
+#[test]
 fn empty_scene_is_rejected() {
     let scene = compile("version 1; render iso; scale 8;");
     let error = voxelize(&scene, 8).expect_err("nothing to voxelize");
