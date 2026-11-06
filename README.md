@@ -47,10 +47,11 @@ cargo run -p scene-cli -- eval examples/classroom.scene
 cargo run -p scene-cli -- render examples/classroom.scene -o out/classroom.png
 cargo run -p scene-cli -- render examples/classroom_top.scene -o out/classroom_top.png
 cargo run -p scene-cli -- voxel examples/classroom.scene --density 7 -o out/classroom.vox
+cargo run -p scene-cli -- tiled examples/classroom.scene -o out/tiled
 ```
 
-The lexer, parser, evaluator, iso/ortho backends, TOML materials and voxel
-export are implemented. Tiled export is next. The normative documents are:
+The lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel export
+and an isometric Tiled exporter are implemented. The normative documents are:
 
 - [`docs/spec.md`](docs/spec.md) — language semantics;
 - [`docs/grammar.ebnf`](docs/grammar.ebnf) — grammar;
@@ -85,7 +86,7 @@ examples/                   models and scenes
 |---|---|
 | v0.1 | parser, validator, evaluator, iso backend, CLI |
 | v0.2 | scenes, top/ortho backends, TOML materials, voxel export |
-| v0.3 | Tiled export, sprite sheets, backend style options |
+| v0.3 | sprite sheets, backend style options, LSP/MCP |
 | v1.0 | frozen grammar, formatter, LSP, public release |
 
 ## Contributing

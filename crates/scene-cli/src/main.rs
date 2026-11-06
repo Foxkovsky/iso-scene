@@ -34,6 +34,7 @@ fn main() -> ExitCode {
         "eval" => eval(args.collect()),
         "render" => render_scene(args.collect()),
         "voxel" => voxel_scene(args.collect()),
+        "tiled" => tiled_scene(args.collect()),
         other => {
             eprintln!("iso-scene: unknown command `{other}`");
             eprintln!("Try `iso-scene --help`.");
@@ -318,6 +319,67 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn tiled_scene(args: Vec<String>) -> ExitCode {
+    let mut path: Option<String> = None;
+    let mut output = PathBuf::from("out/tiled");
+    let mut args = args.into_iter();
+
+    while let Some(argument) = args.next() {
+        if argument == "--out" || argument == "-o" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--out` needs a path");
+                return ExitCode::from(2);
+            };
+            output = PathBuf::from(value);
+        } else if path.is_none() {
+            path = Some(argument);
+        } else {
+            eprintln!("iso-scene: unexpected argument `{argument}`");
+            return ExitCode::from(2);
+        }
+    }
+
+    let Some(path) = path else {
+        eprintln!("iso-scene: `tiled` needs a .scene file");
+        return ExitCode::from(2);
+    };
+    let Some(source) = read(&path) else {
+        return ExitCode::from(2);
+    };
+    if Path::new(&path)
+        .extension()
+        .and_then(|value| value.to_str())
+        != Some("scene")
+    {
+        eprintln!("iso-scene: `tiled` expects a .scene file");
+        return ExitCode::from(2);
+    }
+    let program = match scene_syntax::parse(&source) {
+        Ok(program) => program,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    let file = Path::new(&path);
+    let base = file.parent().unwrap_or_else(|| Path::new("."));
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let scene = match scene_core::compile_scene(&program, base, &root) {
+        Ok(scene) => scene,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    let exported = match scene_export_tiled::export(&scene, &output) {
+        Ok(report) => report,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    println!(
+        "wrote {} ({}x{} cells, {} instances); open it in Tiled; preview: {}",
+        exported.map.display(),
+        exported.cells[0],
+        exported.cells[1],
+        exported.instances,
+        exported.preview.display()
+    );
+    ExitCode::SUCCESS
+}
+
 fn read(path: &str) -> Option<String> {
     match fs::read_to_string(path) {
         Ok(source) => Some(source),
@@ -373,6 +435,7 @@ fn print_help() {
     println!("  eval <file>     parse and evaluate to a scene graph");
     println!("  render <file>   render a .scene with the iso or ortho backend");
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
+    println!("  tiled <file>    export a .scene as an isometric Tiled map");
     println!("  spec-version    print the implemented language version");
     println!();
     println!("Options:");

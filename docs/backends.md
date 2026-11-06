@@ -87,3 +87,16 @@ Occupancy sampling of the same `SceneGraph`:
 - material `color` is used as the voxel palette colour;
 - output is a `MagicaVoxel` VOX file (SIZE, XYZI, RGBA);
 - overlaps are resolved in instance/part order: later parts win.
+
+## Tiled
+
+`iso-scene tiled` writes:
+
+- `scene.tmj` — isometric map, layers `floor` and `objects`;
+- `floor.tsj` + `floor_tile.png` — one diamond floor tile;
+- `objects.tsj` + `objects.png` — atlas of unique object/rotation sprites;
+- `preview.png` — the normal iso render.
+
+Tiles are placed in a tile layer at the instance's bottom-right footprint cell.
+The tileset `tileoffset` aligns the common sprite anchor with the cell. Only
+ground-level (`z = 0`) objects and one object per cell are supported for now.

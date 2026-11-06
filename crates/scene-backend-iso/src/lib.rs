@@ -1,8 +1,8 @@
 //! 2:1 isometric raster backend.
 //!
 //! The backend turns the scene graph into flat coloured polygons, rasterizes
-//! them with a z-buffer and returns an RGBA image. Material files are not
-//! loaded yet; only the built-in palettes are used.
+//! them with a z-buffer and returns an RGBA image. Materials are loaded from
+//! built-in palettes or TOML files referenced by the scene graph.
 
 #![allow(
     clippy::many_single_char_names,
@@ -11,9 +11,10 @@
 )]
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use scene_core::{Instance, SceneGraph, rotate_xy};
+use scene_core::{CompiledObject, Instance, SceneGraph, rotate_xy};
 use scene_render::{Framebuffer, MeshFace, Palette, builtin, primitive_faces};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Background, RenderKind};
@@ -50,6 +51,60 @@ pub fn view_depth(point: [f64; 3]) -> f64 {
 /// Returns `E0601` for material files (not implemented yet), `E0602` for an
 /// oversized image, and `E0604` for a non-iso render kind.
 pub fn render(scene: &SceneGraph) -> Result<IsoImage, Diagnostic> {
+    Ok(render_internal(scene, MARGIN)?.image)
+}
+
+/// A single rendered object with the pixel position of its local origin.
+#[derive(Clone, Debug)]
+pub struct Sprite {
+    pub image: Image,
+    pub anchor: [f64; 2],
+}
+
+struct Rendered {
+    image: Image,
+    origin: [f64; 2],
+}
+
+/// Render one object (already rotated) into a transparent sprite.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`render`].
+pub fn render_object_sprite(
+    object: &CompiledObject,
+    rotation: u16,
+    scale: u32,
+    materials: &BTreeMap<String, PathBuf>,
+) -> Result<Sprite, Diagnostic> {
+    let graph = SceneGraph {
+        render: RenderKind::Iso,
+        scale,
+        canvas: None,
+        sun: [135.0, 45.0],
+        ambient: 0.35,
+        background: Background::Transparent,
+        materials: materials.clone(),
+        instances: vec![Instance {
+            object: Arc::new(object.clone()),
+            at: [0.0, 0.0, 0.0],
+            rotation,
+        }],
+        bounds: object.local_bounds(),
+    };
+    let rendered = render_internal(&graph, MARGIN)?;
+    let (x, y) = rotate_xy(0.0, 0.0, object.width, object.depth, rotation);
+    let screen = project_point([x, y, 0.0], f64::from(scale));
+    Ok(Sprite {
+        image: rendered.image,
+        anchor: [
+            screen[0] - rendered.origin[0],
+            screen[1] - rendered.origin[1],
+        ],
+    })
+}
+
+fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnostic> {
     if scene.render != RenderKind::Iso {
         return Err(error(
             "E0604",
@@ -91,10 +146,10 @@ pub fn render(scene: &SceneGraph) -> Result<IsoImage, Diagnostic> {
         max_y = 0.0;
     }
 
-    let left = (min_x.floor() - MARGIN) as isize;
-    let top = (min_y.floor() - MARGIN) as isize;
-    let right = (max_x.ceil() + MARGIN) as isize;
-    let bottom = (max_y.ceil() + MARGIN) as isize;
+    let left = (min_x.floor() - margin) as isize;
+    let top = (min_y.floor() - margin) as isize;
+    let right = (max_x.ceil() + margin) as isize;
+    let bottom = (max_y.ceil() + margin) as isize;
     let width = usize::try_from(right - left + 1).unwrap_or(0);
     let height = usize::try_from(bottom - top + 1).unwrap_or(0);
     if width == 0
@@ -144,10 +199,13 @@ pub fn render(scene: &SceneGraph) -> Result<IsoImage, Diagnostic> {
         }
     }
 
-    Ok(Image {
-        width: u32::try_from(width).unwrap_or(0),
-        height: u32::try_from(height).unwrap_or(0),
-        rgba: framebuffer.into_rgba(),
+    Ok(Rendered {
+        image: Image {
+            width: u32::try_from(width).unwrap_or(0),
+            height: u32::try_from(height).unwrap_or(0),
+            rgba: framebuffer.into_rgba(),
+        },
+        origin,
     })
 }
 
