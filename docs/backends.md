@@ -98,5 +98,9 @@ Occupancy sampling of the same `SceneGraph`:
 - `preview.png` — the normal iso render.
 
 Tiles are placed in a tile layer at the instance's bottom-right footprint cell.
-The tileset `tileoffset` aligns the common sprite anchor with the cell. Only
-ground-level (`z = 0`) objects and one object per cell are supported for now.
+The tileset `tileoffset` aligns the common sprite anchor with the cell.
+
+A tile layer is drawn by cell row (`right-down`), not by true 3D depth. An
+object that must be occluded by another has to be placed in a lower row.
+Depth-sorted object-layer export is future work. Only ground-level (`z = 0`)
+objects and one object per cell are supported for now.
