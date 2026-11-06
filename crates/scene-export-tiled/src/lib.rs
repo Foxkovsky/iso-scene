@@ -25,9 +25,9 @@ const MAX_MAP_CELLS: u64 = 1_000_000;
 pub struct ExportReport {
     pub map: PathBuf,
     pub floor_tileset: PathBuf,
-    pub objects_tileset: PathBuf,
+    pub objects_tileset: Option<PathBuf>,
     pub walls_tileset: Option<PathBuf>,
-    pub preview: PathBuf,
+    pub preview: Option<PathBuf>,
     pub instances: usize,
     pub cells: [u32; 2],
 }
@@ -47,8 +47,10 @@ struct SpriteEntry {
 
 /// Export a scene to `out_dir`.
 ///
-/// The result is an isometric Tiled map (`scene.tmj`), two tilesets, the
-/// object atlas, a floor tile and a normal iso preview for comparison.
+/// The result is an isometric Tiled map (`scene.tmj`), the floor tileset, a
+/// floor tile and a normal iso preview for comparison. Scenes with objects
+/// also get an object atlas and the `objects` layer; scenes without objects
+/// export only the floor (and walls, when given).
 ///
 /// # Errors
 ///
@@ -205,27 +207,32 @@ pub fn export_with_walls(
         offsets.push((offset_x, offset_y));
     }
 
-    let mut atlas = Image {
-        width: canvas_w
-            .checked_mul(sprites.len() as u32)
-            .ok_or_else(|| error("E0602", "object atlas is too large"))?,
-        height: canvas_h,
-        rgba: vec![0; (canvas_w as usize) * (canvas_h as usize) * sprites.len() * 4],
-    };
-    for (index, (entry, (offset_x, offset_y))) in sprites.iter().zip(offsets.iter()).enumerate() {
-        blit(
-            &mut atlas,
-            &entry.sprite.image,
-            *offset_x + index as u32 * canvas_w,
-            *offset_y,
-        );
-    }
+    let has_objects = !sprites.is_empty();
 
     let floor = floor_image(tile_w, tile_h);
     let floor_path = out_dir.join("floor_tile.png");
     write_png(&floor, &floor_path).map_err(|message| error("E0603", message))?;
-    let atlas_path = out_dir.join("objects.png");
-    write_png(&atlas, &atlas_path).map_err(|message| error("E0603", message))?;
+
+    if has_objects {
+        let mut atlas = Image {
+            width: canvas_w
+                .checked_mul(sprites.len() as u32)
+                .ok_or_else(|| error("E0602", "object atlas is too large"))?,
+            height: canvas_h,
+            rgba: vec![0; (canvas_w as usize) * (canvas_h as usize) * sprites.len() * 4],
+        };
+        for (index, (entry, (offset_x, offset_y))) in sprites.iter().zip(offsets.iter()).enumerate()
+        {
+            blit(
+                &mut atlas,
+                &entry.sprite.image,
+                *offset_x + index as u32 * canvas_w,
+                *offset_y,
+            );
+        }
+        let path = out_dir.join("objects.png");
+        write_png(&atlas, &path).map_err(|message| error("E0603", message))?;
+    }
 
     let floor_ts = json!({
         "type": "tileset",
@@ -253,40 +260,45 @@ pub fn export_with_walls(
     let floor_ts_path = out_dir.join("floor.tsj");
     write_json(&floor_ts_path, &floor_ts)?;
 
-    let object_tiles: Vec<Value> = sprites
-        .iter()
-        .enumerate()
-        .map(|(index, key)| {
-            json!({
-                "id": index,
-                "type": key.key.name,
-                "properties": [
-                    {"name": "rotation", "type": "int", "value": key.key.rotation},
-                    {"name": "walkable", "type": "bool", "value": false},
-                    {"name": "collides", "type": "bool", "value": true}
-                ]
+    let object_ts_path = if has_objects {
+        let object_tiles: Vec<Value> = sprites
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                json!({
+                    "id": index,
+                    "type": key.key.name,
+                    "properties": [
+                        {"name": "rotation", "type": "int", "value": key.key.rotation},
+                        {"name": "walkable", "type": "bool", "value": false},
+                        {"name": "collides", "type": "bool", "value": true}
+                    ]
+                })
             })
-        })
-        .collect();
-    let object_ts = json!({
-        "type": "tileset",
-        "name": "scene_objects",
-        "version": "1.10",
-        "tiledversion": "1.12.2",
-        "tilewidth": canvas_w,
-        "tileheight": canvas_h,
-        "tilecount": sprites.len(),
-        "columns": sprites.len(),
-        "image": "objects.png",
-        "imagewidth": canvas_w * sprites.len() as u32,
-        "imageheight": canvas_h,
-        "margin": 0,
-        "spacing": 0,
-        "tileoffset": {"x": 0, "y": 0},
-        "tiles": object_tiles
-    });
-    let object_ts_path = out_dir.join("objects.tsj");
-    write_json(&object_ts_path, &object_ts)?;
+            .collect();
+        let object_ts = json!({
+            "type": "tileset",
+            "name": "scene_objects",
+            "version": "1.10",
+            "tiledversion": "1.12.2",
+            "tilewidth": canvas_w,
+            "tileheight": canvas_h,
+            "tilecount": sprites.len(),
+            "columns": sprites.len(),
+            "image": "objects.png",
+            "imagewidth": canvas_w * sprites.len() as u32,
+            "imageheight": canvas_h,
+            "margin": 0,
+            "spacing": 0,
+            "tileoffset": {"x": 0, "y": 0},
+            "tiles": object_tiles
+        });
+        let path = out_dir.join("objects.tsj");
+        write_json(&path, &object_ts)?;
+        Some(path)
+    } else {
+        None
+    };
 
     let wall_columns = walls.map_or(0.0, |layout| f64::from(layout.columns));
     let wall_rows = walls.map_or(0.0, |layout| f64::from(layout.rows));
@@ -349,24 +361,22 @@ pub fn export_with_walls(
         }));
     }
 
-    let mut tilesets = vec![
-        json!({"firstgid": 1, "source": "floor.tsj"}),
-        json!({"firstgid": 2, "source": "objects.tsj"}),
-    ];
-    let mut layers = vec![
-        json!({
-            "type": "tilelayer",
-            "name": "floor",
-            "id": 1,
-            "width": width,
-            "height": height,
-            "x": 0,
-            "y": 0,
-            "opacity": 1,
-            "visible": true,
-            "data": floor_data
-        }),
-        json!({
+    let mut tilesets = vec![json!({"firstgid": 1, "source": "floor.tsj"})];
+    let mut layers = vec![json!({
+        "type": "tilelayer",
+        "name": "floor",
+        "id": 1,
+        "width": width,
+        "height": height,
+        "x": 0,
+        "y": 0,
+        "opacity": 1,
+        "visible": true,
+        "data": floor_data
+    })];
+    if has_objects {
+        tilesets.push(json!({"firstgid": 2, "source": "objects.tsj"}));
+        layers.push(json!({
             "type": "objectgroup",
             "name": "objects",
             "id": 2,
@@ -376,14 +386,15 @@ pub fn export_with_walls(
             "visible": true,
             "draworder": "index",
             "objects": objects
-        }),
-    ];
+        }));
+    }
+    let walls_layer_id = if has_objects { 3 } else { 2 };
     if let (Some(_), Some(data)) = (walls, wall_data) {
         tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
         layers.push(json!({
             "type": "tilelayer",
             "name": "walls",
-            "id": 3,
+            "id": walls_layer_id,
             "width": width,
             "height": height,
             "x": 0,
@@ -405,7 +416,7 @@ pub fn export_with_walls(
         "tilewidth": tile_w,
         "tileheight": tile_h,
         "infinite": false,
-        "nextlayerid": if walls.is_some() { 4 } else { 3 },
+        "nextlayerid": walls_layer_id + u32::from(walls.is_some()),
         "nextobjectid": objects.len() + 1,
         "tilesets": tilesets,
         "layers": layers
@@ -413,9 +424,14 @@ pub fn export_with_walls(
     let map_path = out_dir.join("scene.tmj");
     write_json(&map_path, &map)?;
 
-    let preview = scene_backend_iso::render(scene)?;
-    let preview_path = out_dir.join("preview.png");
-    write_png(&preview, &preview_path).map_err(|message| error("E0603", message))?;
+    let preview_path = if has_objects {
+        let preview = scene_backend_iso::render(scene)?;
+        let path = out_dir.join("preview.png");
+        write_png(&preview, &path).map_err(|message| error("E0603", message))?;
+        Some(path)
+    } else {
+        None
+    };
 
     Ok(ExportReport {
         map: map_path,

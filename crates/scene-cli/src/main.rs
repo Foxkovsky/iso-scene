@@ -395,7 +395,10 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
         exported.cells[0],
         exported.cells[1],
         exported.instances,
-        exported.preview.display()
+        exported.preview.as_ref().map_or_else(
+            || "none (no objects)".to_string(),
+            |p| p.display().to_string()
+        )
     );
     ExitCode::SUCCESS
 }

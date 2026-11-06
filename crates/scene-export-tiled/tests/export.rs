@@ -34,7 +34,7 @@ fn simple_box_exports_to_a_tiled_map() {
     let report = export(&scene, &dir).expect("export");
     assert_eq!(report.cells, [1, 1]);
     assert!(report.map.exists());
-    assert!(report.preview.exists());
+    assert!(report.preview.as_ref().expect("preview").exists());
 
     let map: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map"))
@@ -51,9 +51,11 @@ fn simple_box_exports_to_a_tiled_map() {
     assert_eq!(objects[0]["x"], 16.0);
     assert_eq!(objects[0]["y"], 16.0);
 
-    let ts: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&report.objects_tileset).expect("read tsj"))
-            .expect("parse tsj");
+    let ts: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(report.objects_tileset.as_ref().expect("objects tsj"))
+            .expect("read tsj"),
+    )
+    .expect("parse tsj");
     assert_eq!(ts["tilecount"], 1);
     assert!(ts["tileoffset"]["x"].as_i64().is_some());
     assert!(ts["tileoffset"]["y"].as_i64().is_some());
@@ -68,9 +70,11 @@ fn two_rotations_produce_two_object_tiles() {
     );
     let dir = temp_dir("rotations");
     let report = export(&scene, &dir).expect("export");
-    let ts: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&report.objects_tileset).expect("read tsj"))
-            .expect("parse tsj");
+    let ts: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(report.objects_tileset.as_ref().expect("objects tsj"))
+            .expect("read tsj"),
+    )
+    .expect("parse tsj");
     assert_eq!(ts["tilecount"], 2);
     let _ = fs::remove_dir_all(dir);
 }
@@ -162,6 +166,42 @@ fn walls_produce_a_separate_tile_layer_and_wang_set() {
             .expect("wangtiles")
             .len(),
         16
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn empty_scene_exports_floor_without_an_object_layer() {
+    let scene = compile("version 1; render iso; scale 16;");
+    let walls = scene_walls::parse(
+        "version 1;\nheight 2;\nlayout {\n\"###\"\n\"#.#\"\n\"###\"\n}\n",
+        Path::new("."),
+        Path::new("."),
+    )
+    .expect("walls");
+    let dir = temp_dir("empty");
+    let report = export_with_walls(&scene, Some(&walls), &dir).expect("export empty");
+    assert_eq!(report.cells, [3, 3]);
+    assert!(report.objects_tileset.is_none());
+    assert!(report.preview.is_none());
+    assert!(!dir.join("objects.png").exists());
+    assert!(!dir.join("objects.tsj").exists());
+
+    let map: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
+    let layers = map["layers"].as_array().expect("layers");
+    assert_eq!(layers.len(), 2);
+    assert_eq!(layers[0]["name"], "floor");
+    assert_eq!(layers[1]["name"], "walls");
+    assert_eq!(map["tilesets"].as_array().expect("tilesets").len(), 2);
+    assert_eq!(layers[1]["id"], 2);
+    assert_eq!(map["nextlayerid"], 3);
+    assert!(
+        layers[1]["data"]
+            .as_array()
+            .expect("wall data")
+            .iter()
+            .any(|value| value.as_u64().unwrap_or(0) > 0)
     );
     let _ = fs::remove_dir_all(dir);
 }
