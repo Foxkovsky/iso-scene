@@ -97,6 +97,11 @@ Occupancy sampling of the same `SceneGraph`:
 - `objects.tsj` + `objects.png` — atlas of unique object/rotation sprites;
 - `preview.png` — the normal iso render.
 
+If the map looks semi-transparent when opened in Tiled, that is the editor,
+not the export: **View → Highlight Current Layer** draws layers above the
+selected one at 40% opacity and darkens the layers below. The exported map
+always has `opacity = 1` on every layer and only binary alpha in the PNGs.
+
 Objects are written as tile objects in an `objectgroup` layer, ordered by
 depth (`x + width + y + depth + z`, far to near). This allows several objects
 in one cell and objects above the floor. The tileset has no `tileoffset`; each
