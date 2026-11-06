@@ -69,6 +69,7 @@ pub enum TokenKind {
     To,
     Use,
     Merge,
+    Origin,
 
     // Punctuation
     LBrace,
@@ -435,6 +436,7 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "to" => TokenKind::To,
         "use" => TokenKind::Use,
         "merge" => TokenKind::Merge,
+        "origin" => TokenKind::Origin,
         _ => return None,
     })
 }

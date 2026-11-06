@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use scene_syntax::ast::{
     Ambient, Anchor, AssignOp, Axis, Background, BinaryOp, Block, ElseBranch, Expr, ExprKind,
-    Include, ItemKind, Material, Object, Program, Shape, Statement, StatementKind, Sun, UnaryOp,
+    Include, ItemKind, Material, Object, Origin, Program, Shape, Statement, StatementKind, Sun,
+    UnaryOp,
 };
 use scene_syntax::{Diagnostic, Span, parse};
 
@@ -413,6 +414,19 @@ impl Evaluator {
         scopes.declare("d", Value::Number(depth), false, span)?;
         let mut parts = Vec::new();
         self.object_block(&object.body, &mut scopes, &mut parts, width, depth)?;
+
+        // Authoring origin: shift the local coordinates into the footprint, so
+        // the rest of the pipeline always works with `0..w`, `0..d`.
+        let shift = match object.origin {
+            Origin::Back => [0.0, 0.0, 0.0],
+            Origin::Center => [width / 2.0, depth / 2.0, 0.0],
+            Origin::Front => [width, depth, 0.0],
+        };
+        if shift[0] != 0.0 || shift[1] != 0.0 {
+            for part in &mut parts {
+                *part = part.translated(shift);
+            }
+        }
 
         Ok(CompiledObject {
             name: object.name.clone(),

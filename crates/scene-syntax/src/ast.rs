@@ -96,12 +96,25 @@ pub enum Background {
     Transparent,
 }
 
-/// `object name (w, d) { ... }`
+/// Where the object-local `(0, 0)` sits in the footprint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Origin {
+    /// Back corner; local coordinates run `0..w`, `0..d`.
+    #[default]
+    Back,
+    /// Footprint centre; local coordinates run `-w/2..w/2`.
+    Center,
+    /// Near corner; local coordinates run `-w..0`.
+    Front,
+}
+
+/// `object name (w, d) [origin center] { ... }`
 #[derive(Clone, Debug, PartialEq)]
 pub struct Object {
     pub name: String,
     pub width: Expr,
     pub depth: Expr,
+    pub origin: Origin,
     pub body: Block,
 }
 

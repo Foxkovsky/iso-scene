@@ -5,8 +5,8 @@
 
 use crate::ast::{
     Ambient, Anchor, AssignOp, Axis, Background, BinaryOp, Block, Canvas, ElseBranch, Expr,
-    ExprKind, Include, Item, ItemKind, Material, Object, Program, Render, RenderKind, Scale, Shape,
-    Statement, StatementKind, Sun, UnaryOp,
+    ExprKind, Include, Item, ItemKind, Material, Object, Origin, Program, Render, RenderKind,
+    Scale, Shape, Statement, StatementKind, Sun, UnaryOp,
 };
 use crate::{Diagnostic, Span, Token, TokenKind, lex};
 
@@ -260,11 +260,29 @@ impl Parser {
         self.expect(&TokenKind::Comma, "`,`")?;
         let depth = self.parse_expr()?;
         self.expect(&TokenKind::RParen, "`)`")?;
+        let origin = if self.eat(&TokenKind::Origin) {
+            let (name, span) = self.expect_ident("`back`, `center` or `front`")?;
+            match name.as_str() {
+                "back" => Origin::Back,
+                "center" => Origin::Center,
+                "front" => Origin::Front,
+                other => {
+                    return Err(Diagnostic::new(
+                        "E0202",
+                        format!("unknown origin `{other}`; expected back, center or front"),
+                        span,
+                    ));
+                }
+            }
+        } else {
+            Origin::Back
+        };
         let body = self.parse_block()?;
         Ok(Object {
             name,
             width,
             depth,
+            origin,
             body,
         })
     }
@@ -806,6 +824,7 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::To => "`to`".to_owned(),
         TokenKind::Use => "`use`".to_owned(),
         TokenKind::Merge => "`merge`".to_owned(),
+        TokenKind::Origin => "`origin`".to_owned(),
         TokenKind::LBrace => "`{`".to_owned(),
         TokenKind::RBrace => "`}`".to_owned(),
         TokenKind::LParen => "`(`".to_owned(),
@@ -840,8 +859,8 @@ mod tests {
     use super::parse;
     use crate::Diagnostic;
     use crate::ast::{
-        Anchor, AssignOp, Background, BinaryOp, ElseBranch, ExprKind, ItemKind, RenderKind, Shape,
-        StatementKind,
+        Anchor, AssignOp, Background, BinaryOp, ElseBranch, ExprKind, ItemKind, Origin, RenderKind,
+        Shape, StatementKind,
     };
 
     fn parse_ok(source: &str) -> crate::ast::Program {
@@ -981,6 +1000,26 @@ mod tests {
         assert_eq!(name, "b");
         assert!(at.is_some());
         assert!(rotation.is_some());
+    }
+
+    #[test]
+    fn object_origin_is_parsed() {
+        let program = parse_ok("version 1; object a (2, 2) origin center { }");
+        let ItemKind::Object(object) = &program.items[0].kind else {
+            panic!("expected an object");
+        };
+        assert_eq!(object.origin, Origin::Center);
+        let program = parse_ok("version 1; object a (2, 2) { }");
+        let ItemKind::Object(object) = &program.items[0].kind else {
+            panic!("expected an object");
+        };
+        assert_eq!(object.origin, Origin::Back);
+    }
+
+    #[test]
+    fn an_unknown_origin_is_reported() {
+        let error = parse_err("version 1; object a (2, 2) origin middle { }");
+        assert_eq!(error.code, "E0202");
     }
 
     #[test]

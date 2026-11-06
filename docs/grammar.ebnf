@@ -36,7 +36,8 @@ background      = "background", ( color | "transparent" ), ";" ;
 
 (* ---------------------------------------------------------------- objects *)
 
-object          = "object", ident, "(", expr, ",", expr, ")", block ;
+object          = "object", ident, "(", expr, ",", expr, ")",
+                  [ "origin", ( "back" | "center" | "front" ) ], block ;
 
 (* ---------------------------------------------------------------- statements *)
 

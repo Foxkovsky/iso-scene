@@ -309,6 +309,26 @@ fn merge_marks_its_parts_as_one_group() {
 }
 
 #[test]
+fn a_centered_origin_maps_local_coordinates_into_the_footprint() {
+    let scene = compile_scene_ok(
+        r"
+        version 1;
+        object b (2, 2) origin center {
+            box at (-1, -1, 0) size (2, 2, 1) material wood;
+        }
+        render iso;
+        scale 8;
+        place b at (0, 0, 0);
+        ",
+    );
+    let bounds = scene.instances[0].world_bounds();
+    assert!((bounds.min[0] - 0.0).abs() < 1e-9);
+    assert!((bounds.max[0] - 2.0).abs() < 1e-9);
+    assert!((bounds.min[1] - 0.0).abs() < 1e-9);
+    assert!((bounds.max[1] - 2.0).abs() < 1e-9);
+}
+
+#[test]
 fn invalid_rotation_is_reported() {
     assert_eq!(
         compile_error(
