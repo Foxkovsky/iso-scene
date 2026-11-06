@@ -4,8 +4,8 @@
 //! AST in [`crate::ast`]. It reports the first error and never panics.
 
 use crate::ast::{
-    Ambient, AssignOp, Axis, Background, BinaryOp, Block, Canvas, ElseBranch, Expr, ExprKind,
-    Include, Item, ItemKind, Material, Object, Program, Render, RenderKind, Scale, Shape,
+    Ambient, Anchor, AssignOp, Axis, Background, BinaryOp, Block, Canvas, ElseBranch, Expr,
+    ExprKind, Include, Item, ItemKind, Material, Object, Program, Render, RenderKind, Scale, Shape,
     Statement, StatementKind, Sun, UnaryOp,
 };
 use crate::{Diagnostic, Span, Token, TokenKind, lex};
@@ -391,11 +391,33 @@ impl Parser {
         } else {
             None
         };
+        let anchor = if self.eat(&TokenKind::Anchor) {
+            let (name, span) = self.expect_ident("`back`, `center`, `front`, `left` or `right`")?;
+            Some(match name.as_str() {
+                "back" => Anchor::Back,
+                "center" => Anchor::Center,
+                "front" => Anchor::Front,
+                "left" => Anchor::Left,
+                "right" => Anchor::Right,
+                other => {
+                    return Err(Diagnostic::new(
+                        "E0202",
+                        format!(
+                            "unknown anchor `{other}`; expected back, center, front, left or right"
+                        ),
+                        span,
+                    ));
+                }
+            })
+        } else {
+            None
+        };
         self.expect(&TokenKind::Semicolon, "`;`")?;
         Ok(StatementKind::Place {
             object,
             at,
             rotation,
+            anchor,
         })
     }
 
@@ -736,6 +758,7 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::Offset => "`offset`".to_owned(),
         TokenKind::Rise => "`rise`".to_owned(),
         TokenKind::Rot => "`rot`".to_owned(),
+        TokenKind::Anchor => "`anchor`".to_owned(),
         TokenKind::LBrace => "`{`".to_owned(),
         TokenKind::RBrace => "`}`".to_owned(),
         TokenKind::LParen => "`(`".to_owned(),
@@ -770,7 +793,7 @@ mod tests {
     use super::parse;
     use crate::Diagnostic;
     use crate::ast::{
-        AssignOp, Background, BinaryOp, ElseBranch, ExprKind, ItemKind, RenderKind, Shape,
+        Anchor, AssignOp, Background, BinaryOp, ElseBranch, ExprKind, ItemKind, RenderKind, Shape,
         StatementKind,
     };
 
@@ -866,6 +889,41 @@ mod tests {
             rotation.as_ref().map(|expr| &expr.kind),
             Some(&ExprKind::Number(90.0))
         );
+    }
+
+    fn place_anchor(source: &str) -> Option<Anchor> {
+        let program = parse_ok(source);
+        let ItemKind::Statement(statement) = &program.items[0].kind else {
+            panic!("expected a place statement");
+        };
+        let StatementKind::Place { anchor, .. } = &statement.kind else {
+            panic!("expected a place");
+        };
+        *anchor
+    }
+
+    #[test]
+    fn place_anchor_is_parsed() {
+        assert_eq!(
+            place_anchor("version 1; place a at (1, 2, 0) anchor front;"),
+            Some(Anchor::Front)
+        );
+        assert_eq!(
+            place_anchor("version 1; place a at (1, 2, 0) rot 90 anchor left;"),
+            Some(Anchor::Left)
+        );
+    }
+
+    #[test]
+    fn place_anchor_defaults_to_none() {
+        assert_eq!(place_anchor("version 1; place a at (0, 0, 0);"), None);
+    }
+
+    #[test]
+    fn an_unknown_place_anchor_is_reported() {
+        let error = parse_err("version 1; place a at (0, 0, 0) anchor corner;");
+        assert_eq!(error.code, "E0202");
+        assert!(error.message.contains("back, center, front, left or right"));
     }
 
     #[test]

@@ -44,7 +44,7 @@ iso-scene описывает **3D-модели** и **сцены** из прос
 - Цвет: `#RRGGBB` (шесть hex-цифр).
 - Пунктуация: `{ } ( ) ; , = + - * / % == != < <= > >= && || ! ..`
 - Ключевые слова: `version include material object render scale canvas sun
-  ambient background place mirror for in if else let var true false
+  ambient background place mirror anchor for in if else let var true false
   box cyl sphere slantbox slantcyl ramp at size radius height offset rise
   rot`.
 
@@ -116,8 +116,12 @@ for row in 0..4 {
   По умолчанию `(135, 45)`.
 - `ambient` — `0..1`; по умолчанию `0.35`.
 - `background` — цвет или `transparent`; по умолчанию `transparent`.
-- `place name at (x, y, z) rot r;` — размещение объекта. `r` приводится к
-  `0/90/180/270`; иное значение — ошибка `E0306`.
+- `place name at (x, y, z) rot r [anchor a];` — размещение объекта. `r`
+  приводится к `0/90/180/270`; иное значение — ошибка `E0306`. `a` выбирает,
+  какая точка следа объекта попадает в `(x, y, z)`: `back` (мин. x и y, по
+  умолчанию), `center`, `front` (макс. x и y — ближний к зрителю угол),
+  `left` (мин. x, макс. y) или `right` (макс. x, мин. y). Точка берётся от
+  уже повёрнутого следа, поэтому якорь одинаково работает при любом повороте.
 
 ### 5.2 Модель
 

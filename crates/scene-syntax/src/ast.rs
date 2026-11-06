@@ -147,9 +147,24 @@ pub enum StatementKind {
         object: String,
         at: [Expr; 3],
         rotation: Option<Expr>,
+        anchor: Option<Anchor>,
     },
     Shape(Shape),
     Mirror(Axis),
+}
+
+/// Which point of the rotated footprint sits at the `place` coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Anchor {
+    /// (min x, min y): the far corner; this is the default.
+    Back,
+    Center,
+    /// (max x, max y): the near corner, closest to the viewer.
+    Front,
+    /// (min x, max y): the left corner on screen.
+    Left,
+    /// (max x, min y): the right corner on screen.
+    Right,
 }
 
 /// Assignment operator.

@@ -64,6 +64,7 @@ pub enum TokenKind {
     Offset,
     Rise,
     Rot,
+    Anchor,
 
     // Punctuation
     LBrace,
@@ -425,6 +426,7 @@ fn keyword(text: &str) -> Option<TokenKind> {
         "offset" => TokenKind::Offset,
         "rise" => TokenKind::Rise,
         "rot" => TokenKind::Rot,
+        "anchor" => TokenKind::Anchor,
         _ => return None,
     })
 }

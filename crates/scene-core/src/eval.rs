@@ -9,8 +9,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use scene_syntax::ast::{
-    Ambient, AssignOp, Axis, Background, BinaryOp, Block, ElseBranch, Expr, ExprKind, Include,
-    ItemKind, Material, Object, Program, Shape, Statement, StatementKind, Sun, UnaryOp,
+    Ambient, Anchor, AssignOp, Axis, Background, BinaryOp, Block, ElseBranch, Expr, ExprKind,
+    Include, ItemKind, Material, Object, Program, Shape, Statement, StatementKind, Sun, UnaryOp,
 };
 use scene_syntax::{Diagnostic, Span, parse};
 
@@ -702,6 +702,7 @@ impl Evaluator {
                 object,
                 at,
                 rotation,
+                anchor,
             } => {
                 let object = self.objects.get(object).cloned().ok_or_else(|| {
                     diag(
@@ -725,11 +726,31 @@ impl Evaluator {
                     ));
                 }
                 self.instances += 1;
-                instances.push(Instance {
+                let mut instance = Instance {
                     object,
                     at,
                     rotation,
-                });
+                };
+                if let Some(anchor) = anchor {
+                    let zero = Instance {
+                        object: instance.object.clone(),
+                        at: [0.0, 0.0, 0.0],
+                        rotation,
+                    };
+                    let bounds = zero.world_bounds();
+                    let corner = match anchor {
+                        Anchor::Back => [bounds.min[0], bounds.min[1]],
+                        Anchor::Center => [
+                            bounds.min[0].midpoint(bounds.max[0]),
+                            bounds.min[1].midpoint(bounds.max[1]),
+                        ],
+                        Anchor::Front => [bounds.max[0], bounds.max[1]],
+                        Anchor::Left => [bounds.min[0], bounds.max[1]],
+                        Anchor::Right => [bounds.max[0], bounds.min[1]],
+                    };
+                    instance.at = [at[0] - corner[0], at[1] - corner[1], at[2]];
+                }
+                instances.push(instance);
             }
             StatementKind::Shape(_) | StatementKind::Mirror(_) => {
                 return Err(diag(

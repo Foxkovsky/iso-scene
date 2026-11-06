@@ -143,6 +143,76 @@ fn unknown_material_is_reported() {
 }
 
 #[test]
+fn default_placement_puts_the_back_corner_on_the_coordinates() {
+    let scene = compile_scene_ok(
+        r"
+        version 1;
+        object slab (2, 1) { box at (0, 0, 0) size (2, 1, 0.5) material wood; }
+        render iso;
+        scale 8;
+        place slab at (10, 20, 0);
+        ",
+    );
+    let bounds = scene.instances[0].world_bounds();
+    assert!((bounds.min[0] - 10.0).abs() < 1e-9);
+    assert!((bounds.min[1] - 20.0).abs() < 1e-9);
+    assert!((bounds.max[0] - 12.0).abs() < 1e-9);
+    assert!((bounds.max[1] - 21.0).abs() < 1e-9);
+}
+
+#[test]
+fn the_front_anchor_puts_the_near_corner_on_the_coordinates() {
+    let scene = compile_scene_ok(
+        r"
+        version 1;
+        object slab (2, 1) { box at (0, 0, 0) size (2, 1, 0.5) material wood; }
+        render iso;
+        scale 8;
+        place slab at (10, 20, 0) anchor front;
+        ",
+    );
+    let bounds = scene.instances[0].world_bounds();
+    assert!((bounds.max[0] - 10.0).abs() < 1e-9);
+    assert!((bounds.max[1] - 20.0).abs() < 1e-9);
+    assert!((bounds.min[0] - 8.0).abs() < 1e-9);
+    assert!((bounds.min[1] - 19.0).abs() < 1e-9);
+}
+
+#[test]
+fn the_center_anchor_puts_the_footprint_centre_on_the_coordinates() {
+    let scene = compile_scene_ok(
+        r"
+        version 1;
+        object slab (2, 1) { box at (0, 0, 0) size (2, 1, 0.5) material wood; }
+        render iso;
+        scale 8;
+        place slab at (10, 20, 0) anchor center;
+        ",
+    );
+    let bounds = scene.instances[0].world_bounds();
+    assert!((bounds.min[0].midpoint(bounds.max[0]) - 10.0).abs() < 1e-9);
+    assert!((bounds.min[1].midpoint(bounds.max[1]) - 20.0).abs() < 1e-9);
+}
+
+#[test]
+fn the_anchor_is_applied_to_the_rotated_footprint() {
+    let scene = compile_scene_ok(
+        r"
+        version 1;
+        object slab (2, 1) { box at (0, 0, 0) size (2, 1, 0.5) material wood; }
+        render iso;
+        scale 8;
+        place slab at (10, 20, 0) rot 90 anchor front;
+        ",
+    );
+    let bounds = scene.instances[0].world_bounds();
+    assert!((bounds.max[0] - 10.0).abs() < 1e-9);
+    assert!((bounds.max[1] - 20.0).abs() < 1e-9);
+    assert!((bounds.min[0] - 9.0).abs() < 1e-9);
+    assert!((bounds.min[1] - 18.0).abs() < 1e-9);
+}
+
+#[test]
 fn invalid_rotation_is_reported() {
     assert_eq!(
         compile_error(
