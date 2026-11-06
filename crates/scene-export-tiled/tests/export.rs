@@ -48,9 +48,10 @@ fn simple_box_exports_to_a_tiled_map() {
     let objects = map["layers"][1]["objects"].as_array().expect("objects");
     assert_eq!(objects.len(), 1);
     assert_eq!(objects[0]["gid"], 2);
-    // A 1x1 object at (0, 0): its footprint corner is (1, 1), which projects
-    // to (0, 16) in a 32x16 isometric map, minus the anchor nudge.
-    assert_eq!(objects[0]["x"], 0.0);
+    // A 1x1 object at (0, 0): footprint corner (1, 1) projects to (0, 16).
+    // Tiled's isometric origin adds height * tileWidth / 2 (16) and the tile
+    // half width (16), so the object sits on the cell's bottom vertex.
+    assert_eq!(objects[0]["x"], 32.0);
     assert!((objects[0]["y"].as_f64().expect("y") - 16.0).abs() < 0.01);
 
     let ts: serde_json::Value = serde_json::from_str(
@@ -219,7 +220,8 @@ fn an_object_sits_on_the_projected_footprint_corner() {
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
     let object = &map["layers"][1]["objects"][0];
     // Footprint corner (4, 4) with a 32x16 tile: (4-4)*16 = 0, (4+4)/2*16 = 64.
-    assert_eq!(object["x"], 0.0);
+    // The 4x4 map adds 4 * 32 / 2 = 64, plus half a tile (16).
+    assert_eq!(object["x"], 80.0);
     assert!((object["y"].as_f64().expect("y") - 64.0).abs() < 0.01);
     let _ = fs::remove_dir_all(dir);
 }

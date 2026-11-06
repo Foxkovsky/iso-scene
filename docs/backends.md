@@ -107,6 +107,13 @@ depth (`x + width + y + depth + z`, far to near). This allows several objects
 in one cell and objects above the floor. The tileset has no `tileoffset`; each
 object is positioned by its sprite anchor and the map's isometric origin.
 
+Tiled's isometric screen space shifts maps right by `height * tileWidth / 2`,
+and draws a cell's diamond starting half a tile further right. The exporter
+adds both offsets, so an object's bottom-center lands on the bottom vertex of
+its cell and the sprite covers the cell it stands on. A 0.001 px nudge into the
+cell keeps Tiled's own cell lookup (`pixelToTileCoords`) on that cell instead
+of rounding to the next one at the shared corner.
+
 The `floor` layer remains a regular tile layer. Because object order is stored
 in the object layer, the Tiled `draworder` is `index`; do not sort objects in
 the Tiled UI if you want to preserve the generated depth order.

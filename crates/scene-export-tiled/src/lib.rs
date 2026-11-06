@@ -346,11 +346,15 @@ pub fn export_with_walls(
         let local_x = bottom_world[0] - min_x as f64;
         let local_y = bottom_world[1] - min_y as f64;
         let screen = project_point([local_x, local_y, bottom_world[2]], f64::from(scale));
+        // Tiled shifts isometric maps right by `height * tileWidth / 2` so that
+        // tile (0, 0) starts at the top of the diamond. Object coordinates are
+        // absolute pixels and have to carry the same shift.
+        let origin_x = f64::from(height) * f64::from(tile_w) / 2.0;
         // Tiled derives an object's cell from its pixel position. A footprint
         // corner lies exactly on a cell border, where Tiled rounds to the next
         // cell and highlights the wrong diamond. Nudging the anchor a thousandth
         // of a pixel up moves it inside the cell the object stands on.
-        let object_x = screen[0];
+        let object_x = screen[0] + origin_x + f64::from(tile_w) / 2.0;
         let object_y = screen[1] - ANCHOR_NUDGE;
         objects.push(json!({
             "id": index + 1,
