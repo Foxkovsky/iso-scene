@@ -33,6 +33,7 @@ fn main() -> ExitCode {
         }
         "eval" => eval(args.collect()),
         "render" => render_scene(args.collect()),
+        "voxel" => voxel_scene(args.collect()),
         other => {
             eprintln!("iso-scene: unknown command `{other}`");
             eprintln!("Try `iso-scene --help`.");
@@ -224,6 +225,99 @@ fn render_scene(args: Vec<String>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn voxel_scene(args: Vec<String>) -> ExitCode {
+    let mut path: Option<String> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut density: u32 = 8;
+    let mut args = args.into_iter();
+
+    while let Some(argument) = args.next() {
+        if argument == "--out" || argument == "-o" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--out` needs a path");
+                return ExitCode::from(2);
+            };
+            output = Some(PathBuf::from(value));
+        } else if argument == "--density" {
+            let Some(value) = args.next() else {
+                eprintln!("iso-scene: `--density` needs a number");
+                return ExitCode::from(2);
+            };
+            match value.parse::<u32>() {
+                Ok(0) | Err(_) => {
+                    eprintln!("iso-scene: invalid density `{value}`");
+                    return ExitCode::from(2);
+                }
+                Ok(value) => density = value,
+            }
+        } else if path.is_none() {
+            path = Some(argument);
+        } else {
+            eprintln!("iso-scene: unexpected argument `{argument}`");
+            return ExitCode::from(2);
+        }
+    }
+
+    let Some(path) = path else {
+        eprintln!("iso-scene: `voxel` needs a .scene file");
+        return ExitCode::from(2);
+    };
+    let Some(source) = read(&path) else {
+        return ExitCode::from(2);
+    };
+    if Path::new(&path)
+        .extension()
+        .and_then(|value| value.to_str())
+        != Some("scene")
+    {
+        eprintln!("iso-scene: `voxel` expects a .scene file");
+        return ExitCode::from(2);
+    }
+    let program = match scene_syntax::parse(&source) {
+        Ok(program) => program,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    let file = Path::new(&path);
+    let base = file.parent().unwrap_or_else(|| Path::new("."));
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let scene = match scene_core::compile_scene(&program, base, &root) {
+        Ok(scene) => scene,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    let model = match scene_backend_voxel::voxelize(&scene, density) {
+        Ok(model) => model,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    let output = output.unwrap_or_else(|| {
+        let stem = file
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("scene");
+        PathBuf::from("out").join(format!("{stem}.vox"))
+    });
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                eprintln!("iso-scene: cannot create `{}`: {error}", parent.display());
+                return ExitCode::from(2);
+            }
+        }
+    }
+    if let Err(diagnostic) = scene_backend_voxel::write_vox(&model, &output) {
+        return report(&path, &source, &diagnostic);
+    }
+    println!(
+        "wrote {} ({}x{}x{}, {} voxels, density {})",
+        output.display(),
+        model.size[0],
+        model.size[1],
+        model.size[2],
+        model.voxels.len(),
+        density
+    );
+    ExitCode::SUCCESS
+}
+
 fn read(path: &str) -> Option<String> {
     match fs::read_to_string(path) {
         Ok(source) => Some(source),
@@ -278,6 +372,7 @@ fn print_help() {
     println!("  check <file>    parse a .model or .scene file and report diagnostics");
     println!("  eval <file>     parse and evaluate to a scene graph");
     println!("  render <file>   render a .scene with the iso or ortho backend");
+    println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  spec-version    print the implemented language version");
     println!();
     println!("Options:");

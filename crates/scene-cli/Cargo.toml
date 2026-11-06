@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 scene-backend-iso = { path = "../scene-backend-iso" }
 scene-backend-ortho = { path = "../scene-backend-ortho" }
+scene-backend-voxel = { path = "../scene-backend-voxel" }
 scene-core = { path = "../scene-core" }
 scene-render = { path = "../scene-render" }
 scene-syntax = { path = "../scene-syntax" }

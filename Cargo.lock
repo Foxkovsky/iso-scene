@@ -149,6 +149,11 @@ dependencies = [
 [[package]]
 name = "scene-backend-voxel"
 version = "0.1.0"
+dependencies = [
+ "scene-core",
+ "scene-render",
+ "scene-syntax",
+]
 
 [[package]]
 name = "scene-cli"
@@ -156,6 +161,7 @@ version = "0.1.0"
 dependencies = [
  "scene-backend-iso",
  "scene-backend-ortho",
+ "scene-backend-voxel",
  "scene-core",
  "scene-render",
  "scene-syntax",

@@ -45,10 +45,12 @@ cargo run -p scene-cli -- eval examples/chair.model
 cargo run -p scene-cli -- eval examples/classroom.scene
 cargo run -p scene-cli -- render examples/classroom.scene -o out/classroom.png
 cargo run -p scene-cli -- render examples/classroom_top.scene -o out/classroom_top.png
+cargo run -p scene-cli -- voxel examples/classroom.scene --density 7 -o out/classroom.vox
 ```
 
-Лексер, парсер, вычислитель, изометрический и ортогональные бэкенды реализованы.
-Воксели и Tiled — следующий этап. Нормативные документы:
+Лексер, парсер, вычислитель, изометрический и ортогональные бэкенды,
+материалы и воксельный экспорт реализованы. Tiled — следующий этап.
+Нормативные документы:
 
 - [`docs/spec.md`](docs/spec.md) — семантика языка;
 - [`docs/grammar.ebnf`](docs/grammar.ebnf) — грамматика;

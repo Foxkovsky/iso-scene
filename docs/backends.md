@@ -77,3 +77,13 @@ depth    = x
   expanded to at least `canvas`.
 - Background is transparent unless `background` is set.
 - Output must be byte-identical for identical input and options.
+
+## voxel
+
+Occupancy sampling of the same `SceneGraph`:
+
+- `step = 1 / density` blocks per voxel;
+- grid size `ceil(extent / step)`, at most 256 per axis and 256³ total;
+- material `color` is used as the voxel palette colour;
+- output is a `MagicaVoxel` VOX file (SIZE, XYZI, RGBA);
+- overlaps are resolved in instance/part order: later parts win.
