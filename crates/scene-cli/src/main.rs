@@ -343,6 +343,7 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
     let mut path: Option<String> = None;
     let mut walls_path: Option<String> = None;
     let mut objects_as_tiles = false;
+    let mut walls_in_front = false;
     let mut output = PathBuf::from("out/tiled");
     let mut args = args.into_iter();
 
@@ -355,6 +356,8 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
             output = PathBuf::from(value);
         } else if argument == "--tile-layer" {
             objects_as_tiles = true;
+        } else if argument == "--walls-front" {
+            walls_in_front = true;
         } else if argument == "--walls" {
             let Some(value) = args.next() else {
                 eprintln!("iso-scene: `--walls` needs a .walls file");
@@ -408,11 +411,16 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
     } else {
         None
     };
-    let exported =
-        match scene_export_tiled::export_with(&scene, walls.as_ref(), objects_as_tiles, &output) {
-            Ok(report) => report,
-            Err(diagnostic) => return report(&path, &source, &diagnostic),
-        };
+    let exported = match scene_export_tiled::export_with(
+        &scene,
+        walls.as_ref(),
+        objects_as_tiles,
+        walls_in_front,
+        &output,
+    ) {
+        Ok(report) => report,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
     println!(
         "wrote {} ({}x{} cells, {} instances); open it in Tiled; preview: {}",
         exported.map.display(),

@@ -60,12 +60,13 @@ iso-scene tiled room.scene --walls room.walls -o out/tiled
 The exported map has three layers, bottom to top:
 
 1. `floor` — tile layer;
-2. `objects` — depth-sorted object layer (furniture, doors, windows);
-3. `walls` — the generated 16-tile wall layer with the `wall` Wang set.
+2. `walls` — the generated 16-tile wall layer with the `wall` Wang set;
+3. `objects` — furniture, doors and windows (a depth-sorted object layer, or a
+   tile layer with `--tile-layer`).
 
-The wall layer is deliberately above objects. If a wall should be behind a
-piece of furniture, use the object order/layer arrangement of the scene; the
-wall layer itself is a flat Tiled layer.
+Walls are placed behind the objects by default, so a door standing in a wall
+gap is not cut by the wall tiles. Pass `--walls-front` to put the wall layer
+above the objects instead; that suits cut-away rooms without near walls.
 
 ## Current limitations
 

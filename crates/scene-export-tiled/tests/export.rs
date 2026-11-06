@@ -149,8 +149,10 @@ fn walls_produce_a_separate_tile_layer_and_wang_set() {
     let map: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
     assert_eq!(map["layers"].as_array().expect("layers").len(), 3);
-    assert_eq!(map["layers"][2]["name"], "walls");
-    let walls_data = map["layers"][2]["data"].as_array().expect("wall data");
+    // Objects are drawn over the walls by default, so `walls` comes first.
+    assert_eq!(map["layers"][1]["name"], "walls");
+    assert_eq!(map["layers"][2]["name"], "objects");
+    let walls_data = map["layers"][1]["data"].as_array().expect("wall data");
     assert!(
         walls_data
             .iter()
@@ -243,7 +245,7 @@ fn objects_can_be_exported_as_a_tile_layer() {
         "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 16; place b at (0, 0, 0);",
     );
     let dir = temp_dir("tilelayer");
-    let report = export_with(&scene, None, true, &dir).expect("export");
+    let report = export_with(&scene, None, true, false, &dir).expect("export");
     let map: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
     let layer = &map["layers"][1];

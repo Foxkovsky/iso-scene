@@ -76,13 +76,15 @@ pub fn export_with_walls(
     walls: Option<&WallLayout>,
     out_dir: &Path,
 ) -> Result<ExportReport, Diagnostic> {
-    export_with(scene, walls, false, out_dir)
+    export_with(scene, walls, false, false, out_dir)
 }
 
 /// Export a scene with an optional wall layer and object layout choice.
 ///
 /// With `objects_as_tiles` the sprites go into a tile layer named `objects`
 /// (one tile per cell, Tiled tile alignment) instead of an object layer.
+/// With `walls_in_front` the wall layer is placed above the objects; by default
+/// objects are drawn over the walls, so doors in wall gaps stay visible.
 ///
 /// # Errors
 ///
@@ -92,6 +94,7 @@ pub fn export_with(
     scene: &SceneGraph,
     walls: Option<&WallLayout>,
     objects_as_tiles: bool,
+    walls_in_front: bool,
     out_dir: &Path,
 ) -> Result<ExportReport, Diagnostic> {
     if scene.render != RenderKind::Iso {
@@ -429,13 +432,37 @@ pub fn export_with(
         "visible": true,
         "data": floor_data
     })];
+    let mut wall_layer = None;
+    let mut next_layer_id = 2_u32;
+    if !walls_in_front {
+        if let (Some(_), Some(data)) = (walls, wall_data.clone()) {
+            let id = next_layer_id;
+            next_layer_id += 1;
+            tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
+            wall_layer = Some(json!({
+                "type": "tilelayer",
+                "name": "walls",
+                "id": id,
+                "width": width,
+                "height": height,
+                "x": 0,
+                "y": 0,
+                "opacity": 1,
+                "visible": true,
+                "data": data
+            }));
+        }
+    }
+    if let Some(walls) = wall_layer.take() {
+        layers.push(walls);
+    }
     if has_objects {
         tilesets.push(json!({"firstgid": 2, "source": "objects.tsj"}));
         if objects_as_tiles {
             layers.push(json!({
                 "type": "tilelayer",
                 "name": "objects",
-                "id": 2,
+                "id": next_layer_id,
                 "width": width,
                 "height": height,
                 "x": 0,
@@ -448,7 +475,7 @@ pub fn export_with(
             layers.push(json!({
                 "type": "objectgroup",
                 "name": "objects",
-                "id": 2,
+                "id": next_layer_id,
                 "x": 0,
                 "y": 0,
                 "opacity": 1,
@@ -458,21 +485,23 @@ pub fn export_with(
             }));
         }
     }
-    let walls_layer_id = if has_objects { 3 } else { 2 };
-    if let (Some(_), Some(data)) = (walls, wall_data) {
-        tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
-        layers.push(json!({
-            "type": "tilelayer",
-            "name": "walls",
-            "id": walls_layer_id,
-            "width": width,
-            "height": height,
-            "x": 0,
-            "y": 0,
-            "opacity": 1,
-            "visible": true,
-            "data": data
-        }));
+    if walls_in_front {
+        if let (Some(_), Some(data)) = (walls, wall_data) {
+            tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
+            layers.push(json!({
+                "type": "tilelayer",
+                "name": "walls",
+                "id": next_layer_id,
+                "width": width,
+                "height": height,
+                "x": 0,
+                "y": 0,
+                "opacity": 1,
+                "visible": true,
+                "data": data
+            }));
+            next_layer_id += 1;
+        }
     }
 
     let map = json!({
@@ -486,7 +515,7 @@ pub fn export_with(
         "tilewidth": tile_w,
         "tileheight": tile_h,
         "infinite": false,
-        "nextlayerid": walls_layer_id + u32::from(walls.is_some()),
+        "nextlayerid": next_layer_id,
         "nextobjectid": objects.len() + 1,
         "tilesets": tilesets,
         "layers": layers
