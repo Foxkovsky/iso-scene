@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use scene_core::{CompiledObject, Instance, SceneGraph, rotate_xy};
-use scene_render::{Framebuffer, MeshFace, Palette, builtin, primitive_faces};
+use scene_render::{Framebuffer, MeshFace, Palette, Texture, builtin, primitive_faces};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Background, RenderKind};
 
@@ -128,12 +128,22 @@ fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnost
     for face in &faces {
         let projected = project_face(face, scale, origin);
         for index in 1..projected.len().saturating_sub(1) {
-            framebuffer.triangle(
-                projected[0],
-                projected[index],
-                projected[index + 1],
-                face.color,
-            );
+            match face.texture {
+                Some(texture) => framebuffer.triangle_textured(
+                    projected[0],
+                    projected[index],
+                    projected[index + 1],
+                    [face.points[0], face.points[index], face.points[index + 1]],
+                    face.color,
+                    texture,
+                ),
+                None => framebuffer.triangle(
+                    projected[0],
+                    projected[index],
+                    projected[index + 1],
+                    face.color,
+                ),
+            }
         }
     }
 
@@ -515,6 +525,7 @@ struct Face {
     color: [u8; 3],
     line: [u8; 3],
     outline: bool,
+    texture: Option<Texture>,
     /// Parts in one merge group are welded: internal faces and shared seams go.
     group: Option<u32>,
     hidden: Vec<bool>,
@@ -544,6 +555,7 @@ fn collect_faces(
                     color: iso_color(&normal, palette),
                     line: palette.line,
                     outline,
+                    texture: palette.texture,
                     group: part.group,
                     hidden,
                 });
@@ -751,6 +763,7 @@ mod tests {
             outline: true,
             group: None,
             hidden,
+            texture: None,
         }
     }
 

@@ -6,6 +6,6 @@ pub mod mesh;
 pub mod raster;
 
 pub use image::{Image, write_png};
-pub use material::{Palette, builtin};
+pub use material::{Palette, Texture, builtin};
 pub use mesh::{MeshFace, primitive_faces};
 pub use raster::Framebuffer;

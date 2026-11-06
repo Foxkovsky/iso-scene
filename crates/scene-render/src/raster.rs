@@ -7,6 +7,8 @@
 
 //! Small z-buffered rasterizer for flat-coloured polygons.
 
+use crate::material::Texture;
+
 /// RGBA framebuffer with a depth channel.
 pub struct Framebuffer {
     width: usize,
@@ -37,6 +39,31 @@ impl Framebuffer {
 
     /// Fill a triangle. The third coordinate is view depth (larger is closer).
     pub fn triangle(&mut self, a: [f64; 3], b: [f64; 3], c: [f64; 3], color: [u8; 3]) {
+        self.triangle_inner(a, b, c, color, None);
+    }
+
+    /// Fill a triangle and shade every pixel with a procedural texture.
+    #[allow(clippy::too_many_arguments)]
+    pub fn triangle_textured(
+        &mut self,
+        a: [f64; 3],
+        b: [f64; 3],
+        c: [f64; 3],
+        world: [[f64; 3]; 3],
+        color: [u8; 3],
+        texture: Texture,
+    ) {
+        self.triangle_inner(a, b, c, color, Some((texture, world)));
+    }
+
+    fn triangle_inner(
+        &mut self,
+        a: [f64; 3],
+        b: [f64; 3],
+        c: [f64; 3],
+        base: [u8; 3],
+        shade: Option<(Texture, [[f64; 3]; 3])>,
+    ) {
         let denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
         if denominator.abs() < 1e-12 {
             return;
@@ -73,6 +100,17 @@ impl Framebuffer {
                 let index = y * self.width + x;
                 if z > self.depth[index] + 1e-9 {
                     self.depth[index] = z;
+                    let color = match &shade {
+                        Some((texture, world)) => {
+                            let point = [
+                                u * world[0][0] + v * world[1][0] + w * world[2][0],
+                                u * world[0][1] + v * world[1][1] + w * world[2][1],
+                                u * world[0][2] + v * world[1][2] + w * world[2][2],
+                            ];
+                            texture.shade(base, point)
+                        }
+                        None => base,
+                    };
                     self.write(index, color);
                 }
             }
