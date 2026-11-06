@@ -20,6 +20,9 @@ use serde_json::{Value, json};
 
 const MAX_MAP_CELLS: u64 = 1_000_000;
 
+/// Move an object anchor just inside its cell; see the export loop.
+const ANCHOR_NUDGE: f64 = 0.001;
+
 /// Files written by [`export`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportReport {
@@ -343,8 +346,12 @@ pub fn export_with_walls(
         let local_x = bottom_world[0] - min_x as f64;
         let local_y = bottom_world[1] - min_y as f64;
         let screen = project_point([local_x, local_y, bottom_world[2]], f64::from(scale));
+        // Tiled derives an object's cell from its pixel position. A footprint
+        // corner lies exactly on a cell border, where Tiled rounds to the next
+        // cell and highlights the wrong diamond. Nudging the anchor a thousandth
+        // of a pixel up moves it inside the cell the object stands on.
         let object_x = screen[0];
-        let object_y = screen[1];
+        let object_y = screen[1] - ANCHOR_NUDGE;
         objects.push(json!({
             "id": index + 1,
             "gid": 2 + sprite_index as u32,
