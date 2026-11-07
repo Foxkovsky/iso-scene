@@ -484,6 +484,7 @@ dependencies = [
  "scene-export-sprites",
  "scene-export-tiled",
  "scene-syntax",
+ "scene-walls",
  "serde_json",
 ]
 

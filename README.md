@@ -66,6 +66,7 @@ The normative documents are:
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — pipeline and crates;
 - [`docs/projections.md`](docs/projections.md) — projection formulas and their tests;
 - [`docs/walls.md`](docs/walls.md) — `.walls` format, 16-way masks and Tiled walls.
+- [`docs/servers.md`](docs/servers.md) — `iso-scene lsp` (language server) and `iso-scene mcp`.
 - [`docs/backends.md`](docs/backends.md) — backends, Tiled export and sprite
   sheets; [`docs/sprite-sheet.schema.json`](docs/sprite-sheet.schema.json) —
   the `sheet.json` schema.

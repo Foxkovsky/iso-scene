@@ -40,6 +40,7 @@ fn main() -> ExitCode {
         "sprites" => commands::sprites::sprites_scene(args.collect()),
         "limits" => commands::limits::limits(args.collect()),
         "help" => commands::help::help(args.collect()),
+        "lsp" => serve(scene_server::lsp::run),
         other => {
             eprintln!("iso-scene: unknown command `{other}`");
             eprintln!("Try `iso-scene --help`.");
@@ -87,6 +88,7 @@ pub(crate) fn print_help() {
         "                  --tile-layer puts objects in a tile layer instead of an object layer"
     );
     println!("  help [topic]    one section of the language spec (topics without one)");
+    println!("  lsp             run the language server on stdin/stdout");
     println!("  limits          list every limit and its error code (--json for agents)");
     println!("  spec-version    print the implemented language version");
     println!();
@@ -99,6 +101,19 @@ pub(crate) fn print_help() {
         "  --fuel <n>      evaluation budget for `eval` (default {})",
         scene_core::DEFAULT_FUEL
     );
+}
+
+/// Run a server on stdin and stdout until its client says exit.
+fn serve(
+    server: fn(std::io::StdinLock<'static>, std::io::StdoutLock<'static>) -> std::io::Result<()>,
+) -> ExitCode {
+    match server(std::io::stdin().lock(), std::io::stdout().lock()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("iso-scene: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 #[cfg(test)]
