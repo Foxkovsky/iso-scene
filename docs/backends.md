@@ -227,31 +227,42 @@ the hinge stays put while the leaf swings. Every sprite and frame in
 
 ```json
 {
-  "image": "sheet.png",
-  "cell": { "width": 128, "height": 160 },
+  "format": "iso-scene-sprites", "version": 1,
+  "image": "sheet.png", "imageWidth": 512, "imageHeight": 320,
+  "name": "sheet", "projection": "iso", "scale": 32, "tileWidth": 64,
+  "views": [0, 90, 180, 270], "pivot": "front",
+  "cell": { "width": 128, "height": 160 }, "padding": 0, "shadow": true,
   "anchor": { "x": 64, "y": 132 },
   "columns": 4,
   "rows": 2,
   "sprites": [
     { "name": "chair", "view": 0, "rotation": 0,
       "x": 0, "y": 0, "w": 128, "h": 160,
-      "anchor": { "x": 64, "y": 132 }, "pivot": "front" }
+      "anchor": { "x": 64, "y": 132 }, "pivot": "front",
+      "footprint": { "width": 1.8, "depth": 1.8 }, "source": "chair.model" }
   ],
   "animations": [
     { "name": "open", "object": "door_leaf", "from": 0, "to": 90,
       "rotation": 0, "duration": 100, "loop": true,
       "frames": [
-        { "index": 0, "angle": 0, "duration": 100,
-          "x": 0, "y": 160, "w": 128, "h": 160,
-          "anchor": { "x": 64, "y": 132 }, "pivot": "origin" }
+        { "name": "door_leaf", "index": 0, "angle": 0, "duration": 100,
+          "rotation": 0, "x": 0, "y": 160, "w": 128, "h": 160,
+          "anchor": { "x": 64, "y": 132 }, "pivot": "origin",
+          "footprint": { "width": 1, "depth": 0.1 }, "source": "door.scene" }
       ] }
   ]
 }
 ```
 
-`rotation` is the yaw of a static view (or the quarter turn of an animation
-row); `angle` is the extra yaw of an animation frame. `index` is the frame's column, so engines can advance frames
-without parsing the coordinates.
+The manifest is described formally by
+[`sprite-sheet.schema.json`](sprite-sheet.schema.json) (JSON Schema 2020-12);
+a test keeps the two in sync. `format` and `version` identify it, and
+`version` is bumped on incompatible changes. Pixel coordinates start at the
+top-left of the image. `rotation` is the yaw of a static view (or the quarter
+turn of an animation row); `angle` is the extra yaw of an animation frame.
+`index` is the frame's column, so engines can advance frames without parsing
+the coordinates. `footprint` is the declared object size in blocks and
+`source` the file the object came from.
 
 `--padding <px>` (default 0) leaves transparent pixels around the sheet and
 between cells, so linear filtering, mipmaps or scaling cannot bleed one sprite

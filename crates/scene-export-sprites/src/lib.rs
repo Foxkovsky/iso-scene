@@ -27,6 +27,11 @@ use scene_render::{Image, composite_over, write_png};
 use scene_syntax::Diagnostic;
 use serde_json::{Value, json};
 
+/// `format` written into the manifest.
+pub const MANIFEST_FORMAT: &str = "iso-scene-sprites";
+/// Manifest `version`; bumped on incompatible changes.
+pub const MANIFEST_VERSION: u32 = 1;
+
 /// Maximum sheet width or height in pixels.
 const MAX_SHEET_SIDE: u32 = 8_192;
 /// Maximum sheet area in pixels.
@@ -43,6 +48,8 @@ pub const MAX_TILE_WIDTH: u32 = MAX_SHEET_SIDE;
 pub struct SheetObject {
     pub name: String,
     pub object: Arc<CompiledObject>,
+    /// File the object came from, reported in the manifest when known.
+    pub source: Option<String>,
 }
 
 /// A rotation animation packed as one row of frames.
@@ -157,6 +164,9 @@ struct Cell {
     row: u32,
     column: u32,
     name: String,
+    /// Declared footprint `(width, depth)` in blocks.
+    footprint: [f64; 2],
+    source: Option<String>,
     /// Quarter turn used for the view.
     rotation: u16,
     /// Extra yaw: the rest of a free view angle, or the animated angle.
@@ -283,6 +293,8 @@ pub fn export(
                 row: row as u32,
                 column: column as u32,
                 name: entry.name.clone(),
+                footprint: [entry.object.width, entry.object.depth],
+                source: entry.source.clone(),
                 rotation,
                 angle,
                 animation: None,
@@ -317,6 +329,8 @@ pub fn export(
                 row,
                 column: column as u32,
                 name: entry.name.clone(),
+                footprint: [entry.object.width, entry.object.depth],
+                source: entry.source.clone(),
                 rotation: animation.rotation,
                 angle,
                 animation: Some(index),
@@ -373,7 +387,15 @@ pub fn export(
     let image_path = out_dir.join(&image_name);
     write_png(&sheet, &image_path).map_err(|message| error("E0603", message))?;
 
-    let manifest = manifest_json(options, cells.as_slice(), cell_size, anchor, columns, rows);
+    let manifest = manifest_json(
+        options,
+        cells.as_slice(),
+        cell_size,
+        anchor,
+        columns,
+        rows,
+        [width, height],
+    );
     let manifest_name = format!("{}.json", options.name);
     let manifest_path = out_dir.join(&manifest_name);
     write_json(&manifest_path, &manifest)?;
@@ -521,6 +543,7 @@ fn manifest_json(
     anchor: [f64; 2],
     columns: u32,
     rows: u32,
+    image_size: [u32; 2],
 ) -> Value {
     let sprites: Vec<Value> = cells
         .iter()
@@ -567,8 +590,17 @@ fn manifest_json(
         .collect();
 
     json!({
+        "format": MANIFEST_FORMAT,
+        "version": MANIFEST_VERSION,
         "image": format!("{}.png", options.name),
+        "imageWidth": image_size[0],
+        "imageHeight": image_size[1],
         "name": options.name,
+        "projection": "iso",
+        "scale": options.scale,
+        "tileWidth": options.tile_width,
+        "views": options.views.iter().map(|view| degrees_json(*view)).collect::<Vec<_>>(),
+        "pivot": options.pivot.name(),
         "cell": {"width": cell_size[0], "height": cell_size[1]},
         "padding": options.padding,
         "shadow": options.shadow,
@@ -601,7 +633,7 @@ fn view_degrees(cell: &Cell) -> f64 {
 
 fn cell_json(cell: &Cell, cell_size: [u32; 2], anchor: [f64; 2], padding: u32) -> Value {
     let [x, y] = cell_origin(cell, cell_size, padding);
-    json!({
+    let mut value = json!({
         "name": cell.name,
         "view": cell.column,
         "rotation": degrees_json(view_degrees(cell)),
@@ -609,8 +641,13 @@ fn cell_json(cell: &Cell, cell_size: [u32; 2], anchor: [f64; 2], padding: u32) -
         "y": y,
         "w": cell_size[0],
         "h": cell_size[1],
-        "anchor": {"x": anchor[0], "y": anchor[1]}
-    })
+        "anchor": {"x": anchor[0], "y": anchor[1]},
+        "footprint": {"width": cell.footprint[0], "depth": cell.footprint[1]}
+    });
+    if let (Some(source), Some(object)) = (&cell.source, value.as_object_mut()) {
+        object.insert("source".to_string(), json!(source));
+    }
+    value
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -772,10 +809,12 @@ mod tests {
             SheetObject {
                 name: "chair".into(),
                 object: box_object("chair", 1.0, 1.0),
+                source: None,
             },
             SheetObject {
                 name: "desk".into(),
                 object: box_object("desk", 2.0, 1.0),
+                source: None,
             },
         ];
         let options = SheetOptions {
@@ -820,6 +859,7 @@ mod tests {
         let objects = vec![SheetObject {
             name: "door".into(),
             object: box_object("door", 1.0, 1.0),
+            source: None,
         }];
         let options = SheetOptions {
             name: "door".into(),
@@ -875,6 +915,7 @@ mod tests {
         let objects = vec![SheetObject {
             name: "chair".into(),
             object: box_object("chair", 1.0, 1.0),
+            source: None,
         }];
         let options = SheetOptions {
             name: "one".into(),
@@ -911,6 +952,7 @@ mod tests {
         let objects = vec![SheetObject {
             name: "chair".into(),
             object: box_object("chair", 2.0, 1.0),
+            source: None,
         }];
         let dir = std::env::temp_dir().join("iso-scene-sprites-alpha-test");
         let report = export(&objects, &BTreeMap::new(), &chair_options("alpha"), &dir)
@@ -936,6 +978,8 @@ mod tests {
             row: 0,
             column: 0,
             name: "x".into(),
+            footprint: [1.0, 1.0],
+            source: None,
             rotation: 0,
             angle: 0.0,
             animation: None,
@@ -976,6 +1020,7 @@ mod tests {
         let objects = vec![SheetObject {
             name: "door".into(),
             object: box_object("door", 1.0, 1.0),
+            source: None,
         }];
         let mut options = chair_options("limits");
         options.animations = vec![AnimationSpec {
@@ -998,6 +1043,7 @@ mod tests {
             .map(|index| SheetObject {
                 name: format!("o{index}"),
                 object: objects[0].object.clone(),
+                source: None,
             })
             .collect();
         let error = export(&many, &BTreeMap::new(), &chair_options("limits"), &dir).unwrap_err();
@@ -1026,6 +1072,7 @@ mod tests {
         let objects = vec![SheetObject {
             name: "chair".into(),
             object: box_object("chair", 1.0, 1.0),
+            source: None,
         }];
         let dir = std::env::temp_dir().join("iso-scene-sprites-name-test");
         let error =
@@ -1104,6 +1151,7 @@ mod tests {
         let objects = vec![SheetObject {
             name: "desk".into(),
             object: box_object("desk", 2.0, 1.0),
+            source: None,
         }];
         let mut options = chair_options("eight");
         options.views = (0..8).map(|step| f64::from(step) * 45.0).collect();
@@ -1128,6 +1176,7 @@ mod tests {
         let objects = vec![SheetObject {
             name: "chair".into(),
             object: box_object("chair", 2.0, 1.0),
+            source: None,
         }];
         let mut options = chair_options("bare");
         options.shadow = false;
@@ -1167,6 +1216,7 @@ mod tests {
         let objects = vec![SheetObject {
             name: "door".into(),
             object: box_object("door", 1.0, 1.0),
+            source: None,
         }];
         let mut options = chair_options("doors");
         let mut close = door_animation("close", 3);
@@ -1208,6 +1258,7 @@ mod tests {
         let objects = vec![SheetObject {
             name: "door".into(),
             object: box_object("door", 1.0, 1.0),
+            source: None,
         }];
         let dir = std::env::temp_dir().join("iso-scene-sprites-bad-anim-test");
         let mut options = chair_options("bad");
@@ -1228,10 +1279,12 @@ mod tests {
             SheetObject {
                 name: "a".into(),
                 object: box_object("a", 1.0, 1.0),
+                source: None,
             },
             SheetObject {
                 name: "b".into(),
                 object: box_object("b", 1.0, 1.0),
+                source: None,
             },
         ];
         let mut options = chair_options("padded");
@@ -1256,6 +1309,104 @@ mod tests {
         let reader = decoder.read_info().unwrap();
         assert_eq!(reader.info().width, 2 * w + 9);
         assert_eq!(reader.info().height, 2 * h + 9);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn manifest_describes_format_scale_and_footprints() {
+        let objects = vec![SheetObject {
+            name: "desk".into(),
+            object: box_object("desk", 2.0, 1.0),
+            source: Some("desk.model".into()),
+        }];
+        let mut options = chair_options("meta");
+        options.tile_width = Some(16);
+        let dir = std::env::temp_dir().join("iso-scene-sprites-meta-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(&report.manifest).unwrap()).unwrap();
+        assert_eq!(manifest["format"], MANIFEST_FORMAT);
+        assert_eq!(manifest["version"], MANIFEST_VERSION);
+        assert_eq!(manifest["scale"], 8);
+        assert_eq!(manifest["tileWidth"], 16);
+        assert_eq!(manifest["views"], json!([0, 90, 180, 270]));
+        assert_eq!(manifest["imageWidth"], 4 * report.cells[0]);
+        assert_eq!(manifest["imageHeight"], report.cells[1]);
+        let sprite = &manifest["sprites"][0];
+        assert_eq!(sprite["footprint"], json!({"width": 2.0, "depth": 1.0}));
+        assert_eq!(sprite["source"], "desk.model");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Keys of `value` must be described by `schema` (directly or through
+    /// `allOf`), and every required key must be present.
+    fn check_against(schema: &Value, defs: &Value, value: &Value, path: &str) {
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+        let mut parts = vec![schema.clone()];
+        if let Some(all) = schema["allOf"].as_array() {
+            for reference in all {
+                let name = reference["$ref"]
+                    .as_str()
+                    .unwrap()
+                    .trim_start_matches("#/$defs/");
+                parts.push(defs[name].clone());
+            }
+        }
+        for part in &parts {
+            if let Some(map) = part["properties"].as_object() {
+                properties.extend(map.clone());
+            }
+            if let Some(list) = part["required"].as_array() {
+                required.extend(list.iter().map(|key| key.as_str().unwrap().to_string()));
+            }
+        }
+        let object = value.as_object().unwrap();
+        for key in object.keys() {
+            assert!(
+                properties.contains_key(key),
+                "{path}.{key} is not in the schema"
+            );
+        }
+        for key in required {
+            assert!(
+                object.contains_key(&key),
+                "{path}.{key} is required by the schema"
+            );
+        }
+    }
+
+    #[test]
+    fn manifest_matches_the_published_schema() {
+        let schema: Value =
+            serde_json::from_str(include_str!("../../../docs/sprite-sheet.schema.json")).unwrap();
+        let defs = &schema["$defs"];
+        let objects = vec![SheetObject {
+            name: "door".into(),
+            object: box_object("door", 1.0, 1.0),
+            source: Some("door.model".into()),
+        }];
+        let mut options = chair_options("schema");
+        options.animations = vec![door_animation("open", 2)];
+        let dir = std::env::temp_dir().join("iso-scene-sprites-schema-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(&report.manifest).unwrap()).unwrap();
+        check_against(&schema, defs, &manifest, "sheet");
+        assert_eq!(manifest["format"], schema["properties"]["format"]["const"]);
+        assert_eq!(
+            manifest["version"],
+            schema["properties"]["version"]["const"]
+        );
+        for sprite in manifest["sprites"].as_array().unwrap() {
+            check_against(&defs["sprite"], defs, sprite, "sprite");
+        }
+        for animation in manifest["animations"].as_array().unwrap() {
+            check_against(&defs["animation"], defs, animation, "animation");
+            for frame in animation["frames"].as_array().unwrap() {
+                check_against(&defs["frame"], defs, frame, "frame");
+            }
+        }
         let _ = fs::remove_dir_all(dir);
     }
 }

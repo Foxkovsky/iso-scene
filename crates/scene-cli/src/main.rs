@@ -1113,6 +1113,7 @@ fn push_sheet_object(
             objects.push(scene_export_sprites::SheetObject {
                 name: object.name.clone(),
                 object: object.clone(),
+                source: Some(file.to_string()),
             });
             Ok(())
         }

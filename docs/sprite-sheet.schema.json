@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "iso-scene sprite sheet manifest",
+  "description": "sheet.json written by `iso-scene sprites`. Pixel coordinates have their origin at the top-left of the sheet image; y grows downwards.",
+  "type": "object",
+  "required": [
+    "format", "version", "image", "imageWidth", "imageHeight", "name",
+    "projection", "scale", "views", "pivot", "cell", "padding", "shadow",
+    "anchor", "columns", "rows", "sprites", "animations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "iso-scene-sprites" },
+    "version": { "const": 1, "description": "Bumped on incompatible changes." },
+    "image": { "type": "string", "description": "Sheet image, relative to the manifest." },
+    "imageWidth": { "type": "integer", "minimum": 1 },
+    "imageHeight": { "type": "integer", "minimum": 1 },
+    "name": { "type": "string", "description": "File stem shared by the image, manifest and tileset." },
+    "projection": { "const": "iso" },
+    "scale": { "type": "integer", "minimum": 1, "maximum": 256, "description": "Pixels per block." },
+    "tileWidth": {
+      "type": ["integer", "null"],
+      "description": "Tile width used for the Tiled tileoffset; null when unknown."
+    },
+    "views": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/degrees" },
+      "description": "Yaw of each static view column, in column order."
+    },
+    "pivot": { "$ref": "#/$defs/staticPivot", "description": "Pivot of every static view." },
+    "cell": {
+      "type": "object",
+      "required": ["width", "height"],
+      "additionalProperties": false,
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "padding": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Transparent pixels around the sheet and between cells."
+    },
+    "shadow": { "type": "boolean", "description": "Whether contact shadows are baked in." },
+    "anchor": { "$ref": "#/$defs/point", "description": "Anchor inside every cell (same for all cells)." },
+    "columns": { "type": "integer", "minimum": 1 },
+    "rows": { "type": "integer", "minimum": 1 },
+    "sprites": { "type": "array", "items": { "$ref": "#/$defs/sprite" } },
+    "animations": { "type": "array", "items": { "$ref": "#/$defs/animation" } }
+  },
+  "$defs": {
+    "degrees": {
+      "type": "number",
+      "description": "Angle in degrees; an integer when whole."
+    },
+    "staticPivot": { "enum": ["front", "back", "left", "right", "center"] },
+    "point": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    },
+    "cellFields": {
+      "type": "object",
+      "required": ["name", "rotation", "x", "y", "w", "h", "anchor", "footprint", "pivot"],
+      "properties": {
+        "name": { "type": "string", "description": "Object name." },
+        "rotation": {
+          "$ref": "#/$defs/degrees",
+          "description": "Yaw of a static view, or the quarter turn of an animation row."
+        },
+        "x": { "type": "integer", "minimum": 0, "description": "Left edge of the cell." },
+        "y": { "type": "integer", "minimum": 0, "description": "Top edge of the cell." },
+        "w": { "type": "integer", "minimum": 1 },
+        "h": { "type": "integer", "minimum": 1 },
+        "anchor": {
+          "$ref": "#/$defs/point",
+          "description": "Pixel inside the cell that sits on the object's position."
+        },
+        "footprint": {
+          "type": "object",
+          "required": ["width", "depth"],
+          "additionalProperties": false,
+          "properties": {
+            "width": { "type": "number" },
+            "depth": { "type": "number" }
+          },
+          "description": "Declared object footprint in blocks."
+        },
+        "source": { "type": "string", "description": "File the object came from." }
+      }
+    },
+    "sprite": {
+      "description": "A static view of one object.",
+      "allOf": [{ "$ref": "#/$defs/cellFields" }],
+      "required": ["view"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "view": { "type": "integer", "minimum": 0, "description": "Column index of the view." },
+        "pivot": { "$ref": "#/$defs/staticPivot" }
+      }
+    },
+    "frame": {
+      "description": "One animation frame.",
+      "allOf": [{ "$ref": "#/$defs/cellFields" }],
+      "required": ["index", "angle", "duration"],
+      "unevaluatedProperties": false,
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "description": "Frame number (its column)." },
+        "angle": { "$ref": "#/$defs/degrees", "description": "Extra yaw around the local origin." },
+        "duration": { "type": "integer", "minimum": 1, "description": "Milliseconds." },
+        "pivot": { "const": "origin" }
+      }
+    },
+    "animation": {
+      "type": "object",
+      "required": ["name", "object", "from", "to", "rotation", "duration", "loop", "frames"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "Unique within the sheet." },
+        "object": { "type": "string" },
+        "from": { "$ref": "#/$defs/degrees" },
+        "to": { "$ref": "#/$defs/degrees" },
+        "rotation": { "enum": [0, 90, 180, 270] },
+        "duration": { "type": "integer", "minimum": 1, "description": "Default frame duration in ms." },
+        "loop": { "type": "boolean", "description": "false: play once and hold the last frame." },
+        "frames": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/frame" } }
+      }
+    }
+  }
+}
