@@ -224,10 +224,11 @@ struct Cell {
 ///
 /// # Errors
 ///
-/// Returns `E0602` for an invalid animation (unknown object, duplicate name,
-/// wrong number of durations), an empty view list, too many cells or frames,
-/// or a sheet that exceeds the size limit, and `E0603` for an invalid sheet
-/// name or a file error.
+/// Returns `E0606` for invalid options (no objects or views, an invalid
+/// scale, sheet name or view angle, an animation with an unknown object, a
+/// duplicate name or the wrong number of durations), `E0602` for too many
+/// cells or frames or a sheet that exceeds the size limit, and `E0603` for a
+/// file error.
 #[allow(clippy::too_many_lines)]
 pub fn export(
     objects: &[SheetObject],
@@ -236,30 +237,30 @@ pub fn export(
     out_dir: &Path,
 ) -> Result<SheetReport, Diagnostic> {
     if objects.is_empty() {
-        return Err(error("E0602", "no objects to pack"));
+        return Err(error("E0606", "no objects to pack"));
     }
     if options.views.is_empty() {
-        return Err(error("E0602", "at least one view or angle is required"));
+        return Err(error("E0606", "at least one view or angle is required"));
     }
     if !(1..=scene_core::MAX_SCALE).contains(&options.scale) {
         return Err(error(
-            "E0602",
+            "E0606",
             format!("scale must be in 1..={}", scene_core::MAX_SCALE),
         ));
     }
     if options.views.iter().any(|view| !view.is_finite()) {
-        return Err(error("E0602", "view angles must be finite"));
+        return Err(error("E0606", "view angles must be finite"));
     }
-    validate_name(&options.name).map_err(|message| error("E0603", message))?;
+    validate_name(&options.name).map_err(|message| error("E0606", message))?;
     let mut animation_frames = 0_usize;
     for (index, animation) in options.animations.iter().enumerate() {
         if animation.frames == 0 {
-            return Err(error("E0602", "an animation needs at least one frame"));
+            return Err(error("E0606", "an animation needs at least one frame"));
         }
         if !animation.durations.is_empty() && animation.durations.len() != animation.frames as usize
         {
             return Err(error(
-                "E0602",
+                "E0606",
                 format!(
                     "animation `{}` has {} frames but {} durations",
                     animation.name,
@@ -270,7 +271,7 @@ pub fn export(
         }
         if !objects.iter().any(|entry| entry.name == animation.object) {
             return Err(error(
-                "E0602",
+                "E0606",
                 format!("scene has no object `{}`", animation.object),
             ));
         }
@@ -279,7 +280,7 @@ pub fn export(
             .any(|other| other.name == animation.name)
         {
             return Err(error(
-                "E0602",
+                "E0606",
                 format!("animation name `{}` is used twice", animation.name),
             ));
         }
@@ -302,7 +303,7 @@ pub fn export(
         ));
     }
     if options.max_rows == Some(0) {
-        return Err(error("E0602", "a page needs at least one row"));
+        return Err(error("E0606", "a page needs at least one row"));
     }
 
     let mut cells = Vec::new();
@@ -1379,7 +1380,7 @@ mod tests {
         let dir = std::env::temp_dir().join("iso-scene-sprites-name-test");
         let error =
             export(&objects, &BTreeMap::new(), &chair_options("../evil"), &dir).unwrap_err();
-        assert_eq!(error.code, "E0603");
+        assert_eq!(error.code, "E0606");
     }
 
     #[test]
@@ -1566,6 +1567,7 @@ mod tests {
         let mut options = chair_options("bad");
         options.animations = vec![door_animation("a", 3), door_animation("a", 3)];
         let error = export(&objects, &BTreeMap::new(), &options, &dir).unwrap_err();
+        assert_eq!(error.code, "E0606");
         assert!(error.message.contains("used twice"), "{}", error.message);
         let mut timed = door_animation("b", 3);
         timed.durations = vec![10, 20];
