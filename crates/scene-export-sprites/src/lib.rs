@@ -22,6 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use rayon::prelude::*;
 use scene_backend_iso::{Sprite, render_object_sprite_with};
 use scene_backend_ortho::View;
 use scene_core::CompiledObject;
@@ -270,6 +271,55 @@ struct Cell {
     reference: [f64; 2],
 }
 
+/// One cell to render: which object, how it is turned and where it goes.
+struct Job<'a> {
+    row: u32,
+    column: u32,
+    entry: &'a SheetObject,
+    rotation: u16,
+    angle: f64,
+    /// Animation index and frame duration for an animation frame.
+    animation: Option<(usize, u32)>,
+}
+
+impl Job<'_> {
+    fn render(
+        &self,
+        options: &SheetOptions,
+        materials: &std::collections::BTreeMap<String, PathBuf>,
+    ) -> Result<Cell, Diagnostic> {
+        let object = &self.entry.object;
+        let sprite = render_cell(object, self.rotation, self.angle, options, materials)?;
+        // A static view sits on its footprint pivot; a frame turns around the
+        // object's local origin.
+        let reference = match self.animation {
+            None => footprint_pivot(
+                object,
+                self.rotation,
+                self.angle,
+                options.scale,
+                &sprite,
+                options.pivot,
+                options.projection,
+            ),
+            Some(_) => sprite.anchor,
+        };
+        Ok(Cell {
+            row: self.row,
+            column: self.column,
+            name: self.entry.name.clone(),
+            footprint: [object.width, object.depth],
+            source: self.entry.source.clone(),
+            rotation: self.rotation,
+            angle: self.angle,
+            animation: self.animation.map(|(index, _)| index),
+            duration: self.animation.map(|(_, duration)| duration),
+            sprite,
+            reference,
+        })
+    }
+}
+
 /// Render objects into `out_dir`.
 ///
 /// Rows are objects (one row per object), columns are views; every animation
@@ -361,32 +411,20 @@ pub fn export(
         return Err(error("E0606", "a page needs at least one row"));
     }
 
-    let mut cells = Vec::new();
+    // Every cell is described first, in sheet order, then rendered in
+    // parallel; results keep that order and the first failing cell (in order)
+    // decides the error, so output and diagnostics do not depend on threads.
+    let mut jobs = Vec::with_capacity(cell_count);
     for (row, entry) in objects.iter().enumerate() {
         for (column, view) in options.views.iter().enumerate() {
             let (rotation, angle) = split_view(*view);
-            let sprite = render_cell(&entry.object, rotation, angle, options, materials)?;
-            let reference = footprint_pivot(
-                &entry.object,
-                rotation,
-                angle,
-                options.scale,
-                &sprite,
-                options.pivot,
-                options.projection,
-            );
-            cells.push(Cell {
+            jobs.push(Job {
                 row: row as u32,
                 column: column as u32,
-                name: entry.name.clone(),
-                footprint: [entry.object.width, entry.object.depth],
-                source: entry.source.clone(),
+                entry,
                 rotation,
                 angle,
                 animation: None,
-                duration: None,
-                sprite,
-                reference,
             });
         }
     }
@@ -398,27 +436,28 @@ pub fn export(
         let row = (objects.len() + index) as u32;
         let angles = frame_angles(animation.from, animation.to, animation.frames);
         for (column, angle) in angles.into_iter().enumerate() {
-            let sprite = render_cell(&entry.object, animation.rotation, angle, options, materials)?;
             let duration = animation
                 .durations
                 .get(column)
                 .copied()
                 .unwrap_or(animation.duration);
-            cells.push(Cell {
+            jobs.push(Job {
                 row,
                 column: column as u32,
-                name: entry.name.clone(),
-                footprint: [entry.object.width, entry.object.depth],
-                source: entry.source.clone(),
+                entry,
                 rotation: animation.rotation,
                 angle,
-                animation: Some(index),
-                duration: Some(duration),
-                reference: sprite.anchor,
-                sprite,
+                animation: Some((index, duration)),
             });
         }
     }
+    let rendered: Vec<Result<Cell, Diagnostic>> = jobs
+        .par_iter()
+        .map(|job| job.render(options, materials))
+        .collect();
+    let cells = rendered
+        .into_iter()
+        .collect::<Result<Vec<Cell>, Diagnostic>>()?;
 
     let total_rows = objects.len() + options.animations.len();
     let rows_per_page = options
