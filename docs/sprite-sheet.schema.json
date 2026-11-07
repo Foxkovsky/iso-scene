@@ -50,7 +50,12 @@
       "description": "File stem shared by the image, manifest and tileset."
     },
     "projection": {
-      "const": "iso"
+      "enum": [
+        "iso",
+        "top",
+        "front",
+        "side"
+      ]
     },
     "scale": {
       "type": "integer",
@@ -101,7 +106,7 @@
     },
     "shadow": {
       "type": "boolean",
-      "description": "Whether contact shadows are baked in."
+      "description": "Whether contact shadows are baked in (isometric sheets only)."
     },
     "anchor": {
       "$ref": "#/$defs/point",

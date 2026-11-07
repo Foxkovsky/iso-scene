@@ -177,6 +177,14 @@ Views always show the object itself in canonical orientation; the `rot` of a
 `place` in a scene does not change the sheet (a scene contributes *which*
 objects are packed, not how they are turned).
 
+`--projection iso|top|front|side` picks the camera. It defaults to the
+`render` of the first scene (iso for models), so `classroom_top.scene` gives a
+top-down sheet for a top-down game. Views turn the object the same way in
+every projection; pivots use the same footprint corners projected by that
+camera (in front and side views the footprint is a line, so `front` is the
+middle of the bottom edge). Contact shadows are an isometric effect and are
+not baked into orthographic sheets.
+
 The output directory gets three files:
 
 - `sheet.png` — transparent grid, one cell per object/view;

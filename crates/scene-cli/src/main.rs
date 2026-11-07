@@ -628,6 +628,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let mut debug_grid = false;
     let mut atlas = false;
     let mut max_rows: Option<u32> = None;
+    let mut projection: Option<scene_export_sprites::Projection> = None;
     let mut base_override: Option<PathBuf> = None;
     // Animation flags apply to the latest `--animation`; flags given before
     // the first one apply to the first.
@@ -739,6 +740,16 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
             }
             "--debug-grid" => debug_grid = true,
             "--atlas" => atlas = true,
+            "--projection" => {
+                let Some(v) = value("--projection") else {
+                    return ExitCode::from(2);
+                };
+                let Some(parsed) = scene_export_sprites::Projection::parse(&v) else {
+                    eprintln!("iso-scene: `--projection` must be iso, top, front or side");
+                    return ExitCode::from(2);
+                };
+                projection = Some(parsed);
+            }
             "--max-rows" => {
                 let Some(v) = value("--max-rows") else {
                     return ExitCode::from(2);
@@ -938,6 +949,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let mut material_files: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     let mut scene_scale: Option<u32> = None;
+    let mut scene_projection: Option<scene_export_sprites::Projection> = None;
 
     for path in &paths {
         let Some(source) = read(path) else {
@@ -958,6 +970,12 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     Err(diagnostic) => return report(path, &source, &diagnostic),
                 };
                 scene_scale.get_or_insert(scene.scale);
+                scene_projection.get_or_insert(match scene.render {
+                    scene_syntax::ast::RenderKind::Iso => scene_export_sprites::Projection::Iso,
+                    scene_syntax::ast::RenderKind::Top => scene_export_sprites::Projection::Top,
+                    scene_syntax::ast::RenderKind::Front => scene_export_sprites::Projection::Front,
+                    scene_syntax::ast::RenderKind::Side => scene_export_sprites::Projection::Side,
+                });
                 if scale.is_none() && scene_scale.is_some_and(|known| known != scene.scale) {
                     eprintln!("iso-scene: scenes use different scales; pass --scale to pick one");
                     return ExitCode::from(2);
@@ -1050,6 +1068,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let options = scene_export_sprites::SheetOptions {
         name,
         scale,
+        projection: projection.or(scene_projection).unwrap_or_default(),
         views: views.unwrap_or_else(|| vec![0.0, 90.0, 180.0, 270.0]),
         pivot,
         shadow,
@@ -1524,6 +1543,7 @@ fn print_help() {
     println!("                  --debug-grid also writes <name>.debug.png with cell borders");
     println!("                  --atlas also writes <name>.atlas.json for Phaser/PixiJS");
     println!("                  --max-rows <n> splits the sheet into pages of n rows");
+    println!("                  --projection iso|top|front|side (default: the scene's render)");
     println!(
         "                  --animation <name> --from --to --frames --duration adds a frame row"
     );

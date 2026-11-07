@@ -379,3 +379,29 @@ fn bad_flag_values_are_usage_errors() {
     assert!(!dir.join("out").exists());
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn projection_follows_the_scene_unless_given() {
+    let dir = scratch("projection");
+    room(&dir);
+    write(
+        &dir,
+        "top.scene",
+        &ROOM.replace("render iso;", "render top;"),
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args(["sprites", "top.scene", "-o", "out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(manifest(&dir, "out")["projection"], "top");
+    let output = binary()
+        .current_dir(&dir)
+        .args(["sprites", "top.scene", "--projection", "side", "-o", "out2"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(manifest(&dir, "out2")["projection"], "side");
+    let _ = fs::remove_dir_all(dir);
+}

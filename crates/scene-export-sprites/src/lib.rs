@@ -1,4 +1,5 @@
-//! Pack isometric object renders into a sprite sheet.
+//! Pack object renders into a sprite sheet: 2:1 isometric by default, or a
+//! top, front or side orthographic view.
 //!
 //! The sheet is a uniform grid of cells sharing one anchor at the horizontal
 //! centre of the cell. A static view puts the footprint's front corner (where
@@ -21,7 +22,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use scene_backend_iso::{Sprite, project_point, render_object_sprite_with};
+use scene_backend_iso::{Sprite, render_object_sprite_with};
+use scene_backend_ortho::View;
 use scene_core::CompiledObject;
 use scene_render::{Image, composite_over, write_png};
 use scene_syntax::Diagnostic;
@@ -122,6 +124,57 @@ impl Pivot {
     }
 }
 
+/// Camera used for every cell.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Projection {
+    /// 2:1 isometric.
+    #[default]
+    Iso,
+    /// Orthographic, looking down.
+    Top,
+    /// Orthographic, looking along +y.
+    Front,
+    /// Orthographic, looking along -x.
+    Side,
+}
+
+impl Projection {
+    /// Name used on the command line and in the manifest.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Iso => "iso",
+            Self::Top => "top",
+            Self::Front => "front",
+            Self::Side => "side",
+        }
+    }
+
+    /// Parse a command-line name.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        [Self::Iso, Self::Top, Self::Front, Self::Side]
+            .into_iter()
+            .find(|projection| projection.name() == name)
+    }
+
+    fn ortho(self) -> Option<View> {
+        match self {
+            Self::Iso => None,
+            Self::Top => Some(View::Top),
+            Self::Front => Some(View::Front),
+            Self::Side => Some(View::Side),
+        }
+    }
+
+    fn project(self, point: [f64; 3], scale: f64) -> [f64; 2] {
+        match self.ortho() {
+            None => scene_backend_iso::project_point(point, scale),
+            Some(view) => scene_backend_ortho::project_point(view, point, scale),
+        }
+    }
+}
+
 /// What to put on the sheet.
 #[derive(Clone, Debug)]
 pub struct SheetOptions {
@@ -129,12 +182,14 @@ pub struct SheetOptions {
     pub name: String,
     /// Pixels per block.
     pub scale: u32,
+    /// Camera for every cell.
+    pub projection: Projection,
     /// Yaw of each static view in degrees, in order. Quarter turns are exact;
     /// other angles (e.g. 45° for eight directions) turn the object freely.
     pub views: Vec<f64>,
     /// Footprint point that static views put on the anchor.
     pub pivot: Pivot,
-    /// Bake a soft contact shadow under every sprite.
+    /// Bake a soft contact shadow under every sprite (isometric only).
     pub shadow: bool,
     /// Transparent pixels around and between cells, so linear filtering or
     /// mipmaps do not bleed one sprite into its neighbour.
@@ -310,14 +365,7 @@ pub fn export(
     for (row, entry) in objects.iter().enumerate() {
         for (column, view) in options.views.iter().enumerate() {
             let (rotation, angle) = split_view(*view);
-            let sprite = render_object_sprite_with(
-                &entry.object,
-                rotation,
-                angle,
-                options.scale,
-                materials,
-                options.shadow,
-            )?;
+            let sprite = render_cell(&entry.object, rotation, angle, options, materials)?;
             let reference = footprint_pivot(
                 &entry.object,
                 rotation,
@@ -325,6 +373,7 @@ pub fn export(
                 options.scale,
                 &sprite,
                 options.pivot,
+                options.projection,
             );
             cells.push(Cell {
                 row: row as u32,
@@ -349,14 +398,7 @@ pub fn export(
         let row = (objects.len() + index) as u32;
         let angles = frame_angles(animation.from, animation.to, animation.frames);
         for (column, angle) in angles.into_iter().enumerate() {
-            let sprite = render_object_sprite_with(
-                &entry.object,
-                animation.rotation,
-                angle,
-                options.scale,
-                materials,
-                options.shadow,
-            )?;
+            let sprite = render_cell(&entry.object, animation.rotation, angle, options, materials)?;
             let duration = animation
                 .durations
                 .get(column)
@@ -525,6 +567,7 @@ fn footprint_pivot(
     scale: u32,
     sprite: &Sprite,
     pivot: Pivot,
+    projection: Projection,
 ) -> [f64; 2] {
     let scale = f64::from(scale);
     let instance = scene_core::Instance {
@@ -533,7 +576,7 @@ fn footprint_pivot(
         rotation,
         angle,
     };
-    let origin = project_point(instance.to_world([0.0, 0.0, 0.0]), scale);
+    let origin = projection.project(instance.to_world([0.0, 0.0, 0.0]), scale);
     let corners: Vec<[f64; 2]> = [
         [0.0, 0.0],
         [object.width, 0.0],
@@ -541,7 +584,7 @@ fn footprint_pivot(
         [object.width, object.depth],
     ]
     .into_iter()
-    .map(|[x, y]| project_point(instance.to_world([x, y, 0.0]), scale))
+    .map(|[x, y]| projection.project(instance.to_world([x, y, 0.0]), scale))
     .collect();
     // Score to maximise for each pivot; the centre averages every corner.
     let score = |point: &[f64; 2]| match pivot {
@@ -565,6 +608,38 @@ fn footprint_pivot(
         sprite.anchor[0] + point[0] - origin[0],
         sprite.anchor[1] + point[1] - origin[1],
     ]
+}
+
+/// Render one cell with the sheet's projection; `Sprite::anchor` is the pixel
+/// of the object's local origin at floor level.
+fn render_cell(
+    object: &CompiledObject,
+    rotation: u16,
+    angle: f64,
+    options: &SheetOptions,
+    materials: &std::collections::BTreeMap<String, PathBuf>,
+) -> Result<Sprite, Diagnostic> {
+    match options.projection.ortho() {
+        None => render_object_sprite_with(
+            object,
+            rotation,
+            angle,
+            options.scale,
+            materials,
+            options.shadow,
+        ),
+        Some(view) => {
+            let (image, anchor) = scene_backend_ortho::render_object_sprite(
+                object,
+                view,
+                rotation,
+                angle,
+                options.scale,
+                materials,
+            )?;
+            Ok(Sprite { image, anchor })
+        }
+    }
 }
 
 /// Split a view yaw into an exact quarter turn and the remaining degrees.
@@ -702,14 +777,14 @@ fn manifest_json(options: &SheetOptions, pages: &[Page]) -> Value {
         "imageWidth": first["imageWidth"],
         "imageHeight": first["imageHeight"],
         "name": options.name,
-        "projection": "iso",
+        "projection": options.projection.name(),
         "scale": options.scale,
         "tileWidth": options.tile_width,
         "views": options.views.iter().map(|view| degrees_json(*view)).collect::<Vec<_>>(),
         "pivot": options.pivot.name(),
         "cell": first["cell"],
         "padding": options.padding,
-        "shadow": options.shadow,
+        "shadow": options.shadow && options.projection == Projection::Iso,
         "anchor": first["anchor"],
         "columns": first["columns"],
         "rows": first["rows"],
@@ -1114,6 +1189,7 @@ mod tests {
         let options = SheetOptions {
             name: "sheet".into(),
             scale: 8,
+            projection: Projection::Iso,
             views: vec![0.0, 90.0, 180.0, 270.0],
             pivot: Pivot::Front,
             shadow: true,
@@ -1161,6 +1237,7 @@ mod tests {
         let options = SheetOptions {
             name: "door".into(),
             scale: 8,
+            projection: Projection::Iso,
             views: vec![0.0, 180.0],
             pivot: Pivot::Front,
             shadow: true,
@@ -1220,6 +1297,7 @@ mod tests {
         let options = SheetOptions {
             name: "one".into(),
             scale: 8,
+            projection: Projection::Iso,
             views: vec![0.0],
             pivot: Pivot::Front,
             shadow: true,
@@ -1241,6 +1319,7 @@ mod tests {
         SheetOptions {
             name: name.into(),
             scale: 8,
+            projection: Projection::Iso,
             views: vec![0.0, 90.0, 180.0, 270.0],
             pivot: Pivot::Front,
             shadow: true,
@@ -1411,7 +1490,15 @@ mod tests {
                     &BTreeMap::new(),
                 )
                 .unwrap();
-                let corner = footprint_pivot(object, rotation, 0.0, 8, &sprite, Pivot::Front);
+                let corner = footprint_pivot(
+                    object,
+                    rotation,
+                    0.0,
+                    8,
+                    &sprite,
+                    Pivot::Front,
+                    Projection::Iso,
+                );
                 // The anchor relative to the object's origin pixel.
                 [corner[0] - sprite.anchor[0], corner[1] - sprite.anchor[1]]
             };
@@ -1426,7 +1513,7 @@ mod tests {
             scene_backend_iso::render_object_sprite_at(&object, 0, 0.0, 8, &BTreeMap::new())
                 .unwrap();
         let at = |pivot| {
-            let point = footprint_pivot(&object, 0, 0.0, 8, &sprite, pivot);
+            let point = footprint_pivot(&object, 0, 0.0, 8, &sprite, pivot, Projection::Iso);
             [point[0] - sprite.anchor[0], point[1] - sprite.anchor[1]]
         };
         // Screen offsets from the origin corner at scale 8: x = (x - y) * 8,
@@ -1963,5 +2050,44 @@ mod tests {
             }
         }
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn orthographic_sheets_anchor_on_the_footprint() {
+        let objects = vec![SheetObject {
+            name: "desk".into(),
+            object: box_object("desk", 2.0, 1.0),
+            source: None,
+        }];
+        for projection in [Projection::Top, Projection::Front, Projection::Side] {
+            let mut options = chair_options(projection.name());
+            options.projection = projection;
+            options.shadow = false;
+            let dir = std::env::temp_dir().join(format!(
+                "iso-scene-sprites-ortho-{}-test",
+                projection.name()
+            ));
+            let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+            let manifest: Value =
+                serde_json::from_str(&fs::read_to_string(&report.manifest).unwrap()).unwrap();
+            assert_eq!(manifest["projection"], projection.name());
+            assert_eq!(manifest["shadow"], false);
+            let (width, _, sheet) = read_png(&report.image);
+            let sprite = &manifest["sprites"][0];
+            let [x, y, w, h] = ["x", "y", "w", "h"].map(|key| sprite[key].as_u64().unwrap());
+            let anchor_y = sprite["anchor"]["y"].as_f64().unwrap();
+            let lowest = (y..y + h)
+                .filter(|row| {
+                    (x..x + w).any(|column| {
+                        sheet[((row * u64::from(width) + column) * 4 + 3) as usize] > 0
+                    })
+                })
+                .max()
+                .unwrap();
+            // In every orthographic view the front pivot is the bottom edge.
+            let offset = (lowest - y) as f64 - anchor_y;
+            assert!(offset.abs() <= 2.0, "{projection:?}: {offset}");
+            let _ = fs::remove_dir_all(dir);
+        }
     }
 }

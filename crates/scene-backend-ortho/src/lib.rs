@@ -7,9 +7,10 @@
 )]
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use scene_core::{Instance, SceneGraph};
+use scene_core::{CompiledObject, Instance, SceneGraph};
 use scene_render::{Framebuffer, MeshFace, Palette, builtin, primitive_faces};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Background, RenderKind};
@@ -74,6 +75,58 @@ pub fn view_depth(view: View, point: [f64; 3]) -> f64 {
 /// Returns `E0602` for an oversized image, `E0604` for the iso kind and
 /// `E0601` for material files (not implemented yet).
 pub fn render(scene: &SceneGraph) -> Result<OrthoImage, Diagnostic> {
+    Ok(render_with_origin(scene)?.0)
+}
+
+/// Render one object, turned by a quarter `rotation` plus `angle` degrees
+/// around its local origin, into a transparent image. Also returns the pixel
+/// of the object's local origin at floor level.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`render`].
+pub fn render_object_sprite(
+    object: &CompiledObject,
+    view: View,
+    rotation: u16,
+    angle: f64,
+    scale: u32,
+    materials: &BTreeMap<String, PathBuf>,
+) -> Result<(OrthoImage, [f64; 2]), Diagnostic> {
+    let instance = Instance {
+        object: Arc::new(object.clone()),
+        at: [0.0, 0.0, 0.0],
+        rotation,
+        angle,
+    };
+    let origin_world = instance.to_world([0.0, 0.0, 0.0]);
+    let graph = SceneGraph {
+        render: match view {
+            View::Top => RenderKind::Top,
+            View::Front => RenderKind::Front,
+            View::Side => RenderKind::Side,
+        },
+        scale,
+        canvas: None,
+        sun: [135.0, 45.0],
+        ambient: 0.35,
+        background: Background::Transparent,
+        materials: materials.clone(),
+        bounds: instance.world_bounds(),
+        instances: vec![instance],
+    };
+    let (image, origin) = render_with_origin(&graph)?;
+    let screen = project_point(view, origin_world, f64::from(scale));
+    Ok((image, [screen[0] - origin[0], screen[1] - origin[1]]))
+}
+
+/// Render a scene and also return the pixel origin of the image in projected
+/// screen space.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`render`].
+pub fn render_with_origin(scene: &SceneGraph) -> Result<(OrthoImage, [f64; 2]), Diagnostic> {
     let Some(view) = View::from_render(scene.render) else {
         return Err(error(
             "E0604",
@@ -168,11 +221,14 @@ pub fn render(scene: &SceneGraph) -> Result<OrthoImage, Diagnostic> {
         }
     }
 
-    Ok(Image {
-        width: u32::try_from(width).unwrap_or(0),
-        height: u32::try_from(height).unwrap_or(0),
-        rgba: framebuffer.into_rgba(),
-    })
+    Ok((
+        Image {
+            width: u32::try_from(width).unwrap_or(0),
+            height: u32::try_from(height).unwrap_or(0),
+            rgba: framebuffer.into_rgba(),
+        },
+        origin,
+    ))
 }
 
 /// Encode an image as an RGBA PNG.
