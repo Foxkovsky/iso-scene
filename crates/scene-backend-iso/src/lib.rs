@@ -686,16 +686,113 @@ type EdgeKey = (VertexKey, VertexKey);
 ///
 /// Without this, a long edge and a shorter collinear edge that shares only its
 /// top part never compare equal, and the seam between them stays visible.
-fn split_group_edges(faces: &mut [Face]) {
-    let mut vertices: BTreeMap<u32, Vec<[f64; 3]>> = BTreeMap::new();
-    for face in faces.iter() {
+/// Vertices of one merge group, bucketed in a uniform grid so that "which
+/// vertices can lie on this edge" looks at a few cells instead of them all.
+struct GroupVertices {
+    points: Vec<[f64; 3]>,
+    /// Grid cell size in blocks.
+    cell: f64,
+    /// Vertex indices per cell, in original order.
+    grid: BTreeMap<[i64; 3], Vec<usize>>,
+}
+
+impl GroupVertices {
+    /// Tolerance around a segment, larger than the on-segment test's 1e-6.
+    const TOLERANCE: f64 = 1e-6;
+
+    fn new(points: Vec<[f64; 3]>, cell: f64) -> Self {
+        let mut grid: BTreeMap<[i64; 3], Vec<usize>> = BTreeMap::new();
+        for (index, point) in points.iter().enumerate() {
+            grid.entry(Self::key(*point, cell)).or_default().push(index);
+        }
+        Self { points, cell, grid }
+    }
+
+    fn key(point: [f64; 3], cell: f64) -> [i64; 3] {
+        point.map(|value| (value / cell).floor() as i64)
+    }
+
+    /// Indices, in their original order, of every vertex inside the segment's
+    /// bounding box widened by the tolerance; any vertex on the segment is
+    /// among them.
+    fn near_segment(&self, a: [f64; 3], b: [f64; 3]) -> Vec<usize> {
+        let low = [0, 1, 2].map(|axis| a[axis].min(b[axis]) - Self::TOLERANCE);
+        let high = [0, 1, 2].map(|axis| a[axis].max(b[axis]) + Self::TOLERANCE);
+        let inside = |point: &[f64; 3]| {
+            (0..3).all(|axis| point[axis] >= low[axis] && point[axis] <= high[axis])
+        };
+        let first = Self::key(low, self.cell);
+        let last = Self::key(high, self.cell);
+        let cells = (0..3).fold(1_i128, |count, axis| {
+            count.saturating_mul(i128::from(last[axis] - first[axis] + 1))
+        });
+        let mut found: Vec<usize> = if cells > self.points.len() as i128 {
+            // A segment spanning more cells than there are vertices: scanning
+            // the vertices directly is cheaper.
+            (0..self.points.len())
+                .filter(|&index| inside(&self.points[index]))
+                .collect()
+        } else {
+            let mut found = Vec::new();
+            for x in first[0]..=last[0] {
+                for y in first[1]..=last[1] {
+                    for z in first[2]..=last[2] {
+                        if let Some(indices) = self.grid.get(&[x, y, z]) {
+                            found.extend(
+                                indices
+                                    .iter()
+                                    .copied()
+                                    .filter(|&index| inside(&self.points[index])),
+                            );
+                        }
+                    }
+                }
+            }
+            found
+        };
+        found.sort_unstable();
+        found
+    }
+}
+
+/// Vertices of every merge group, indexed for segment queries.
+fn group_vertices(faces: &[Face]) -> BTreeMap<u32, GroupVertices> {
+    let mut collected: BTreeMap<u32, Vec<[f64; 3]>> = BTreeMap::new();
+    for face in faces {
         if let Some(group) = face.group {
-            vertices
+            collected
                 .entry(group)
                 .or_default()
                 .extend_from_slice(&face.points);
         }
     }
+    // Cells about as large as an average edge keep each lookup to a few cells.
+    let mut edge_length: BTreeMap<u32, (f64, usize)> = BTreeMap::new();
+    for face in faces {
+        if let Some(group) = face.group {
+            let entry = edge_length.entry(group).or_insert((0.0, 0));
+            let count = face.points.len();
+            for index in 0..count {
+                let a = face.points[index];
+                let b = face.points[(index + 1) % count];
+                entry.0 +=
+                    ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt();
+                entry.1 += 1;
+            }
+        }
+    }
+    collected
+        .into_iter()
+        .map(|(group, points)| {
+            let (total, count) = edge_length.get(&group).copied().unwrap_or((1.0, 1));
+            let cell = (total / count.max(1) as f64).max(1e-3);
+            (group, GroupVertices::new(points, cell))
+        })
+        .collect()
+}
+
+fn split_group_edges(faces: &mut [Face]) {
+    let vertices = group_vertices(faces);
     for face in faces.iter_mut() {
         let Some(group) = face.group else {
             continue;
@@ -717,7 +814,8 @@ fn split_group_edges(faces: &mut [Face]) {
                 continue;
             }
             let mut hits: Vec<(f64, [f64; 3])> = Vec::new();
-            for vertex in group_vertices {
+            for index in group_vertices.near_segment(a, b) {
+                let vertex = &group_vertices.points[index];
                 if (vertex[0] - a[0]).abs() < 1e-9
                     && (vertex[1] - a[1]).abs() < 1e-9
                     && (vertex[2] - a[2]).abs() < 1e-9
@@ -1036,5 +1134,56 @@ mod tests {
             position(1) < position(0),
             "the handle in front must be painted last: {order:?}"
         );
+    }
+
+    #[test]
+    fn the_vertex_grid_finds_every_vertex_on_a_segment() {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            // Quarter-block coordinates make many vertices fall on edges.
+            (state % 41) as f64 * 0.25 - 5.0
+        };
+        let points: Vec<[f64; 3]> = (0..400).map(|_| [next(), next(), next()]).collect();
+        for cell in [0.001, 0.3, 1.0, 7.0] {
+            let grid = GroupVertices::new(points.clone(), cell);
+            for _ in 0..300 {
+                let a = points[(next().abs() * 37.0) as usize % points.len()];
+                let mut b = a;
+                // Axis-aligned and diagonal segments.
+                b[(next().abs() as usize) % 3] += next();
+                if next() > 2.0 {
+                    b[0] += next();
+                }
+                let near = grid.near_segment(a, b);
+                assert!(
+                    near.windows(2).all(|pair| pair[0] < pair[1]),
+                    "original order"
+                );
+                let direction = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let length = direction.iter().map(|d| d * d).sum::<f64>();
+                for (index, vertex) in points.iter().enumerate() {
+                    if length < 1e-12 {
+                        break;
+                    }
+                    let offset = [vertex[0] - a[0], vertex[1] - a[1], vertex[2] - a[2]];
+                    let t = (0..3)
+                        .map(|axis| offset[axis] * direction[axis])
+                        .sum::<f64>()
+                        / length;
+                    let distance = (0..3)
+                        .map(|axis| (vertex[axis] - (a[axis] + direction[axis] * t)).powi(2))
+                        .sum::<f64>();
+                    if t > 1e-9 && t < 1.0 - 1e-9 && distance < 1e-12 {
+                        assert!(
+                            near.contains(&index),
+                            "cell {cell}: missed {vertex:?} on {a:?}..{b:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
