@@ -199,7 +199,7 @@ fn render_scene(args: Vec<String>) -> ExitCode {
     let file = Path::new(&path);
     let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
     let base = base_override.as_deref().unwrap_or(fallback_base);
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let root = project_root(base_override.as_deref());
     let mut scene = if extension == Some("model") {
         let model = match scene_core::compile_model(&program, base) {
             Ok(model) => model,
@@ -840,7 +840,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         let file = Path::new(path);
         let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
         let base = base_override.as_deref().unwrap_or(fallback_base);
-        let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+        let root = project_root(base_override.as_deref());
         match file.extension().and_then(|value| value.to_str()) {
             Some("scene") => {
                 let scene = match scene_core::compile_scene(&program, base, &root) {
@@ -1016,6 +1016,26 @@ fn same_file(a: &Path, b: &Path) -> bool {
         )
 }
 
+/// Directory that `include` and `material` paths must stay inside.
+///
+/// Without `--base` it is the working directory. With `--base`, the working
+/// directory is kept when it contains the base (so includes may still reach
+/// siblings of the base), otherwise the base itself is the root, so a project
+/// can be built from anywhere.
+fn project_root(base_override: Option<&Path>) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(base) = base_override else {
+        return cwd;
+    };
+    let base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    let cwd_canonical = cwd.canonicalize().unwrap_or(cwd);
+    if base.starts_with(&cwd_canonical) {
+        cwd_canonical
+    } else {
+        base
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn voxel_scene(args: Vec<String>) -> ExitCode {
     let mut path: Option<String> = None;
@@ -1097,7 +1117,7 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
     let file = Path::new(&path);
     let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
     let base = base_override.as_deref().unwrap_or(fallback_base);
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let root = project_root(base_override.as_deref());
     let scene = if extension == Some("model") {
         let model = match scene_core::compile_model(&program, base) {
             Ok(model) => model,
@@ -1218,14 +1238,13 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
     let file = Path::new(&path);
     let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
     let base = base_override.as_deref().unwrap_or(fallback_base);
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let root = project_root(base_override.as_deref());
     let scene = match scene_core::compile_scene(&program, base, &root) {
         Ok(scene) => scene,
         Err(diagnostic) => return report(&path, &source, &diagnostic),
     };
     let walls = if let Some(walls_path) = walls_path {
         let walls_file = Path::new(&walls_path);
-        let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         match scene_walls::load(walls_file, &root) {
             Ok(walls) => Some(walls),
             Err(diagnostic) => {

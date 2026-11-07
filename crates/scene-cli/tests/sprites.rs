@@ -122,3 +122,30 @@ fn unknown_animation_object_and_huge_frame_counts_are_usage_errors() {
     assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn base_outside_the_working_directory_resolves_includes() {
+    let dir = scratch("base");
+    let project = dir.join("project");
+    let elsewhere = dir.join("elsewhere");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&elsewhere).unwrap();
+    write(&project, "frame.model", THING_A);
+    write(
+        &project,
+        "door.scene",
+        "version 1;\ninclude \"frame.model\";\nrender iso;\nscale 8;\ncanvas (2, 2, 2);\nplace thing at (0, 0, 0) rot 0;\n",
+    );
+    let output = binary()
+        .current_dir(&elsewhere)
+        .arg("sprites")
+        .arg(project.join("door.scene"))
+        .arg("--base")
+        .arg(&project)
+        .args(["--views", "1", "-o", "out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(elsewhere.join("out/sheet.png").exists());
+    let _ = fs::remove_dir_all(dir);
+}
