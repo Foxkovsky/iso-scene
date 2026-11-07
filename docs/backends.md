@@ -94,9 +94,12 @@ Occupancy sampling of the same `SceneGraph`:
 
 `iso-scene tiled` writes:
 
-- `scene.tmj` — isometric map, layers `floor` and `objects`;
+- `scene.tmj` — isometric map, layers `floor`, `objects` and a hidden
+  `collision` layer (plus the wall layers with `--walls`, see "Walls");
 - `floor.tsj` + `floor_tile.png` — one diamond floor tile;
 - `objects.tsj` + `objects.png` — atlas of unique object/rotation sprites;
+- `walls.tsj`/`walls.png` and `wall_shadow.tsj`/`wall_shadow.png` with
+  `--walls`;
 - `preview.png` — the normal iso render.
 
 If the map looks semi-transparent when opened in Tiled, that is the editor,
@@ -109,10 +112,34 @@ depth (`x + width + y + depth + z`, far to near). This allows several objects
 in one cell and objects above the floor. The tileset has no `tileoffset`; each
 object is positioned by its sprite anchor and the map's isometric origin.
 
-Tiled's isometric screen space shifts maps right by `height * tileWidth / 2`;
-object coordinates carry that shift. A 0.001 px nudge into the cell keeps
-Tiled's own cell lookup (`pixelToTileCoords`) on that cell instead of rounding
-to the next one at the shared corner.
+Tiled stores isometric object positions **unprojected**: both axes count
+`tileheight` pixels per cell, and Tiled projects them itself
+(`IsometricRenderer::pixelToScreenCoords`). An object's position is the
+footprint corner nearest the viewer (its sprite's bottom-center), times
+`tileheight`; an elevation of `z` blocks is `z` cells back along both axes.
+A 0.001 px nudge into the cell keeps Tiled's own cell lookup on that cell
+instead of rounding to the next one at the shared corner. The placement is
+checked with `tmxrasterizer` against the iso render of the same scene.
+
+### Footprints and collisions
+
+Every object carries its declared footprint (the `w × d` of `object`, turned
+by `rot`): `footprint_x/y` (cells, relative to the object's own position, so
+the footprint follows the object when it is moved in Tiled), `footprint_w/h`,
+and the height range `bottom`/`top`. The hidden `collision` layer has the same
+footprints as rectangles, which Tiled draws as the diamonds the objects stand
+on; switch it on to see what each object occupies.
+
+The exporter warns (on stderr; the map is still written) about objects whose
+footprints and height ranges overlap, and about objects on wall cells. Objects
+side by side or stacked are fine. The check buckets objects by cell, and the
+footprints may cover at most 4 000 000 cells in total (`E0602`).
+
+`editors/tiled/iso-scene.js` is a Tiled extension with the same check:
+**Map → Check iso-scene Collisions** selects the colliding objects, lists them
+in the Console and redraws the `collision` layer from the current positions.
+`tiled --evaluate editors/tiled/iso-scene.js map.tmj` runs it without the
+editor.
 
 ### Objects as tiles
 

@@ -7,8 +7,13 @@
     clippy::cast_precision_loss
 )]
 
+mod collision;
+
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use collision::Footprint;
+pub use collision::{Collision, MAX_FOOTPRINT_CELLS};
 
 use rayon::prelude::*;
 use scene_backend_iso::{Sprite, project_point, render_object_sprite};
@@ -55,6 +60,8 @@ pub struct ExportReport {
     pub preview: Option<PathBuf>,
     pub instances: usize,
     pub cells: [u32; 2],
+    /// Overlapping objects and objects on wall cells, sorted.
+    pub collisions: Vec<Collision>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,9 +86,10 @@ struct SpriteEntry {
 ///
 /// # Errors
 ///
-/// Returns `E0604` for a non-iso scene, `E0602` for a map that is too large,
-/// objects above the ground, two objects in one cell, or object placement
-/// outside the map, and `E0603` for file errors.
+/// Returns `E0604` for a non-iso scene, `E0602` for a map that is too large
+/// or footprints covering more than [`MAX_FOOTPRINT_CELLS`] cells, and
+/// `E0603` for file errors. Collisions are not errors; they are listed in
+/// [`ExportReport::collisions`].
 #[allow(clippy::too_many_lines)]
 pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagnostic> {
     export_with_walls(scene, None, out_dir)
@@ -125,6 +133,8 @@ pub fn export_with(
             format!("Tiled export needs an iso scene, got {:?}", scene.render),
         ));
     }
+    // Cheap and bounded: check it before rendering any sprite.
+    let collisions = collision::find(&scene.instances, walls)?;
     fs::create_dir_all(out_dir).map_err(|cause| {
         error(
             "E0603",
@@ -401,6 +411,7 @@ pub fn export_with(
     });
 
     let mut objects = Vec::with_capacity(ordered.len());
+    let mut footprints = Vec::with_capacity(ordered.len());
     let mut object_tiles = vec![0_u32; (width as usize) * (height as usize)];
     for (index, instance) in ordered.iter().enumerate() {
         let sprite_index = sprites
@@ -410,6 +421,8 @@ pub fn export_with(
             })
             .ok_or_else(|| error("E0602", "internal sprite index failed"))?;
         let entry = &sprites[sprite_index];
+        let footprint = Footprint::of(instance);
+        let [x0, y0, x1, y1] = footprint.area;
         let bottom_world = [
             instance.at[0] + entry.bottom_world[0],
             instance.at[1] + entry.bottom_world[1],
@@ -450,8 +463,38 @@ pub fn export_with(
             "visible": true,
             "properties": [
                 {"name": "rotation", "type": "int", "value": instance.rotation},
-                {"name": "z", "type": "float", "value": instance.at[2]}
+                {"name": "z", "type": "float", "value": instance.at[2]},
+                // The footprint in cells, relative to the stored position, so
+                // it follows the object when it is moved in Tiled.
+                {"name": "footprint_x", "type": "float",
+                 "value": x0 - min_x as f64 - object_x / f64::from(tile_h)},
+                {"name": "footprint_y", "type": "float",
+                 "value": y0 - min_y as f64 - object_y / f64::from(tile_h)},
+                {"name": "footprint_w", "type": "float", "value": x1 - x0},
+                {"name": "footprint_h", "type": "float", "value": y1 - y0},
+                {"name": "bottom", "type": "float", "value": footprint.height[0]},
+                {"name": "top", "type": "float", "value": footprint.height[1]}
             ]
+        }));
+        // The footprint as an isometric rectangle: Tiled draws it as the
+        // diamond the object stands on.
+        let mut properties = vec![
+            json!({"name": "bottom", "type": "float", "value": footprint.height[0]}),
+            json!({"name": "top", "type": "float", "value": footprint.height[1]}),
+        ];
+        if !objects_as_tiles {
+            properties.push(json!({"name": "object", "type": "object", "value": index + 1}));
+        }
+        footprints.push(json!({
+            "id": ordered.len() + index + 1,
+            "name": instance.object.name,
+            "type": "footprint",
+            "x": (x0 - min_x as f64) * f64::from(tile_h),
+            "y": (y0 - min_y as f64) * f64::from(tile_h),
+            "width": (x1 - x0) * f64::from(tile_h),
+            "height": (y1 - y0) * f64::from(tile_h),
+            "visible": true,
+            "properties": properties
         }));
     }
 
@@ -518,6 +561,20 @@ pub fn export_with(
         });
     }
     layers.extend(above);
+    if has_objects {
+        // Hidden by default: switch it on in Tiled to see what each object
+        // occupies; games read it as collision shapes.
+        layers.push(json!({
+            "type": "objectgroup",
+            "name": "collision",
+            "x": 0,
+            "y": 0,
+            "opacity": 0.5,
+            "visible": false,
+            "draworder": "index",
+            "objects": footprints
+        }));
+    }
     for (id, layer) in (1_u32..).zip(&mut layers) {
         layer["id"] = json!(id);
     }
@@ -535,7 +592,7 @@ pub fn export_with(
         "tileheight": tile_h,
         "infinite": false,
         "nextlayerid": next_layer_id,
-        "nextobjectid": objects.len() + 1,
+        "nextobjectid": 2 * ordered.len() + 1,
         "tilesets": tilesets,
         "layers": layers
     });
@@ -558,6 +615,7 @@ pub fn export_with(
         walls_tileset: wall_tileset_path,
         preview: preview_path,
         instances: scene.instances.len(),
+        collisions,
         cells: [width, height],
     })
 }

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use scene_export_tiled::WallOrder;
+use scene_export_tiled::{Collision, WallOrder};
 
 use crate::common::{Args, Parsed, load_scene, report, usage};
 
@@ -60,6 +60,24 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         &output,
     )
     .map_err(|diagnostic| loaded.report(&diagnostic))?;
+    for collision in &exported.collisions {
+        match collision {
+            Collision::Objects { first, second } => eprintln!(
+                "warning: `{}` (place #{}) overlaps `{}` (place #{})",
+                first.1,
+                first.0 + 1,
+                second.1,
+                second.0 + 1
+            ),
+            Collision::Wall { object, cell } => eprintln!(
+                "warning: `{}` (place #{}) stands on the wall at cell ({}, {})",
+                object.1,
+                object.0 + 1,
+                cell[0],
+                cell[1]
+            ),
+        }
+    }
     println!(
         "wrote {} ({}x{} cells, {} instances); open it in Tiled; preview: {}",
         exported.map.display(),

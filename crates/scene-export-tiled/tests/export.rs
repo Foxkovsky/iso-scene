@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use scene_core::compile_scene;
-use scene_export_tiled::{WallOrder, export, export_with, export_with_walls};
+use scene_export_tiled::{Collision, WallOrder, export, export_with, export_with_walls};
 use scene_syntax::parse;
 
 fn compile(source: &str) -> scene_core::SceneGraph {
@@ -162,7 +162,8 @@ fn walls_produce_a_separate_tile_layer_and_wang_set() {
             "wall-shadow",
             "walls-back",
             "objects",
-            "walls-front"
+            "walls-front",
+            "collision"
         ]
     );
     let walls_in = |name: &str| -> usize {
@@ -220,11 +221,11 @@ fn wall_order_puts_the_wall_layer_below_above_or_around_the_objects() {
     for (order, names) in [
         (
             WallOrder::Behind,
-            &["floor", "wall-shadow", "walls", "objects"][..],
+            &["floor", "wall-shadow", "walls", "objects", "collision"][..],
         ),
         (
             WallOrder::Front,
-            &["floor", "wall-shadow", "objects", "walls"][..],
+            &["floor", "wall-shadow", "objects", "walls", "collision"][..],
         ),
         (
             WallOrder::Split,
@@ -234,6 +235,7 @@ fn wall_order_puts_the_wall_layer_below_above_or_around_the_objects() {
                 "walls-back",
                 "objects",
                 "walls-front",
+                "collision",
             ][..],
         ),
     ] {
@@ -427,5 +429,115 @@ fn objects_can_be_exported_as_a_tile_layer() {
         - ts["imagewidth"].as_i64().expect("image width"))
         / 2;
     assert_eq!(ts["tileoffset"]["x"], expected);
+    let _ = fs::remove_dir_all(dir);
+}
+
+fn collisions_of(source: &str, walls: Option<&str>) -> Vec<Collision> {
+    let scene = compile(source);
+    let walls = walls
+        .map(|walls| scene_walls::parse(walls, Path::new("."), Path::new(".")).expect("walls"));
+    let dir = temp_dir("collisions");
+    let report = export_with_walls(&scene, walls.as_ref(), &dir).expect("export");
+    let _ = fs::remove_dir_all(dir);
+    report.collisions
+}
+
+const BOXES: &str = "version 1; object b (2, 1) { box at (0, 0, 0) size (2, 1, 1) material wood; } render iso; scale 16; canvas (6, 6, 3);";
+
+#[test]
+fn overlapping_footprints_collide_and_touching_ones_do_not() {
+    let both = |places: &str| collisions_of(&format!("{BOXES} {places}"), None);
+    assert_eq!(
+        both("place b at (0, 0, 0); place b at (1, 0, 0);"),
+        [Collision::Objects {
+            first: (0, "b".into()),
+            second: (1, "b".into())
+        }]
+    );
+    // Side by side, and one on top of the other, is not a collision.
+    assert_eq!(both("place b at (0, 0, 0); place b at (2, 0, 0);"), []);
+    assert_eq!(both("place b at (0, 0, 0); place b at (0, 0, 1);"), []);
+    // A quarter turn swaps the footprint: (1, 0) rot 90 covers x 1..2, y 0..2.
+    assert_eq!(
+        both("place b at (3, 0, 0); place b at (2, 0, 0) rot 90;"),
+        []
+    );
+    assert_eq!(
+        both("place b at (2, 1, 0); place b at (2, 0, 0) rot 90;").len(),
+        1
+    );
+}
+
+#[test]
+fn an_object_on_a_wall_cell_collides_with_the_wall() {
+    let walls = "version 1;\nlayout {\n\"###\"\n\"#.#\"\n\"#.#\"\n\"#D#\"\n}\n";
+    let scene = |places: &str| {
+        collisions_of(
+            &format!(
+                "version 1; object d (1, 1) {{ box at (0.4, 0, 0) size (0.2, 1, 2) material wood; }} render iso; scale 16; {places}"
+            ),
+            Some(walls),
+        )
+    };
+    // A door in the gap and an object on the floor are fine.
+    assert_eq!(scene("place d at (1, 3, 0); place d at (1, 1, 0);"), []);
+    assert_eq!(
+        scene("place d at (2, 2, 0);"),
+        [Collision::Wall {
+            object: (0, "d".into()),
+            cell: [2, 2]
+        }]
+    );
+}
+
+#[test]
+fn objects_carry_their_footprint_and_a_collision_layer() {
+    let scene = compile(&format!("{BOXES} place b at (3, 1, 0) rot 90;"));
+    let dir = temp_dir("footprint-layer");
+    let report = export(&scene, &dir).expect("export");
+    let map: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
+    let property = |object: &serde_json::Value, name: &str| -> f64 {
+        object["properties"]
+            .as_array()
+            .expect("properties")
+            .iter()
+            .find(|property| property["name"] == name)
+            .and_then(|property| property["value"].as_f64())
+            .unwrap_or_else(|| panic!("no {name}"))
+    };
+    let object = &map["layers"][1]["objects"][0];
+    // The footprint is relative to the stored position, in cells.
+    let x = object["x"].as_f64().expect("x") / 16.0 + property(object, "footprint_x");
+    let y = object["y"].as_f64().expect("y") / 16.0 + property(object, "footprint_y");
+    assert!(
+        (x - 3.0).abs() < 1e-9 && (y - 1.0).abs() < 1e-9,
+        "({x}, {y})"
+    );
+    assert!((property(object, "footprint_w") - 1.0).abs() < 1e-9);
+    assert!((property(object, "footprint_h") - 2.0).abs() < 1e-9);
+    assert!((property(object, "top") - 1.0).abs() < 1e-9);
+
+    let layer = &map["layers"][2];
+    assert_eq!(layer["name"], "collision");
+    assert_eq!(layer["visible"], false);
+    let shape = &layer["objects"][0];
+    assert_eq!(
+        [&shape["x"], &shape["y"], &shape["width"], &shape["height"]],
+        [48.0, 16.0, 16.0, 32.0]
+    );
+    assert_eq!(map["nextobjectid"], 3);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn too_many_footprint_cells_are_rejected_before_rendering() {
+    let scene = compile(
+        "version 1; object big (2000, 2000) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 1; place big at (0, 0, 0); place big at (0, 0, 0);",
+    );
+    let dir = temp_dir("footprint-limit");
+    let error = export(&scene, &dir).expect_err("too many cells");
+    assert_eq!(error.code, "E0602");
+    assert!(!dir.join("objects.png").exists());
     let _ = fs::remove_dir_all(dir);
 }
