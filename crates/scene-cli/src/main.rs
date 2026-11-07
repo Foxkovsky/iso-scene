@@ -614,6 +614,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let mut tile_width: Option<u32> = None;
     let mut object_filter: Vec<String> = Vec::new();
     let mut pivot = scene_export_sprites::Pivot::default();
+    let mut shadow = true;
     let mut base_override: Option<PathBuf> = None;
     let mut animation_object: Option<String> = None;
     let mut from = 0.0_f64;
@@ -720,6 +721,19 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 object_filter.push(v);
+            }
+            "--shadow" => {
+                let Some(v) = value("--shadow") else {
+                    return ExitCode::from(2);
+                };
+                shadow = match v.as_str() {
+                    "contact" => true,
+                    "none" => false,
+                    _ => {
+                        eprintln!("iso-scene: `--shadow` must be contact or none");
+                        return ExitCode::from(2);
+                    }
+                };
             }
             "--pivot" => {
                 let Some(v) = value("--pivot") else {
@@ -942,6 +956,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         scale,
         views: views.unwrap_or_else(|| vec![0.0, 90.0, 180.0, 270.0]),
         pivot,
+        shadow,
         animation,
         tile_width: tile_width.or_else(|| scale.checked_mul(2)),
     };
@@ -1360,6 +1375,7 @@ fn print_help() {
     );
     println!("                  --views 1|2|4|8|16 or --angles 0,45,90,...; --object filters");
     println!("                  --pivot front|back|left|right|center anchors static views");
+    println!("                  --shadow contact|none bakes or omits the contact shadow");
     println!(
         "                  --animation <name> --from --to --frames --duration adds a frame row"
     );

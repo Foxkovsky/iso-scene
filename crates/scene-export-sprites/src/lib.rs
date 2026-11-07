@@ -21,7 +21,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use scene_backend_iso::{Sprite, project_point, render_object_sprite_at};
+use scene_backend_iso::{Sprite, project_point, render_object_sprite_with};
 use scene_core::CompiledObject;
 use scene_render::{Image, composite_over, write_png};
 use scene_syntax::Diagnostic;
@@ -117,6 +117,8 @@ pub struct SheetOptions {
     pub views: Vec<f64>,
     /// Footprint point that static views put on the anchor.
     pub pivot: Pivot,
+    /// Bake a soft contact shadow under every sprite.
+    pub shadow: bool,
     /// Optional animation row.
     pub animation: Option<AnimationSpec>,
     /// Tile width used for the Tiled `tileoffset`, when known.
@@ -221,8 +223,14 @@ pub fn export(
     for (row, entry) in objects.iter().enumerate() {
         for (column, view) in options.views.iter().enumerate() {
             let (rotation, angle) = split_view(*view);
-            let sprite =
-                render_object_sprite_at(&entry.object, rotation, angle, options.scale, materials)?;
+            let sprite = render_object_sprite_with(
+                &entry.object,
+                rotation,
+                angle,
+                options.scale,
+                materials,
+                options.shadow,
+            )?;
             let reference = footprint_pivot(
                 &entry.object,
                 rotation,
@@ -251,12 +259,13 @@ pub fn export(
         let row = objects.len() as u32;
         let angles = frame_angles(animation.from, animation.to, animation.frames);
         for (column, angle) in angles.into_iter().enumerate() {
-            let sprite = render_object_sprite_at(
+            let sprite = render_object_sprite_with(
                 &entry.object,
                 animation.rotation,
                 angle,
                 options.scale,
                 materials,
+                options.shadow,
             )?;
             cells.push(Cell {
                 row,
@@ -512,6 +521,7 @@ fn manifest_json(
         "image": format!("{}.png", options.name),
         "name": options.name,
         "cell": {"width": cell_size[0], "height": cell_size[1]},
+        "shadow": options.shadow,
         "anchor": {"x": anchor[0], "y": anchor[1]},
         "columns": columns,
         "rows": rows,
@@ -710,6 +720,7 @@ mod tests {
             scale: 8,
             views: vec![0.0, 90.0, 180.0, 270.0],
             pivot: Pivot::Front,
+            shadow: true,
             animation: None,
             tile_width: Some(16),
         };
@@ -751,6 +762,7 @@ mod tests {
             scale: 8,
             views: vec![0.0, 180.0],
             pivot: Pivot::Front,
+            shadow: true,
             animation: Some(AnimationSpec {
                 object: "door".into(),
                 from: 0.0,
@@ -801,6 +813,7 @@ mod tests {
             scale: 8,
             views: vec![0.0],
             pivot: Pivot::Front,
+            shadow: true,
             animation: None,
             tile_width: None,
         };
@@ -817,6 +830,7 @@ mod tests {
             scale: 8,
             views: vec![0.0, 90.0, 180.0, 270.0],
             pivot: Pivot::Front,
+            shadow: true,
             animation: None,
             tile_width: None,
         }
@@ -962,8 +976,14 @@ mod tests {
         );
         for rotation in [0, 90, 180, 270] {
             let reference = |object: &CompiledObject| {
-                let sprite =
-                    render_object_sprite_at(object, rotation, 0.0, 8, &BTreeMap::new()).unwrap();
+                let sprite = scene_backend_iso::render_object_sprite_at(
+                    object,
+                    rotation,
+                    0.0,
+                    8,
+                    &BTreeMap::new(),
+                )
+                .unwrap();
                 let corner = footprint_pivot(object, rotation, 0.0, 8, &sprite, Pivot::Front);
                 // The anchor relative to the object's origin pixel.
                 [corner[0] - sprite.anchor[0], corner[1] - sprite.anchor[1]]
@@ -975,7 +995,9 @@ mod tests {
     #[test]
     fn pivots_pick_footprint_corners_and_centre() {
         let object = box_object("desk", 2.0, 1.0);
-        let sprite = render_object_sprite_at(&object, 0, 0.0, 8, &BTreeMap::new()).unwrap();
+        let sprite =
+            scene_backend_iso::render_object_sprite_at(&object, 0, 0.0, 8, &BTreeMap::new())
+                .unwrap();
         let at = |pivot| {
             let point = footprint_pivot(&object, 0, 0.0, 8, &sprite, pivot);
             [point[0] - sprite.anchor[0], point[1] - sprite.anchor[1]]
@@ -1024,6 +1046,31 @@ mod tests {
             .collect();
         assert_eq!(rotations[1], json!(45));
         assert_eq!(rotations[2], json!(90));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn shadow_can_be_turned_off() {
+        let objects = vec![SheetObject {
+            name: "chair".into(),
+            object: box_object("chair", 2.0, 1.0),
+        }];
+        let mut options = chair_options("bare");
+        options.shadow = false;
+        let dir = std::env::temp_dir().join("iso-scene-sprites-bare-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        let decoder = png::Decoder::new(std::io::BufReader::new(
+            fs::File::open(&report.image).unwrap(),
+        ));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buffer = vec![0; reader.output_buffer_size()];
+        reader.next_frame(&mut buffer).unwrap();
+        // Without the shadow only the opaque object (and no soft halo) remains.
+        let soft = buffer
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] > 0 && pixel[3] < 255)
+            .count();
+        assert_eq!(soft, 0);
         let _ = fs::remove_dir_all(dir);
     }
 }

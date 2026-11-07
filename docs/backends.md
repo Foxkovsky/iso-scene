@@ -240,7 +240,9 @@ cell. `--tile-width` overrides the tile width used for that offset (by default
 `2 * scale`). The first frame tile carries the `animation` list; every static
 tile carries `name`, `rotation`, `view`, `pivot` and anchor properties.
 
-Contact shadows are baked into each sprite, like in the Tiled object atlas, and
+Contact shadows are baked into each sprite (`--shadow contact`, the default;
+`--shadow none` leaves them out for games that draw their own), like in the
+Tiled object atlas, and
 keep their partial alpha: sprites are composited with straight-alpha "over",
 and each sprite is clipped to its own cell.
 
