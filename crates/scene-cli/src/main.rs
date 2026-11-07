@@ -654,9 +654,12 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 match v.parse::<u32>() {
-                    Ok(n) if n >= 1 => scale = Some(n),
+                    Ok(n) if (1..=scene_core::MAX_SCALE).contains(&n) => scale = Some(n),
                     _ => {
-                        eprintln!("iso-scene: invalid scale `{v}`");
+                        eprintln!(
+                            "iso-scene: invalid scale `{v}`; use 1..={}",
+                            scene_core::MAX_SCALE
+                        );
                         return ExitCode::from(2);
                     }
                 }
@@ -666,7 +669,9 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 match v.parse::<u32>() {
-                    Ok(n) if n >= 1 => tile_width = Some(n),
+                    Ok(n) if (1..=scene_export_sprites::MAX_TILE_WIDTH).contains(&n) => {
+                        tile_width = Some(n);
+                    }
                     _ => {
                         eprintln!("iso-scene: invalid tile width `{v}`");
                         return ExitCode::from(2);

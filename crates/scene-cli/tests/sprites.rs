@@ -188,3 +188,23 @@ fn animation_flags_apply_to_the_latest_animation() {
     assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn out_of_range_scale_is_a_usage_error() {
+    let dir = scratch("scale");
+    write(&dir, "a.model", THING_A);
+    for scale in ["0", "257", "4294967295"] {
+        let output = binary()
+            .current_dir(&dir)
+            .args(["sprites", "a.model", "--scale", scale, "-o", "out"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "scale {scale}: {}",
+            stderr(&output)
+        );
+    }
+    let _ = fs::remove_dir_all(dir);
+}

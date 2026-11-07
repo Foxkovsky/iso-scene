@@ -35,6 +35,8 @@ const MAX_SHEET_PIXELS: u64 = 16_000_000;
 pub const MAX_FRAMES: u32 = 1_024;
 /// Maximum number of cells (static views plus frames), checked before rendering.
 pub const MAX_CELLS: usize = 4_096;
+/// Largest Tiled tile width accepted for the `tileoffset`.
+pub const MAX_TILE_WIDTH: u32 = MAX_SHEET_SIDE;
 
 /// One object that can appear in the sheet.
 #[derive(Clone, Debug)]
@@ -191,6 +193,12 @@ pub fn export(
     }
     if options.views.is_empty() {
         return Err(error("E0602", "at least one view or angle is required"));
+    }
+    if !(1..=scene_core::MAX_SCALE).contains(&options.scale) {
+        return Err(error(
+            "E0602",
+            format!("scale must be in 1..={}", scene_core::MAX_SCALE),
+        ));
     }
     if options.views.iter().any(|view| !view.is_finite()) {
         return Err(error("E0602", "view angles must be finite"));
