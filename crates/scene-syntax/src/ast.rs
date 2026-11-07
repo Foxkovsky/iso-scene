@@ -33,7 +33,25 @@ pub enum ItemKind {
     Sun(Sun),
     Ambient(Ambient),
     Background(Background),
+    Animation(Animation),
     Statement(Box<Statement>),
+}
+
+/// `animation name (v) frames N duration D [once];`
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Animation {
+    pub name: String,
+    pub name_span: crate::Span,
+    /// The progress variable, `0..=1` over the frames.
+    pub variable: String,
+    pub variable_span: crate::Span,
+    pub frames: u32,
+    pub frames_span: crate::Span,
+    /// Milliseconds per frame.
+    pub duration: u32,
+    pub duration_span: crate::Span,
+    /// `false` with `once`.
+    pub looped: bool,
 }
 
 /// `include "path";`
@@ -160,6 +178,8 @@ pub enum StatementKind {
         object: String,
         at: [Expr; 3],
         rotation: Option<Expr>,
+        /// Extra yaw in degrees around the object's local origin.
+        turn: Option<Expr>,
         anchor: Option<Anchor>,
     },
     /// `use name [at (x, y, z)] [rot r];` inside an object body.

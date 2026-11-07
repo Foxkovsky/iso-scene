@@ -129,6 +129,12 @@ pub(crate) fn all() -> Vec<Limit> {
             "`scale`",
         ),
         limit(
+            "frames in one animation",
+            grouped(u64::from(scene_core::MAX_ANIMATION_FRAMES)),
+            "E0304",
+            "`animation`: кадров",
+        ),
+        limit(
             "rendered image side",
             format!("{} px", count(scene_backend_iso::MAX_OUTPUT_SIDE)),
             "E0602",

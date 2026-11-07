@@ -398,6 +398,31 @@ pub struct SceneGraph {
     pub materials: BTreeMap<String, PathBuf>,
     pub instances: Vec<Instance>,
     pub bounds: Bounds,
+    /// The `animation` directives, in source order.
+    pub animations: Vec<SceneAnimation>,
+}
+
+/// An `animation name (v) frames N duration D [once];` directive.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneAnimation {
+    pub name: String,
+    pub frames: u32,
+    /// Milliseconds per frame.
+    pub duration: u32,
+    pub looped: bool,
+}
+
+impl SceneAnimation {
+    /// The progress value of frame `index`: `index / (frames - 1)`, or 0 for
+    /// a single frame.
+    #[must_use]
+    pub fn progress(&self, index: u32) -> f64 {
+        if self.frames <= 1 {
+            0.0
+        } else {
+            f64::from(index) / f64::from(self.frames - 1)
+        }
+    }
 }
 
 /// A compiled model library, used for model previews.

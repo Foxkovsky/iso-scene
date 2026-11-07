@@ -113,6 +113,7 @@ pub fn render_object_sprite(
         background: Background::Transparent,
         materials: materials.clone(),
         bounds: instance.world_bounds(),
+        animations: Vec::new(),
         instances: vec![instance],
     };
     let (image, origin) = render_with_origin(&graph)?;

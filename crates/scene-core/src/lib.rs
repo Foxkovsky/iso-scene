@@ -3,10 +3,10 @@
 pub mod eval;
 pub mod geometry;
 
-pub use eval::{compile_model, compile_scene, compile_scene_with_fuel};
+pub use eval::{compile_model, compile_scene, compile_scene_frame, compile_scene_with_fuel};
 pub use geometry::{
-    Bounds, CompiledModel, CompiledObject, Instance, Part, Primitive, SceneGraph, rotate_degrees,
-    rotate_xy,
+    Bounds, CompiledModel, CompiledObject, Instance, Part, Primitive, SceneAnimation, SceneGraph,
+    rotate_degrees, rotate_xy,
 };
 
 /// Axis-aligned extent measured in blocks.
@@ -32,3 +32,5 @@ pub const MAX_LOOP_BOUND: f64 = 1_000_000_000.0;
 pub const MAX_CANVAS_BLOCKS: f64 = 8_192.0;
 /// Maximum pixels per block.
 pub const MAX_SCALE: u32 = 256;
+/// Most frames in one `animation` directive.
+pub const MAX_ANIMATION_FRAMES: u32 = 1_024;

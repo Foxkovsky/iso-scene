@@ -4,8 +4,8 @@
 //! AST in [`crate::ast`]. It reports the first error and never panics.
 
 use crate::ast::{
-    Ambient, Anchor, AssignOp, Axis, Background, BinaryOp, Block, Canvas, ElseBranch, Expr,
-    ExprKind, Include, Item, ItemKind, Material, Object, Origin, Program, Render, RenderKind,
+    Ambient, Anchor, Animation, AssignOp, Axis, Background, BinaryOp, Block, Canvas, ElseBranch,
+    Expr, ExprKind, Include, Item, ItemKind, Material, Object, Origin, Program, Render, RenderKind,
     Scale, Shape, Statement, StatementKind, Sun, UnaryOp,
 };
 use crate::{Diagnostic, Span, Token, TokenKind, lex};
@@ -80,6 +80,30 @@ impl Parser {
 
     fn current_kind(&self) -> &TokenKind {
         &self.current().kind
+    }
+
+    /// The kind of the token `offset` places ahead (EOF past the end).
+    fn peek_kind(&self, offset: usize) -> &TokenKind {
+        let index = (self.pos + offset).min(self.tokens.len().saturating_sub(1));
+        &self.tokens[index].kind
+    }
+
+    /// Consume the contextual word `word` if it is next.
+    fn eat_word(&mut self, word: &str) -> bool {
+        if matches!(self.current_kind(), TokenKind::Ident(name) if name == word) {
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_word(&mut self, word: &str) -> Result<(), Diagnostic> {
+        if self.eat_word(word) {
+            Ok(())
+        } else {
+            Err(self.expected(&format!("`{word}`")))
+        }
     }
 
     fn previous_span(&self) -> Span {
@@ -199,6 +223,15 @@ impl Parser {
             TokenKind::Sun => ItemKind::Sun(self.parse_sun()?),
             TokenKind::Ambient => ItemKind::Ambient(self.parse_ambient()?),
             TokenKind::Background => ItemKind::Background(self.parse_background()?),
+            // `animation` is contextual: `animation name (` starts the
+            // directive, anything else is an ordinary statement.
+            TokenKind::Ident(word)
+                if word == "animation"
+                    && matches!(self.peek_kind(1), TokenKind::Ident(_))
+                    && matches!(self.peek_kind(2), TokenKind::LParen) =>
+            {
+                ItemKind::Animation(self.parse_animation()?)
+            }
             _ => ItemKind::Statement(Box::new(self.parse_statement()?)),
         };
         let end = self.previous_span();
@@ -242,6 +275,31 @@ impl Parser {
         };
         self.expect(&TokenKind::Semicolon, "`;`")?;
         Ok(Render { kind })
+    }
+
+    fn parse_animation(&mut self) -> Result<Animation, Diagnostic> {
+        self.expect_word("animation")?;
+        let (name, name_span) = self.expect_ident("animation name")?;
+        self.expect(&TokenKind::LParen, "`(`")?;
+        let (variable, variable_span) = self.expect_ident("progress variable")?;
+        self.expect(&TokenKind::RParen, "`)`")?;
+        self.expect_word("frames")?;
+        let (frames, frames_span) = self.expect_integer("frame count")?;
+        self.expect_word("duration")?;
+        let (duration, duration_span) = self.expect_integer("frame duration")?;
+        let looped = !self.eat_word("once");
+        self.expect(&TokenKind::Semicolon, "`;`")?;
+        Ok(Animation {
+            name,
+            name_span,
+            variable,
+            variable_span,
+            frames,
+            frames_span,
+            duration,
+            duration_span,
+            looped,
+        })
     }
 
     fn parse_scale(&mut self) -> Result<Scale, Diagnostic> {
@@ -455,6 +513,11 @@ impl Parser {
         } else {
             None
         };
+        let turn = if self.eat_word("turn") {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
         let anchor = if self.eat(&TokenKind::Anchor) {
             let (name, span) =
                 self.expect_ident("`back`, `center`, `front`, `left`, `right` or `cell`")?;
@@ -483,6 +546,7 @@ impl Parser {
             object,
             at,
             rotation,
+            turn,
             anchor,
         })
     }
@@ -1003,6 +1067,43 @@ mod tests {
         assert_eq!(
             parse_err(&include(crate::lexer::MAX_STRING_BYTES + 1)).code,
             "E0402"
+        );
+    }
+
+    #[test]
+    fn animation_directive_and_turn_parse() {
+        let program = parse_ok(
+            "version 1; animation open (t) frames 7 duration 120 once; animation spin (s) frames 4 duration 50; place door at (0, 0, 0) rot 90 turn 90 * t anchor back;",
+        );
+        let crate::ast::ItemKind::Animation(open) = &program.items[0].kind else {
+            panic!("not an animation: {:?}", program.items[0].kind);
+        };
+        assert_eq!((open.name.as_str(), open.variable.as_str()), ("open", "t"));
+        assert_eq!((open.frames, open.duration, open.looped), (7, 120, false));
+        let crate::ast::ItemKind::Animation(spin) = &program.items[1].kind else {
+            panic!("not an animation");
+        };
+        assert!(spin.looped);
+        let crate::ast::ItemKind::Statement(statement) = &program.items[2].kind else {
+            panic!("not a statement");
+        };
+        let StatementKind::Place { turn, anchor, .. } = &statement.kind else {
+            panic!("not a place");
+        };
+        assert!(turn.is_some());
+        assert!(anchor.is_some());
+    }
+
+    #[test]
+    fn contextual_words_stay_ordinary_names() {
+        // Old scenes may use these names; outside their directive they are
+        // plain identifiers.
+        parse_ok(
+            "version 1; var animation = 1; animation = 2; let frames = 3; let duration = 4; let once = 5; let turn = 6; place b at (turn, frames, 0) rot turn;",
+        );
+        assert_eq!(
+            parse_err("version 1; animation open (t) frames 7;").code,
+            "E0201"
         );
     }
 

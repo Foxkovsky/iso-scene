@@ -290,5 +290,6 @@ pub(crate) fn model_preview(
         materials: model.materials.clone(),
         instances,
         bounds,
+        animations: Vec::new(),
     })
 }

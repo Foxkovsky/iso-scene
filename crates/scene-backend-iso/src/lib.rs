@@ -143,6 +143,7 @@ pub fn render_object_sprite_with(
             angle,
         }],
         bounds: object.local_bounds(),
+        animations: Vec::new(),
     };
     let rendered = render_internal(&graph, MARGIN)?;
     // The yaw turns around the local origin, so the origin stays put.
