@@ -10,6 +10,8 @@ use crate::{Diagnostic, Span};
 pub const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 /// Maximum number of tokens in a single file.
 pub const MAX_TOKENS: usize = 1_000_000;
+/// Longest string literal, in bytes after escapes (`docs/spec.md` §9).
+pub const MAX_STRING_BYTES: usize = 4_096;
 
 /// A lexical token.
 #[derive(Clone, Debug, PartialEq)]
@@ -319,6 +321,13 @@ impl<'a> Lexer<'a> {
             match self.bump() {
                 None => {
                     return Err(self.error("E0104", "unterminated string", start));
+                }
+                Some(b'"') if value.len() > MAX_STRING_BYTES => {
+                    return Err(self.error(
+                        "E0402",
+                        format!("string is longer than {MAX_STRING_BYTES} bytes"),
+                        start,
+                    ));
                 }
                 Some(b'"') => return Ok(TokenKind::String(value)),
                 Some(b'\\') => match self.bump() {

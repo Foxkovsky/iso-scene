@@ -464,3 +464,35 @@ impl Drop for TempDir {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
+#[test]
+fn programs_at_the_nesting_limits_fit_a_small_stack() {
+    // The parser and evaluator recurse; spec §9 bounds the depth. At these
+    // limits a release build needs under 512 KiB (measured), so a 1 MiB
+    // Windows main thread is enough; a debug build needs up to 4 MiB, which
+    // this test thread gives it.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let nesting = scene_syntax::parser::MAX_NESTING - 1;
+            let blocks = format!(
+                "version 1; object o (1, 1) {{ {}box at (0, 0, 0) size (1, 1, 1) material wood; {}}} render iso; scale 8; place o at (0, 0, 0);",
+                "if (true) { ".repeat(nesting),
+                "} ".repeat(nesting)
+            );
+            let terms = scene_syntax::parser::MAX_EXPR_DEPTH - 2;
+            let chain = vec!["1"; terms].join(" + ");
+            let parens = format!("{}1{}", "(".repeat(nesting), ")".repeat(nesting));
+            let exprs = format!(
+                "version 1; render iso; scale 8; let x = 1 + ({chain}) + {chain}; let y = {parens}; object b (1, 1) {{ box at (0, 0, 0) size (1, 1, 1) material wood; }} place b at (x - y - {}, 0, 0);",
+                2 * terms
+            );
+            for source in [blocks, exprs] {
+                let scene = compile_scene_ok(&source);
+                assert!(scene.instances[0].at[0].abs() < 1e-9);
+            }
+        })
+        .expect("spawn")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+}
