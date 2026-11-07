@@ -107,12 +107,34 @@ pub(crate) struct Loaded {
     pub(crate) scene: scene_core::SceneGraph,
     /// Directory `include` and `material` paths must stay inside.
     pub(crate) root: PathBuf,
+    /// The parsed program and the directory it resolves paths from, to
+    /// compile animation frames.
+    program: scene_syntax::ast::Program,
+    directory: PathBuf,
 }
 
 impl Loaded {
     /// Report a diagnostic against this file.
     pub(crate) fn report(&self, diagnostic: &Diagnostic) -> ExitCode {
         report(&self.path, &self.source, diagnostic)
+    }
+
+    /// Compile every frame of the scene animation `animation`, in order.
+    pub(crate) fn frames(
+        &self,
+        animation: &scene_core::SceneAnimation,
+    ) -> Result<Vec<scene_core::SceneGraph>, Diagnostic> {
+        (0..animation.frames)
+            .map(|frame| {
+                scene_core::compile_scene_frame(
+                    &self.program,
+                    &self.directory,
+                    &self.root,
+                    &animation.name,
+                    frame,
+                )
+            })
+            .collect()
     }
 
     /// `out/<stem>.<extension>` next to the working directory.
@@ -163,6 +185,8 @@ pub(crate) fn load_scene(
         source,
         scene,
         root,
+        program,
+        directory: directory.to_path_buf(),
     })
 }
 

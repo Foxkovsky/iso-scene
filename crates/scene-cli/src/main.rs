@@ -59,7 +59,8 @@ pub(crate) fn print_help() {
     println!("  render <file>   render a .scene to PNG (iso or ortho); -o out.svg writes iso SVG");
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
-    println!("  animate <file>  render a rotation animation as a sprite sheet + animated tile");
+    println!("  animate <file>  render the scene's `animation`s as sprite sheets + animated tiles");
+    println!("                  (--animation <name> for one); or turn one object:");
     println!("                  --object <name> --from --to --frames --duration [--base <dir>]");
     println!(
         "  sprites <file>  pack objects from .scene/.model files into a sprite sheet + JSON/TSJ"

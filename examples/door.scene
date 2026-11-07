@@ -1,0 +1,26 @@
+version 1;
+
+include "desk.model";
+
+// Дверь на петле в локальной точке (0, 0): `turn` поворачивает её вокруг петли.
+object door (2, 0.2) {
+    box at (0, 0, 0) size (w, d, 4) material oak;
+    cyl at (1.7, 0.35, 1.9) radius 0.08 height 0.3 material steel;
+}
+
+object frame_post (0.3, 0.3) {
+    box at (0, 0, 0) size (w, d, 4.3) material steel;
+}
+
+render iso;
+scale 24;
+canvas (8, 6, 5);
+
+// Дверь открывается за 7 кадров один раз, стол тем временем отъезжает.
+animation open (t) frames 7 duration 100 once;
+animation shove (s) frames 5 duration 80;
+
+place frame_post at (0.7, 0.9, 0);
+place frame_post at (3.0, 0.9, 0);
+place door at (1, 1, 0) turn 80 * t;
+place desk at (2 + 1.5 * s, 3, 0);

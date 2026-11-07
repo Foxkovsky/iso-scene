@@ -3,9 +3,63 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use scene_export_sprites::animate::{AnimateOptions, export_animation};
+use scene_export_sprites::animate::{AnimateOptions, export_animation, export_scene_animation};
 
 use crate::common::{Args, Parsed, failed, load_scene, usage};
+
+/// Render the `animation` directives of the scene (or the one named
+/// `--animation`), each into `<out>/<name>/`.
+fn scene_animations(
+    loaded: &crate::common::Loaded,
+    only: Option<&str>,
+    output: &Path,
+) -> Parsed<ExitCode> {
+    let declared = &loaded.scene.animations;
+    if declared.is_empty() {
+        return Err(usage(
+            "the scene declares no `animation`; add one or pass --object to turn an object",
+        ));
+    }
+    let selected: Vec<_> = match only {
+        Some(name) => {
+            let animation = declared
+                .iter()
+                .find(|animation| animation.name == name)
+                .ok_or_else(|| usage(format!("the scene has no animation `{name}`")))?;
+            vec![animation]
+        }
+        None => declared.iter().collect(),
+    };
+    for animation in selected {
+        let frames = loaded
+            .frames(animation)
+            .map_err(|diagnostic| loaded.report(&diagnostic))?;
+        let directory = output.join(&animation.name);
+        let report = export_scene_animation(
+            &frames,
+            &animation.name,
+            animation.duration,
+            animation.looped,
+            &directory,
+        )
+        .map_err(|diagnostic| failed(&diagnostic))?;
+        println!(
+            "wrote `{}`: {} frames {}x{} ({} ms each{}); open `{}` in Tiled",
+            animation.name,
+            report.frames,
+            report.frame_size[0],
+            report.frame_size[1],
+            animation.duration,
+            if animation.looped {
+                ", looped"
+            } else {
+                ", once"
+            },
+            report.map.display()
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
 
 pub(crate) fn animate_scene(args: Vec<String>) -> ExitCode {
     match run(args) {
@@ -16,6 +70,7 @@ pub(crate) fn animate_scene(args: Vec<String>) -> ExitCode {
 fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let mut path: Option<String> = None;
     let mut object_name: Option<String> = None;
+    let mut animation_name: Option<String> = None;
     let mut from = 0.0_f64;
     let mut to = 90.0_f64;
     let mut frames = 7_u32;
@@ -29,6 +84,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
             "--out" | "-o" => output = Some(PathBuf::from(args.value("--out")?)),
             "--base" => base = Some(PathBuf::from(args.value("--base")?)),
             "--object" => object_name = Some(args.value("--object")?),
+            "--animation" => animation_name = Some(args.value("--animation")?),
             "--from" => from = args.parse("--from", finite, |v| format!("invalid angle `{v}`"))?,
             "--to" => to = args.parse("--to", finite, |v| format!("invalid angle `{v}`"))?,
             "--frames" => {
@@ -56,6 +112,16 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
     }
     let path = path.ok_or_else(|| usage("`animate` needs a .scene file"))?;
     let loaded = load_scene("animate", &path, base.as_deref(), false)?;
+    let output_dir = output.clone().unwrap_or_else(|| {
+        let stem = Path::new(&path)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("animation");
+        PathBuf::from("out").join(stem)
+    });
+    if object_name.is_none() {
+        return scene_animations(&loaded, animation_name.as_deref(), &output_dir);
+    }
     let index = loaded
         .scene
         .instances

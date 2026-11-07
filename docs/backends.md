@@ -403,6 +403,15 @@ cycle is broken by mean depth.
 
 ### Animated sprite sheets
 
+`iso-scene animate scene.scene -o out/room` renders every `animation`
+directive of the scene (`--animation open` for one) into `out/room/<name>/`:
+the scene is evaluated once per frame with that animation's progress
+variable, and all frames are rendered with the bounds of all frames
+together, so they share one size and origin. `<name>.png` is the strip,
+`<name>.tsj` a tileset whose first tile plays it (with a `loop` property:
+`false` for `once`), and `scene.tmj` a one-tile map. Frames render in
+parallel after the first one has sized the strip against the limits.
+
 `iso-scene animate scene.scene --object leaf --from 0 --to 90 --frames 7 --duration 100 -o out/door`
 renders one frame per angle, packs them into a horizontal sheet and writes a
 tileset whose first tile carries a Tiled `animation` block. Open

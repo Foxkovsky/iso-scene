@@ -970,3 +970,38 @@ fn object_layers_get_a_tileset_without_the_horizontal_shift() {
     );
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn scene_animation_frames_share_one_size_and_origin() {
+    let source = "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 8; animation slide (s) frames 3 duration 40 once; place b at (0, 0, 0); place b at (2 + 3 * s, 0, 0);";
+    let program = scene_syntax::parse(source).expect("parses");
+    let here = Path::new(".");
+    let frames: Vec<scene_core::SceneGraph> = (0..3)
+        .map(|frame| {
+            scene_core::compile_scene_frame(&program, here, here, "slide", frame).expect("frame")
+        })
+        .collect();
+    let dir = scratch("iso-scene-scene-animation");
+    let report =
+        crate::animate::export_scene_animation(&frames, "slide", 40, false, &dir).expect("export");
+    assert_eq!(report.frames, 3);
+    let (width, height, rgba) = read_png(&report.image);
+    assert_eq!(width, report.frame_size[0] * 3);
+    assert_eq!(height, report.frame_size[1]);
+    // The cube that does not move is in the same place in every frame: the
+    // leftmost opaque column of each frame is the same.
+    let frame_w = report.frame_size[0] as usize;
+    let leftmost = |frame: usize| {
+        (0..frame_w).find(|&x| {
+            (0..height as usize)
+                .any(|y| rgba[(y * width as usize + frame * frame_w + x) * 4 + 3] > 0)
+        })
+    };
+    assert_eq!(leftmost(0), leftmost(1));
+    assert_eq!(leftmost(0), leftmost(2));
+    let tileset: Value =
+        serde_json::from_str(&fs::read_to_string(&report.tileset).expect("tsj")).expect("json");
+    assert_eq!(tileset["tiles"][0]["animation"][2]["duration"], 40);
+    assert_eq!(tileset["tiles"][0]["properties"][0]["value"], false);
+    let _ = fs::remove_dir_all(dir);
+}
