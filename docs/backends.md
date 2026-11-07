@@ -252,6 +252,11 @@ the hinge stays put while the leaf swings. Every sprite and frame in
 row); `angle` is the extra yaw of an animation frame. `index` is the frame's column, so engines can advance frames
 without parsing the coordinates.
 
+`--padding <px>` (default 0) leaves transparent pixels around the sheet and
+between cells, so linear filtering, mipmaps or scaling cannot bleed one sprite
+into its neighbour. The manifest coordinates include it; the tileset writes it
+as `margin` and `spacing`.
+
 The tileset uses the same cell size, `columns` columns, and `tileoffset.x =
 (tileWidth - cellWidth) / 2` so a tile placed in a tile layer keeps the sprite
 bottom-centre on the cell. `tileoffset.y` shifts the image down by the empty

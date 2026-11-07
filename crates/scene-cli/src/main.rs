@@ -615,6 +615,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let mut object_filter: Vec<String> = Vec::new();
     let mut pivot = scene_export_sprites::Pivot::default();
     let mut shadow = true;
+    let mut padding = 0_u32;
     let mut base_override: Option<PathBuf> = None;
     // Animation flags apply to the latest `--animation`; flags given before
     // the first one apply to the first.
@@ -718,6 +719,18 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 object_filter.push(v);
+            }
+            "--padding" => {
+                let Some(v) = value("--padding") else {
+                    return ExitCode::from(2);
+                };
+                match v.parse::<u32>() {
+                    Ok(n) if n <= 256 => padding = n,
+                    _ => {
+                        eprintln!("iso-scene: `--padding` must be 0..=256 pixels");
+                        return ExitCode::from(2);
+                    }
+                }
             }
             "--shadow" => {
                 let Some(v) = value("--shadow") else {
@@ -998,6 +1011,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         views: views.unwrap_or_else(|| vec![0.0, 90.0, 180.0, 270.0]),
         pivot,
         shadow,
+        padding,
         animations: specs,
         tile_width: tile_width.or_else(|| scale.checked_mul(2)),
     };
@@ -1449,6 +1463,7 @@ fn print_help() {
     println!("                  --views 1|2|4|8|16 or --angles 0,45,90,...; --object filters");
     println!("                  --pivot front|back|left|right|center anchors static views");
     println!("                  --shadow contact|none bakes or omits the contact shadow");
+    println!("                  --padding <px> leaves transparent gaps around cells");
     println!(
         "                  --animation <name> --from --to --frames --duration adds a frame row"
     );

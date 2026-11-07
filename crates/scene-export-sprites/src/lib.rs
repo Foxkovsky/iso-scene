@@ -127,6 +127,9 @@ pub struct SheetOptions {
     pub pivot: Pivot,
     /// Bake a soft contact shadow under every sprite.
     pub shadow: bool,
+    /// Transparent pixels around and between cells, so linear filtering or
+    /// mipmaps do not bleed one sprite into its neighbour.
+    pub padding: u32,
     /// Animation rows, one per entry, below the static views.
     pub animations: Vec<AnimationSpec>,
     /// Tile width used for the Tiled `tileoffset`, when known.
@@ -317,21 +320,21 @@ pub fn export(
     }
 
     let (cell_size, anchor) = cell_metrics(&cells);
-    let width = columns
-        .checked_mul(cell_size[0])
-        .ok_or_else(|| error("E0602", "sprite sheet is too wide"))?;
-    let height = rows
-        .checked_mul(cell_size[1])
-        .ok_or_else(|| error("E0602", "sprite sheet is too tall"))?;
-    if width > MAX_SHEET_SIDE
-        || height > MAX_SHEET_SIDE
-        || u64::from(width) * u64::from(height) > MAX_SHEET_PIXELS
+    let side = |count: u32, size: u32| {
+        u64::from(count) * u64::from(size) + (u64::from(count) + 1) * u64::from(options.padding)
+    };
+    let (wide, tall) = (side(columns, cell_size[0]), side(rows, cell_size[1]));
+    if wide > u64::from(MAX_SHEET_SIDE)
+        || tall > u64::from(MAX_SHEET_SIDE)
+        || wide * tall > MAX_SHEET_PIXELS
     {
         return Err(error(
             "E0602",
-            format!("sprite sheet {width}x{height} exceeds the limit"),
+            format!("sprite sheet {wide}x{tall} exceeds the limit"),
         ));
     }
+    // Both sides are at most MAX_SHEET_SIDE, so every pixel offset fits u32.
+    let (width, height) = (wide as u32, tall as u32);
 
     fs::create_dir_all(out_dir).map_err(|cause| {
         error(
@@ -346,8 +349,7 @@ pub fn export(
         rgba: vec![0; (width as usize) * (height as usize) * 4],
     };
     for cell in &cells {
-        let left = cell.column * cell_size[0];
-        let top = cell.row * cell_size[1];
+        let [left, top] = cell_origin(cell, cell_size, options.padding);
         let x = f64::from(left) + anchor[0] - cell.reference[0];
         let y = f64::from(top) + anchor[1] - cell.reference[1];
         composite_over(
@@ -516,7 +518,7 @@ fn manifest_json(
         .iter()
         .filter(|cell| cell.animation.is_none())
         .map(|cell| {
-            let mut sprite = cell_json(cell, cell_size, anchor);
+            let mut sprite = cell_json(cell, cell_size, anchor, options.padding);
             if let Some(object) = sprite.as_object_mut() {
                 object.insert("pivot".to_string(), json!(options.pivot.name()));
             }
@@ -532,7 +534,7 @@ fn manifest_json(
                 .iter()
                 .filter(|cell| cell.animation == Some(index))
                 .map(|cell| {
-                    let mut frame = cell_json(cell, cell_size, anchor);
+                    let mut frame = cell_json(cell, cell_size, anchor, options.padding);
                     if let Some(object) = frame.as_object_mut() {
                         object.remove("view");
                         object.insert("index".to_string(), json!(cell.column));
@@ -560,6 +562,7 @@ fn manifest_json(
         "image": format!("{}.png", options.name),
         "name": options.name,
         "cell": {"width": cell_size[0], "height": cell_size[1]},
+        "padding": options.padding,
         "shadow": options.shadow,
         "anchor": {"x": anchor[0], "y": anchor[1]},
         "columns": columns,
@@ -567,6 +570,14 @@ fn manifest_json(
         "sprites": sprites,
         "animations": animations
     })
+}
+
+/// Top-left pixel of a cell in the sheet.
+fn cell_origin(cell: &Cell, cell_size: [u32; 2], padding: u32) -> [u32; 2] {
+    [
+        padding + cell.column * (cell_size[0] + padding),
+        padding + cell.row * (cell_size[1] + padding),
+    ]
 }
 
 /// Yaw of a static view in degrees; for an animation frame only its quarter
@@ -580,13 +591,14 @@ fn view_degrees(cell: &Cell) -> f64 {
     }
 }
 
-fn cell_json(cell: &Cell, cell_size: [u32; 2], anchor: [f64; 2]) -> Value {
+fn cell_json(cell: &Cell, cell_size: [u32; 2], anchor: [f64; 2], padding: u32) -> Value {
+    let [x, y] = cell_origin(cell, cell_size, padding);
     json!({
         "name": cell.name,
         "view": cell.column,
         "rotation": degrees_json(view_degrees(cell)),
-        "x": cell.column * cell_size[0],
-        "y": cell.row * cell_size[1],
+        "x": x,
+        "y": y,
         "w": cell_size[0],
         "h": cell_size[1],
         "anchor": {"x": anchor[0], "y": anchor[1]}
@@ -675,10 +687,10 @@ fn tileset_json(
         "tilecount": columns * rows,
         "columns": columns,
         "image": image_name,
-        "imagewidth": columns * cell_size[0],
-        "imageheight": rows * cell_size[1],
-        "margin": 0,
-        "spacing": 0,
+        "imagewidth": columns * cell_size[0] + (columns + 1) * options.padding,
+        "imageheight": rows * cell_size[1] + (rows + 1) * options.padding,
+        "margin": options.padding,
+        "spacing": options.padding,
         "tileoffset": {"x": offset_x, "y": offset_y},
         "tiles": tiles
     })
@@ -764,6 +776,7 @@ mod tests {
             views: vec![0.0, 90.0, 180.0, 270.0],
             pivot: Pivot::Front,
             shadow: true,
+            padding: 0,
             animations: Vec::new(),
             tile_width: Some(16),
         };
@@ -806,6 +819,7 @@ mod tests {
             views: vec![0.0, 180.0],
             pivot: Pivot::Front,
             shadow: true,
+            padding: 0,
             animations: vec![AnimationSpec {
                 name: "door".into(),
                 object: "door".into(),
@@ -860,6 +874,7 @@ mod tests {
             views: vec![0.0],
             pivot: Pivot::Front,
             shadow: true,
+            padding: 0,
             animations: Vec::new(),
             tile_width: None,
         };
@@ -877,6 +892,7 @@ mod tests {
             views: vec![0.0, 90.0, 180.0, 270.0],
             pivot: Pivot::Front,
             shadow: true,
+            padding: 0,
             animations: Vec::new(),
             tile_width: None,
         }
@@ -1196,5 +1212,42 @@ mod tests {
         let error = export(&objects, &BTreeMap::new(), &options, &dir).unwrap_err();
         assert!(error.message.contains("durations"), "{}", error.message);
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn padding_separates_cells_and_matches_the_tileset() {
+        let objects = vec![
+            SheetObject {
+                name: "a".into(),
+                object: box_object("a", 1.0, 1.0),
+            },
+            SheetObject {
+                name: "b".into(),
+                object: box_object("b", 1.0, 1.0),
+            },
+        ];
+        let mut options = chair_options("padded");
+        options.views = vec![0.0, 90.0];
+        options.padding = 3;
+        let dir = std::env::temp_dir().join("iso-scene-sprites-padding-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        let [w, h] = report.cells;
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(&report.manifest).unwrap()).unwrap();
+        assert_eq!(manifest["sprites"][0]["x"], 3);
+        assert_eq!(manifest["sprites"][1]["x"], 3 + w + 3);
+        assert_eq!(manifest["sprites"][2]["y"], 3 + h + 3);
+        let tileset: Value =
+            serde_json::from_str(&fs::read_to_string(&report.tileset).unwrap()).unwrap();
+        assert_eq!(tileset["margin"], 3);
+        assert_eq!(tileset["spacing"], 3);
+        assert_eq!(tileset["imagewidth"], 2 * w + 9);
+        let decoder = png::Decoder::new(std::io::BufReader::new(
+            fs::File::open(&report.image).unwrap(),
+        ));
+        let reader = decoder.read_info().unwrap();
+        assert_eq!(reader.info().width, 2 * w + 9);
+        assert_eq!(reader.info().height, 2 * h + 9);
+        let _ = fs::remove_dir_all(dir);
     }
 }
