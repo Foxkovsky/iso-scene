@@ -359,6 +359,7 @@
         "imageWidth",
         "imageHeight",
         "tileset",
+        "objectTileset",
         "cell",
         "anchor",
         "columns",
@@ -379,7 +380,11 @@
         },
         "tileset": {
           "type": "string",
-          "description": "Tiled tileset of this page."
+          "description": "Tiled tileset of this page for tile layers."
+        },
+        "objectTileset": {
+          "type": "string",
+          "description": "Tiled tileset of this page for object layers (tileoffset.x = 0)."
         },
         "cell": {
           "$ref": "#/properties/cell"

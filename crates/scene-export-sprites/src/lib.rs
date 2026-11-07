@@ -512,8 +512,16 @@ pub fn export(
         }
 
         let tileset_path = out_dir.join(format!("{}.tsj", page.stem));
-        write_json(&tileset_path, &tileset_json(options, page))?;
+        write_json(
+            &tileset_path,
+            &tileset_json(options, page, TiledLayer::Tiles),
+        )?;
         tilesets.push(tileset_path);
+        let objects_path = out_dir.join(format!("{}.objects.tsj", page.stem));
+        write_json(
+            &objects_path,
+            &tileset_json(options, page, TiledLayer::Objects),
+        )?;
 
         if options.atlas {
             let path = out_dir.join(format!("{}.atlas.json", page.stem));
@@ -759,6 +767,7 @@ fn manifest_json(options: &SheetOptions, pages: &[Page]) -> Value {
                 "imageWidth": page.width,
                 "imageHeight": page.height,
                 "tileset": format!("{}.tsj", page.stem),
+                "objectTileset": format!("{}.objects.tsj", page.stem),
                 "cell": {"width": page.cell_size[0], "height": page.cell_size[1]},
                 "anchor": {"x": page.anchor[0], "y": page.anchor[1]},
                 "columns": page.columns,
@@ -1026,7 +1035,17 @@ fn cell_json(cell: &Cell, cell_size: [u32; 2], anchor: [f64; 2], padding: u32) -
     value
 }
 
-fn tileset_json(options: &SheetOptions, page: &Page) -> Value {
+/// Tiled layer a tileset is tuned for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TiledLayer {
+    /// Tile layers draw an image from the left corner of its cell.
+    Tiles,
+    /// Tile objects on an isometric map are already centred on their
+    /// position, and Tiled adds `tileoffset` on top.
+    Objects,
+}
+
+fn tileset_json(options: &SheetOptions, page: &Page, layer: TiledLayer) -> Value {
     let (cells, cell_size, anchor) = (&page.cells, page.cell_size, page.anchor);
     let (columns, rows) = (page.columns, page.rows);
     let mut tiles: Vec<Value> = cells
@@ -1085,9 +1104,15 @@ fn tileset_json(options: &SheetOptions, page: &Page) -> Value {
     }
     tiles.sort_by_key(|tile| tile["id"].as_u64().unwrap_or(0));
 
-    let offset_x = options.tile_width.map_or(0, |tile_width| {
-        (i64::from(tile_width) - i64::from(cell_size[0])) / 2
-    });
+    // Checked with `tmxrasterizer`: in a tile layer the image's left edge sits
+    // on the cell's left corner, so the anchor needs this shift to reach the
+    // cell's bottom vertex; a bottom-aligned tile object needs none.
+    let offset_x = match layer {
+        TiledLayer::Tiles => options.tile_width.map_or(0, |tile_width| {
+            (i64::from(tile_width) - i64::from(cell_size[0])) / 2
+        }),
+        TiledLayer::Objects => 0,
+    };
     // The anchor sits `cell_size[1] - anchor[1]` pixels above the cell bottom;
     // shift the image down by that much so the anchor lands on the tile cell.
     let offset_y = (f64::from(cell_size[1]) - anchor[1]).round() as i64;
@@ -1106,6 +1131,7 @@ fn tileset_json(options: &SheetOptions, page: &Page) -> Value {
         "margin": options.padding,
         "spacing": options.padding,
         "tileoffset": {"x": offset_x, "y": offset_y},
+        "objectalignment": "bottom",
         "tiles": tiles
     })
 }
@@ -2089,5 +2115,35 @@ mod tests {
             assert!(offset.abs() <= 2.0, "{projection:?}: {offset}");
             let _ = fs::remove_dir_all(dir);
         }
+    }
+
+    #[test]
+    fn object_layers_get_a_tileset_without_the_horizontal_shift() {
+        let objects = vec![SheetObject {
+            name: "desk".into(),
+            object: box_object("desk", 2.0, 1.0),
+            source: None,
+        }];
+        let mut options = chair_options("layers");
+        options.tile_width = Some(64);
+        let dir = std::env::temp_dir().join("iso-scene-sprites-layers-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        let read = |name: &str| -> Value {
+            serde_json::from_str(&fs::read_to_string(dir.join(name)).unwrap()).unwrap()
+        };
+        let tiles = read("layers.tsj");
+        let objects = read("layers.objects.tsj");
+        let cell_width = i64::from(report.cells[0]);
+        // Verified in Tiled with tmxrasterizer on an isometric map: a tile
+        // layer needs the shift, a bottom-aligned tile object does not.
+        assert_eq!(tiles["tileoffset"]["x"], (64 - cell_width) / 2);
+        assert_eq!(objects["tileoffset"]["x"], 0);
+        assert_eq!(objects["tileoffset"]["y"], tiles["tileoffset"]["y"]);
+        assert_eq!(objects["objectalignment"], "bottom");
+        assert_eq!(
+            read("layers.json")["pages"][0]["objectTileset"],
+            "layers.objects.tsj"
+        );
+        let _ = fs::remove_dir_all(dir);
     }
 }

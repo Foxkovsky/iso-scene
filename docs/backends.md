@@ -185,12 +185,13 @@ camera (in front and side views the footprint is a line, so `front` is the
 middle of the bottom edge). Contact shadows are an isometric effect and are
 not baked into orthographic sheets.
 
-The output directory gets three files:
+The output directory gets these files:
 
 - `sheet.png` — transparent grid, one cell per object/view;
 - `sheet.json` — engine-neutral manifest;
-- `sheet.tsj` — Tiled tileset, including a Tiled `animation` block when a frame
-  row exists.
+- `sheet.tsj` — Tiled tileset for **tile layers**, including a Tiled
+  `animation` block when a frame row exists;
+- `sheet.objects.tsj` — the same tileset for **object layers** (tile objects).
 
 Rows are objects and columns are views, in the order they were loaded. Each
 animation gets its own row at the bottom, one column per frame, so a sheet can
@@ -320,7 +321,12 @@ The tileset uses the same cell size, `columns` columns, and `tileoffset.x =
 bottom-centre on the cell. `tileoffset.y` shifts the image down by the empty
 bottom margin, so the anchor (not the cell's bottom edge) lands on the tile
 cell. `--tile-width` overrides the tile width used for that offset (by default
-`2 * scale`). The first frame tile carries the `animation` list; every static
+`2 * scale`). Tile objects on an isometric map are already bottom-centre aligned
+on their position, and Tiled adds `tileoffset` on top, so `sheet.objects.tsj`
+uses `tileoffset.x = 0` (same `y`, `objectalignment: bottom`). Both were checked
+with Tiled's `tmxrasterizer` on an isometric map: the anchor lands exactly on
+the cell's bottom vertex in a tile layer with `sheet.tsj` and for a tile object
+placed at that vertex with `sheet.objects.tsj`. The first frame tile carries the `animation` list; every static
 tile carries `name`, `rotation`, `view`, `pivot` and anchor properties.
 `tilecount` is `columns * rows` of the page, including empty cells (for
 example when an animation is longer than the view row): Tiled derives the tile

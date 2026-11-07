@@ -38,9 +38,8 @@
       `--padding`, несколько анимаций с `--durations`/`--once`/`--label`,
       `--exclude`, `--debug-grid`, `--atlas` (Phaser/PixiJS), `--max-rows`,
       `--projection top|front|side`, JSON Schema манифеста, команда VS Code.
-- [ ] `sprites` в Tiled: проверить `tileoffset` листа на настоящей
-      изометрической карте — и в тайловом слое, и в слое объектов (у
-      экспортёра `tiled` в слое объектов `tileoffset.x = 0`).
+- [x] `sprites` в Tiled: `tileoffset` проверен `tmxrasterizer` на
+      изометрической карте; для слоя объектов отдельный `sheet.objects.tsj`.
 - [ ] `sprites`: лист «как стоит в сцене» (с `rot` из `place`), если он
       понадобится; сейчас лист всегда в канонической ориентации.
 - [ ] Параметрические кадры в языке (сейчас кадры задаются углами в CLI).
