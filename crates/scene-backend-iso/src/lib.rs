@@ -123,8 +123,8 @@ pub fn render_object_sprite_at(
         bounds: object.local_bounds(),
     };
     let rendered = render_internal(&graph, MARGIN)?;
+    // The yaw turns around the local origin, so the origin stays put.
     let (x, y) = rotate_xy(0.0, 0.0, object.width, object.depth, rotation);
-    let (x, y) = scene_core::rotate_degrees(x, y, angle);
     let screen = project_point([x, y, 0.0], f64::from(scale));
     let mut image = rendered.image;
     add_contact_shadow(&mut image, object, rotation, angle, scale, rendered.origin);
@@ -159,8 +159,8 @@ fn add_contact_shadow(
     let mut min = [f64::INFINITY; 2];
     let mut max = [f64::NEG_INFINITY; 2];
     for corner in corners {
-        let (x, y) = rotate_xy(corner[0], corner[1], object.width, object.depth, rotation);
-        let (x, y) = scene_core::rotate_degrees(x, y, angle);
+        let (x, y) = scene_core::rotate_degrees(corner[0], corner[1], angle);
+        let (x, y) = rotate_xy(x, y, object.width, object.depth, rotation);
         let point = project_point([x, y, 0.0], f64::from(scale));
         min[0] = min[0].min(point[0]);
         min[1] = min[1].min(point[1]);
