@@ -15,6 +15,12 @@
 - **Сборка** (`Scene: собрать`) складывает в `out/`: `<имя>.png`,
   `<имя>.vox`, а для `.scene` ещё `<имя>-tiled/scene.tmj`. Лог — в канале
   «Iso Scene».
+- **Лист спрайтов** (`Scene: экспорт листа спрайтов`, также в контекстном
+  меню редактора): спрашивает число направлений (1/2/4/8/16) и якорь
+  (`front`/`center`/…), запускает `iso-scene sprites` и складывает в
+  `out/<имя>-sprites/` `<имя>.png`, `.json`, `.tsj`, `.atlas.json` для
+  Phaser/PixiJS и `<имя>.debug.png` с рамками клеток и якорями — его
+  расширение сразу открывает рядом.
 - **Подсказки**: при наведении на `box`, `cyl`, `object`, `use`, `merge`,
   `place` — сигнатура и описание; автодополнение со сниппетами.
 
@@ -27,7 +33,7 @@
 ```bash
 cargo install --path crates/scene-cli
 cd editors/vscode && npx @vscode/vsce package
-code --install-extension iso-scene-0.3.1.vsix
+code --install-extension iso-scene-0.3.3.vsix
 ```
 
 CLI ищется в `PATH`, затем в `~/.cargo/bin/iso-scene`; путь задаётся
