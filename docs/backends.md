@@ -147,6 +147,23 @@ contributes all objects defined in it. Use `--object <name>` (repeatable) to
 keep only some of them. The pixel scale is taken from the first scene; models
 and mixed inputs use `--scale` (default 16).
 
+Objects are identified by name. The same object reached from several files
+(for example a model included by two scenes) is packed once. Two *different*
+objects with one name are an error (exit code 2) instead of one silently
+replacing the other; rename one or pick with `--object`. Likewise a material
+name bound to two different files is an error.
+
+`--name <stem>` sets the file names (`<stem>.png`, `.json`, `.tsj`). It must be
+a bare stem: no `/`, `\`, `..` and no extension.
+
+`--base <dir>` sets the directory relative paths are resolved from. When the
+working directory does not contain it, `<dir>` also becomes the project root
+that `include` and `material` paths must stay inside, so a sheet can be built
+from any directory. This applies to `render`, `voxel` and `tiled` too.
+
+A sheet holds at most 4 096 cells (objects × views + frames) and 1 024
+animation frames; these limits are checked before anything is rendered.
+
 `--views 1|2|4` selects the static sides: `0°`, `0°/180°`, or
 `0°/90°/180°/270°`. `--angles 0,90,180,270` picks them explicitly.
 
@@ -161,7 +178,7 @@ Rows are objects and columns are views, in the order they were loaded. An
 animation gets its own row at the bottom, one column per frame, so a sheet can
 combine a 4-view turntable with an animated part. Empty cells stay transparent.
 
-Every cell is anchored at its **bottom-centre**. For a static view the anchor
+All cells share one anchor at the horizontal centre of the cell. For a static view the anchor
 is the footprint's front corner, the point that touches the floor; the object
 is placed so that this point lands on `(cell.width / 2, anchor.y)`. A game
 draws the cell at the object's floor position; Tiled uses the same point
@@ -204,7 +221,9 @@ cell. `--tile-width` overrides the tile width used for that offset (by default
 `2 * scale`). The first frame tile carries the `animation` list; every static
 tile carries `name`, `rotation`, `view` and anchor properties.
 
-Contact shadows are baked into each sprite, like in the Tiled object atlas.
+Contact shadows are baked into each sprite, like in the Tiled object atlas, and
+keep their partial alpha: sprites are composited with straight-alpha "over",
+and each sprite is clipped to its own cell.
 
 ## Walls
 

@@ -1,8 +1,11 @@
 //! Pack isometric object renders into a sprite sheet.
 //!
-//! The sheet is a uniform grid of cells. Every cell is anchored at its
-//! bottom-centre, so a game can draw an object at the cell's bottom-centre and
-//! get the same placement Tiled uses. Two sidecars describe the grid:
+//! The sheet is a uniform grid of cells sharing one anchor at the horizontal
+//! centre of the cell. A static view puts the footprint's front corner (where
+//! the object meets the floor) on the anchor; an animation frame puts the
+//! object's local origin (the hinge it turns around) there instead. A game
+//! draws a cell with its anchor on the object's position and gets the same
+//! placement Tiled uses. Two sidecars describe the grid:
 //!
 //! - `sheet.json` — engine-neutral manifest (names, views, frames, timing);
 //! - `sheet.tsj` — a Tiled tileset, including `animation` for frame rows.
