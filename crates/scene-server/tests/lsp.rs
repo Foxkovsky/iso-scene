@@ -128,6 +128,23 @@ fn a_session_checks_hovers_completes_and_jumps_into_models() {
         completion.iter().any(|item| item["label"] == "desk"),
         "{completion:?}"
     );
+    let shapes = session(&[
+        request(1, "initialize", json!({"capabilities": {}})),
+        notify(
+            "textDocument/didOpen",
+            json!({"textDocument": {"uri": "file:///x.model", "languageId": "iso-scene", "version": 1, "text": "version 1;\n"}}),
+        ),
+        request(
+            2,
+            "textDocument/completion",
+            json!({"textDocument": {"uri": "file:///x.model"}, "position": {"line": 1, "character": 0}}),
+        ),
+    ]);
+    let items = reply(&shapes, 2)["result"].as_array().expect("items");
+    // Each shape once, as a snippet, not again as a bare keyword.
+    let boxes: Vec<&Value> = items.iter().filter(|item| item["label"] == "box").collect();
+    assert_eq!(boxes.len(), 1);
+    assert_eq!(boxes[0]["insertTextFormat"], 2);
     assert_eq!(reply(&messages, 5)["result"], json!([]));
     let scale = &reply(&messages, 6)["result"]["contents"]["value"];
     assert!(scale.as_str().expect("scale").contains("1..256"), "{scale}");

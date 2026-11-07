@@ -283,7 +283,11 @@ impl At<'_> {
                 }
             }
             _ => {
-                for word in keywords() {
+                // Shapes come once, as snippets below.
+                for word in keywords()
+                    .into_iter()
+                    .filter(|word| SHAPE_SNIPPETS.iter().all(|(shape, _)| shape != word))
+                {
                     push(word, 14, "keyword");
                 }
                 for (shape, snippet) in SHAPE_SNIPPETS {
