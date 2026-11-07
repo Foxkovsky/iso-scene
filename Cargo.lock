@@ -395,6 +395,7 @@ dependencies = [
 name = "scene-backend-ortho"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "scene-core",
  "scene-render",
  "scene-syntax",

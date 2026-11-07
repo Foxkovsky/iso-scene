@@ -352,6 +352,11 @@ impl Band<'_> {
         // Only the steps whose row can fall inside this band; the bounds are
         // widened by two steps and every step is still checked exactly.
         let (first, last) = if delta_y == 0.0 {
+            // A horizontal line stays on one row: `y = a[1]` at every step.
+            let row = (a[1] + 1e-9).floor();
+            if row < self.top as f64 || row >= (self.top + self.rows) as f64 {
+                return;
+            }
             (0, samples)
         } else {
             let top = self.top as f64;
