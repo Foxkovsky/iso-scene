@@ -619,6 +619,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let mut padding = 0_u32;
     let mut debug_grid = false;
     let mut atlas = false;
+    let mut max_rows: Option<u32> = None;
     let mut base_override: Option<PathBuf> = None;
     // Animation flags apply to the latest `--animation`; flags given before
     // the first one apply to the first.
@@ -730,6 +731,18 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
             }
             "--debug-grid" => debug_grid = true,
             "--atlas" => atlas = true,
+            "--max-rows" => {
+                let Some(v) = value("--max-rows") else {
+                    return ExitCode::from(2);
+                };
+                match v.parse::<u32>() {
+                    Ok(n) if n >= 1 => max_rows = Some(n),
+                    _ => {
+                        eprintln!("iso-scene: invalid row count `{v}`");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
             "--exclude" => {
                 let Some(v) = value("--exclude") else {
                     return ExitCode::from(2);
@@ -1035,6 +1048,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         padding,
         debug_grid,
         atlas,
+        max_rows,
         animations: specs,
         tile_width: tile_width.or_else(|| scale.checked_mul(2)),
     };
@@ -1063,6 +1077,13 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     );
     for extra in report.debug.iter().chain(&report.atlas) {
         println!("wrote {}", extra.display());
+    }
+    if report.pages > 1 {
+        println!(
+            "{} pages; the figures above are for the first, see {} for all",
+            report.pages,
+            report.manifest.display()
+        );
     }
     ExitCode::SUCCESS
 }
@@ -1494,6 +1515,7 @@ fn print_help() {
     println!("                  --padding <px> leaves transparent gaps around cells");
     println!("                  --debug-grid also writes <name>.debug.png with cell borders");
     println!("                  --atlas also writes <name>.atlas.json for Phaser/PixiJS");
+    println!("                  --max-rows <n> splits the sheet into pages of n rows");
     println!(
         "                  --animation <name> --from --to --frames --duration adds a frame row"
     );

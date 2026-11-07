@@ -292,6 +292,16 @@ keys of every animation in order:
 }
 ```
 
+All cells of a sheet share one size, so a single door makes every chair
+cell door-sized. `--max-rows <n>` splits the rows into pages of at most `n`
+rows — `sheet-1.png`, `sheet-2.png`, … each with its own cell size, anchor
+and tileset (`sheet-1.tsj`, …) — while `sheet.json` stays one manifest: its
+`pages` array lists every image, and each sprite and frame names its `page`
+(its `x`, `y`, `w`, `h` and `anchor` refer to that page). Inputs are packed in
+load order, so list small and large objects in separate groups to keep small
+cells together. Without `--max-rows` there is one page and the files keep their
+plain names.
+
 `--debug-grid` also writes `sheet.debug.png`: the sheet on a light background
 with each cell outlined, the anchor marked with a cross and a `name/view`
 (`name#frame` for animation frames) label, to check at a glance that nothing is

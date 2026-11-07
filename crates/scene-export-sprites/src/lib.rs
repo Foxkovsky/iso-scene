@@ -144,13 +144,17 @@ pub struct SheetOptions {
     /// Also write `name.atlas.json` in the `TexturePacker` "JSON Hash" format
     /// read by Phaser and `PixiJS`.
     pub atlas: bool,
+    /// Split the sheet into pages of at most this many rows, each with its
+    /// own cell size; `None` keeps one page.
+    pub max_rows: Option<u32>,
     /// Animation rows, one per entry, below the static views.
     pub animations: Vec<AnimationSpec>,
     /// Tile width used for the Tiled `tileoffset`, when known.
     pub tile_width: Option<u32>,
 }
 
-/// Files written by [`export`].
+/// Files written by [`export`]. With several pages, the per-page fields
+/// describe the first page and `pages` counts them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SheetReport {
     pub image: PathBuf,
@@ -163,13 +167,35 @@ pub struct SheetReport {
     pub cells: [u32; 2],
     pub columns: u32,
     pub rows: u32,
+    /// Number of pages (sheet images).
+    pub pages: usize,
     /// Number of static object/view cells.
     pub sprites: usize,
     /// Number of animation frames.
     pub frames: usize,
 }
 
+/// One sheet image with its own uniform grid.
+struct Page {
+    /// File stem: the sheet name, or `name-<n>` when there are several pages.
+    stem: String,
+    cells: Vec<Cell>,
+    cell_size: [u32; 2],
+    anchor: [f64; 2],
+    columns: u32,
+    rows: u32,
+    width: u32,
+    height: u32,
+}
+
+impl Page {
+    fn image_name(&self) -> String {
+        format!("{}.png", self.stem)
+    }
+}
+
 struct Cell {
+    /// Row within the cell's page.
     row: u32,
     column: u32,
     name: String,
@@ -192,7 +218,9 @@ struct Cell {
 /// Render objects into `out_dir`.
 ///
 /// Rows are objects (one row per object), columns are views; every animation
-/// gets its own row at the bottom. Empty cells stay transparent.
+/// gets its own row at the bottom. Empty cells stay transparent. With
+/// `max_rows` the rows are split into pages `name-1.png`, `name-2.png`, …,
+/// each sized for its own cells, with one tileset per page and one manifest.
 ///
 /// # Errors
 ///
@@ -224,7 +252,6 @@ pub fn export(
     }
     validate_name(&options.name).map_err(|message| error("E0603", message))?;
     let mut animation_frames = 0_usize;
-    let mut longest_animation = 0_usize;
     for (index, animation) in options.animations.iter().enumerate() {
         if animation.frames == 0 {
             return Err(error("E0602", "an animation needs at least one frame"));
@@ -257,7 +284,6 @@ pub fn export(
             ));
         }
         animation_frames = animation_frames.saturating_add(animation.frames as usize);
-        longest_animation = longest_animation.max(animation.frames as usize);
     }
     if animation_frames > MAX_FRAMES as usize {
         return Err(error(
@@ -275,8 +301,9 @@ pub fn export(
             format!("{cell_count} sprite cells exceed the limit of {MAX_CELLS}"),
         ));
     }
-    let columns = options.views.len().max(longest_animation).max(1) as u32;
-    let rows = (objects.len() + options.animations.len()) as u32;
+    if options.max_rows == Some(0) {
+        return Err(error("E0602", "a page needs at least one row"));
+    }
 
     let mut cells = Vec::new();
     for (row, entry) in objects.iter().enumerate() {
@@ -350,22 +377,56 @@ pub fn export(
         }
     }
 
-    let (cell_size, anchor) = cell_metrics(&cells);
-    let side = |count: u32, size: u32| {
-        u64::from(count) * u64::from(size) + (u64::from(count) + 1) * u64::from(options.padding)
-    };
-    let (wide, tall) = (side(columns, cell_size[0]), side(rows, cell_size[1]));
-    if wide > u64::from(MAX_SHEET_SIDE)
-        || tall > u64::from(MAX_SHEET_SIDE)
-        || wide * tall > MAX_SHEET_PIXELS
-    {
-        return Err(error(
-            "E0602",
-            format!("sprite sheet {wide}x{tall} exceeds the limit"),
-        ));
+    let total_rows = objects.len() + options.animations.len();
+    let rows_per_page = options
+        .max_rows
+        .map_or(total_rows, |rows| rows as usize)
+        .max(1);
+    let page_count = total_rows.div_ceil(rows_per_page).max(1);
+    let mut buckets: Vec<Vec<Cell>> = (0..page_count).map(|_| Vec::new()).collect();
+    for mut cell in cells {
+        let row = cell.row as usize;
+        cell.row = (row % rows_per_page) as u32;
+        if let Some(bucket) = buckets.get_mut(row / rows_per_page) {
+            bucket.push(cell);
+        }
     }
-    // Both sides are at most MAX_SHEET_SIDE, so every pixel offset fits u32.
-    let (width, height) = (wide as u32, tall as u32);
+    // Size every page before writing anything.
+    let mut pages = Vec::with_capacity(page_count);
+    for (index, cells) in buckets.into_iter().enumerate() {
+        let (cell_size, anchor) = cell_metrics(&cells);
+        let columns = cells.iter().map(|cell| cell.column + 1).max().unwrap_or(1);
+        let rows = cells.iter().map(|cell| cell.row + 1).max().unwrap_or(1);
+        let side = |count: u32, size: u32| {
+            u64::from(count) * u64::from(size) + (u64::from(count) + 1) * u64::from(options.padding)
+        };
+        let (wide, tall) = (side(columns, cell_size[0]), side(rows, cell_size[1]));
+        if wide > u64::from(MAX_SHEET_SIDE)
+            || tall > u64::from(MAX_SHEET_SIDE)
+            || wide * tall > MAX_SHEET_PIXELS
+        {
+            return Err(error(
+                "E0602",
+                format!("sprite sheet {wide}x{tall} exceeds the limit; try `--max-rows`"),
+            ));
+        }
+        let stem = if page_count == 1 {
+            options.name.clone()
+        } else {
+            format!("{}-{}", options.name, index + 1)
+        };
+        // Both sides are at most MAX_SHEET_SIDE, so every pixel offset fits u32.
+        pages.push(Page {
+            stem,
+            cells,
+            cell_size,
+            anchor,
+            columns,
+            rows,
+            width: wide as u32,
+            height: tall as u32,
+        });
+    }
 
     fs::create_dir_all(out_dir).map_err(|cause| {
         error(
@@ -374,87 +435,72 @@ pub fn export(
         )
     })?;
 
-    let mut sheet = Image {
-        width,
-        height,
-        rgba: vec![0; (width as usize) * (height as usize) * 4],
-    };
-    for cell in &cells {
-        let [left, top] = cell_origin(cell, cell_size, options.padding);
-        let x = f64::from(left) + anchor[0] - cell.reference[0];
-        let y = f64::from(top) + anchor[1] - cell.reference[1];
-        composite_over(
-            &mut sheet,
-            &cell.sprite.image,
-            x.round() as i64,
-            y.round() as i64,
-            [left, top, cell_size[0], cell_size[1]],
-        );
+    let mut images = Vec::new();
+    let mut tilesets = Vec::new();
+    let mut debugs = Vec::new();
+    let mut atlases = Vec::new();
+    for page in &pages {
+        let mut sheet = Image {
+            width: page.width,
+            height: page.height,
+            rgba: vec![0; (page.width as usize) * (page.height as usize) * 4],
+        };
+        for cell in &page.cells {
+            let [left, top] = cell_origin(cell, page.cell_size, options.padding);
+            let x = f64::from(left) + page.anchor[0] - cell.reference[0];
+            let y = f64::from(top) + page.anchor[1] - cell.reference[1];
+            composite_over(
+                &mut sheet,
+                &cell.sprite.image,
+                x.round() as i64,
+                y.round() as i64,
+                [left, top, page.cell_size[0], page.cell_size[1]],
+            );
+        }
+        let image_path = out_dir.join(page.image_name());
+        write_png(&sheet, &image_path).map_err(|message| error("E0603", message))?;
+        images.push(image_path);
+
+        if options.debug_grid {
+            let path = out_dir.join(format!("{}.debug.png", page.stem));
+            let image = debug_grid(&sheet, page, options.padding);
+            write_png(&image, &path).map_err(|message| error("E0603", message))?;
+            debugs.push(path);
+        }
+
+        let tileset_path = out_dir.join(format!("{}.tsj", page.stem));
+        write_json(&tileset_path, &tileset_json(options, page))?;
+        tilesets.push(tileset_path);
+
+        if options.atlas {
+            let path = out_dir.join(format!("{}.atlas.json", page.stem));
+            write_json(&path, &atlas_json(options, page))?;
+            atlases.push(path);
+        }
     }
 
-    let image_name = format!("{}.png", options.name);
-    let image_path = out_dir.join(&image_name);
-    write_png(&sheet, &image_path).map_err(|message| error("E0603", message))?;
+    let manifest_path = out_dir.join(format!("{}.json", options.name));
+    write_json(&manifest_path, &manifest_json(options, &pages))?;
 
-    let debug = if options.debug_grid {
-        let path = out_dir.join(format!("{}.debug.png", options.name));
-        let image = debug_grid(&sheet, &cells, cell_size, anchor, options.padding);
-        write_png(&image, &path).map_err(|message| error("E0603", message))?;
-        Some(path)
-    } else {
-        None
-    };
-
-    let manifest = manifest_json(
-        options,
-        cells.as_slice(),
-        cell_size,
-        anchor,
-        columns,
-        rows,
-        [width, height],
-    );
-    let manifest_name = format!("{}.json", options.name);
-    let manifest_path = out_dir.join(&manifest_name);
-    write_json(&manifest_path, &manifest)?;
-
-    let tileset = tileset_json(
-        options,
-        cells.as_slice(),
-        cell_size,
-        anchor,
-        columns,
-        rows,
-        &image_name,
-    );
-    let atlas = if options.atlas {
-        let path = out_dir.join(format!("{}.atlas.json", options.name));
-        let value = atlas_json(
-            options,
-            cells.as_slice(),
-            cell_size,
-            anchor,
-            [width, height],
-        );
-        write_json(&path, &value)?;
-        Some(path)
-    } else {
-        None
-    };
-
-    let tileset_name = format!("{}.tsj", options.name);
-    let tileset_path = out_dir.join(&tileset_name);
-    write_json(&tileset_path, &tileset)?;
-
+    let first = pages
+        .first()
+        .ok_or_else(|| error("E0602", "internal: no sheet page"))?;
     Ok(SheetReport {
-        image: image_path,
+        image: images
+            .into_iter()
+            .next()
+            .ok_or_else(|| error("E0602", "internal: no sheet image"))?,
         manifest: manifest_path,
-        tileset: tileset_path,
-        debug,
-        atlas,
-        cells: cell_size,
-        columns,
-        rows,
+        tileset: tilesets
+            .into_iter()
+            .next()
+            .ok_or_else(|| error("E0602", "internal: no tileset"))?,
+        debug: debugs.into_iter().next(),
+        atlas: atlases.into_iter().next(),
+        cells: first.cell_size,
+        columns: first.columns,
+        rows: first.rows,
+        pages: pages.len(),
         sprites: objects.len() * options.views.len(),
         frames: animation_frames,
     })
@@ -570,21 +616,25 @@ fn frame_angles(from: f64, to: f64, frames: u32) -> Vec<f64> {
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn manifest_json(
-    options: &SheetOptions,
-    cells: &[Cell],
-    cell_size: [u32; 2],
-    anchor: [f64; 2],
-    columns: u32,
-    rows: u32,
-    image_size: [u32; 2],
-) -> Value {
-    let sprites: Vec<Value> = cells
-        .iter()
-        .filter(|cell| cell.animation.is_none())
-        .map(|cell| {
-            let mut sprite = cell_json(cell, cell_size, anchor, options.padding);
+fn manifest_json(options: &SheetOptions, pages: &[Page]) -> Value {
+    // Every cell with the page it lives on, in page order.
+    let located = || {
+        pages
+            .iter()
+            .enumerate()
+            .flat_map(|(index, page)| page.cells.iter().map(move |cell| (index, page, cell)))
+    };
+    let describe = |index: usize, page: &Page, cell: &Cell| {
+        let mut value = cell_json(cell, page.cell_size, page.anchor, options.padding);
+        if let Some(object) = value.as_object_mut() {
+            object.insert("page".to_string(), json!(index));
+        }
+        value
+    };
+    let sprites: Vec<Value> = located()
+        .filter(|(_, _, cell)| cell.animation.is_none())
+        .map(|(index, page, cell)| {
+            let mut sprite = describe(index, page, cell);
             if let Some(object) = sprite.as_object_mut() {
                 object.insert("pivot".to_string(), json!(options.pivot.name()));
             }
@@ -595,12 +645,11 @@ fn manifest_json(
         .animations
         .iter()
         .enumerate()
-        .map(|(index, animation)| {
-            let frames: Vec<Value> = cells
-                .iter()
-                .filter(|cell| cell.animation == Some(index))
-                .map(|cell| {
-                    let mut frame = cell_json(cell, cell_size, anchor, options.padding);
+        .map(|(number, animation)| {
+            let frames: Vec<Value> = located()
+                .filter(|(_, _, cell)| cell.animation == Some(number))
+                .map(|(index, page, cell)| {
+                    let mut frame = describe(index, page, cell);
                     if let Some(object) = frame.as_object_mut() {
                         object.remove("view");
                         object.insert("index".to_string(), json!(cell.column));
@@ -623,25 +672,44 @@ fn manifest_json(
             })
         })
         .collect();
+    let page_list: Vec<Value> = pages
+        .iter()
+        .map(|page| {
+            json!({
+                "image": page.image_name(),
+                "imageWidth": page.width,
+                "imageHeight": page.height,
+                "tileset": format!("{}.tsj", page.stem),
+                "cell": {"width": page.cell_size[0], "height": page.cell_size[1]},
+                "anchor": {"x": page.anchor[0], "y": page.anchor[1]},
+                "columns": page.columns,
+                "rows": page.rows
+            })
+        })
+        .collect();
+    // The top-level grid fields describe the first page, which is the whole
+    // sheet unless `--max-rows` split it.
+    let first = page_list.first().cloned().unwrap_or(Value::Null);
 
     json!({
         "format": MANIFEST_FORMAT,
         "version": MANIFEST_VERSION,
-        "image": format!("{}.png", options.name),
-        "imageWidth": image_size[0],
-        "imageHeight": image_size[1],
+        "image": first["image"],
+        "imageWidth": first["imageWidth"],
+        "imageHeight": first["imageHeight"],
         "name": options.name,
         "projection": "iso",
         "scale": options.scale,
         "tileWidth": options.tile_width,
         "views": options.views.iter().map(|view| degrees_json(*view)).collect::<Vec<_>>(),
         "pivot": options.pivot.name(),
-        "cell": {"width": cell_size[0], "height": cell_size[1]},
+        "cell": first["cell"],
         "padding": options.padding,
         "shadow": options.shadow,
-        "anchor": {"x": anchor[0], "y": anchor[1]},
-        "columns": columns,
-        "rows": rows,
+        "anchor": first["anchor"],
+        "columns": first["columns"],
+        "rows": first["rows"],
+        "pages": page_list,
         "sprites": sprites,
         "animations": animations
     })
@@ -650,17 +718,12 @@ fn manifest_json(
 /// The sheet on a light background with cell borders, anchor crosses and a
 /// `name/view` (or `name#frame`) label in each cell, for checking that nothing
 /// is clipped and that anchors line up.
-fn debug_grid(
-    sheet: &Image,
-    cells: &[Cell],
-    cell_size: [u32; 2],
-    anchor: [f64; 2],
-    padding: u32,
-) -> Image {
+fn debug_grid(sheet: &Image, page: &Page, padding: u32) -> Image {
     const BACKGROUND: [u8; 4] = [236, 236, 236, 255];
     const BORDER: [u8; 4] = [220, 40, 160, 255];
     const CROSS: [u8; 4] = [0, 150, 220, 255];
     const TEXT: [u8; 4] = [20, 20, 20, 255];
+    let (cells, cell_size, anchor) = (&page.cells, page.cell_size, page.anchor);
     let mut image = Image {
         width: sheet.width,
         height: sheet.height,
@@ -802,13 +865,8 @@ fn atlas_key(options: &SheetOptions, cell: &Cell) -> String {
 /// `PixiJS` (`Spritesheet`). `pivot` is the anchor as a fraction of the frame,
 /// `animations` lists frame keys in order (`PixiJS`), and each frame carries
 /// its `duration` like an Aseprite export.
-fn atlas_json(
-    options: &SheetOptions,
-    cells: &[Cell],
-    cell_size: [u32; 2],
-    anchor: [f64; 2],
-    image_size: [u32; 2],
-) -> Value {
+fn atlas_json(options: &SheetOptions, page: &Page) -> Value {
+    let (cells, cell_size, anchor) = (&page.cells, page.cell_size, page.anchor);
     let mut frames = serde_json::Map::new();
     for cell in cells {
         let [x, y] = cell_origin(cell, cell_size, options.padding);
@@ -843,9 +901,9 @@ fn atlas_json(
         "meta": {
             "app": "iso-scene",
             "version": env!("CARGO_PKG_VERSION"),
-            "image": format!("{}.png", options.name),
+            "image": page.image_name(),
             "format": "RGBA8888",
-            "size": {"w": image_size[0], "h": image_size[1]},
+            "size": {"w": page.width, "h": page.height},
             "scale": "1"
         }
     })
@@ -889,16 +947,9 @@ fn cell_json(cell: &Cell, cell_size: [u32; 2], anchor: [f64; 2], padding: u32) -
     value
 }
 
-#[allow(clippy::too_many_arguments)]
-fn tileset_json(
-    options: &SheetOptions,
-    cells: &[Cell],
-    cell_size: [u32; 2],
-    anchor: [f64; 2],
-    columns: u32,
-    rows: u32,
-    image_name: &str,
-) -> Value {
+fn tileset_json(options: &SheetOptions, page: &Page) -> Value {
+    let (cells, cell_size, anchor) = (&page.cells, page.cell_size, page.anchor);
+    let (columns, rows) = (page.columns, page.rows);
     let mut tiles: Vec<Value> = cells
         .iter()
         .filter(|cell| cell.animation.is_none())
@@ -963,16 +1014,16 @@ fn tileset_json(
     let offset_y = (f64::from(cell_size[1]) - anchor[1]).round() as i64;
     json!({
         "type": "tileset",
-        "name": options.name,
+        "name": page.stem,
         "version": "1.10",
         "tiledversion": "1.12.2",
         "tilewidth": cell_size[0],
         "tileheight": cell_size[1],
         "tilecount": columns * rows,
         "columns": columns,
-        "image": image_name,
-        "imagewidth": columns * cell_size[0] + (columns + 1) * options.padding,
-        "imageheight": rows * cell_size[1] + (rows + 1) * options.padding,
+        "image": page.image_name(),
+        "imagewidth": page.width,
+        "imageheight": page.height,
         "margin": options.padding,
         "spacing": options.padding,
         "tileoffset": {"x": offset_x, "y": offset_y},
@@ -1065,6 +1116,7 @@ mod tests {
             padding: 0,
             debug_grid: false,
             atlas: false,
+            max_rows: None,
             animations: Vec::new(),
             tile_width: Some(16),
         };
@@ -1111,6 +1163,7 @@ mod tests {
             padding: 0,
             debug_grid: false,
             atlas: false,
+            max_rows: None,
             animations: vec![AnimationSpec {
                 name: "door".into(),
                 object: "door".into(),
@@ -1169,6 +1222,7 @@ mod tests {
             padding: 0,
             debug_grid: false,
             atlas: false,
+            max_rows: None,
             animations: Vec::new(),
             tile_width: None,
         };
@@ -1189,6 +1243,7 @@ mod tests {
             padding: 0,
             debug_grid: false,
             atlas: false,
+            max_rows: None,
             animations: Vec::new(),
             tile_width: None,
         }
@@ -1707,6 +1762,48 @@ mod tests {
             json!(["open#0", "open#1", "open#2"])
         );
         assert_eq!(atlas["meta"]["image"], "atlas.png");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn max_rows_splits_pages_with_their_own_cell_size() {
+        let objects = vec![
+            SheetObject {
+                name: "cup".into(),
+                object: box_object("cup", 1.0, 1.0),
+                source: None,
+            },
+            SheetObject {
+                name: "bed".into(),
+                object: box_object("bed", 4.0, 3.0),
+                source: None,
+            },
+        ];
+        let mut options = chair_options("paged");
+        options.max_rows = Some(1);
+        options.atlas = true;
+        let dir = std::env::temp_dir().join("iso-scene-sprites-pages-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        assert_eq!(report.pages, 2);
+        assert!(dir.join("paged-1.png").exists());
+        assert!(dir.join("paged-2.png").exists());
+        assert!(dir.join("paged-2.tsj").exists());
+        assert!(dir.join("paged-2.atlas.json").exists());
+        assert!(!dir.join("paged.png").exists());
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(&report.manifest).unwrap()).unwrap();
+        let pages = manifest["pages"].as_array().unwrap();
+        assert_eq!(pages.len(), 2);
+        let small = pages[0]["cell"]["width"].as_u64().unwrap();
+        let large = pages[1]["cell"]["width"].as_u64().unwrap();
+        assert!(
+            small < large,
+            "the cup page should use smaller cells: {small} vs {large}"
+        );
+        let bed = &manifest["sprites"][4];
+        assert_eq!(bed["name"], "bed");
+        assert_eq!(bed["page"], 1);
+        assert_eq!(bed["y"], 0);
         let _ = fs::remove_dir_all(dir);
     }
 }
