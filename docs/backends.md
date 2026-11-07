@@ -322,6 +322,10 @@ bottom margin, so the anchor (not the cell's bottom edge) lands on the tile
 cell. `--tile-width` overrides the tile width used for that offset (by default
 `2 * scale`). The first frame tile carries the `animation` list; every static
 tile carries `name`, `rotation`, `view`, `pivot` and anchor properties.
+`tilecount` is `columns * rows` of the page, including empty cells (for
+example when an animation is longer than the view row): Tiled derives the tile
+grid from the image, so the count must match it. Empty cells are transparent
+tiles in the Tiled palette and have no entry in `sheet.json`.
 
 Contact shadows are baked into each sprite (`--shadow contact`, the default;
 `--shadow none` leaves them out for games that draw their own), like in the

@@ -52,6 +52,9 @@ cargo run -p scene-cli -- tiled examples/classroom.scene -o out/tiled
 # with walls: cargo run -p scene-cli -- tiled room.scene --walls room.walls -o out/tiled
 cargo run -p scene-cli -- sprites examples/classroom.scene --views 4 -o out/sprites
 # animation row: --animation chair --from 0 --to 90 --frames 7 --duration 100
+# 8 directions, centred pivot, Phaser/PixiJS atlas and a debug preview:
+cargo run -p scene-cli -- sprites examples/chair.model examples/desk.model \
+    --views 8 --pivot center --atlas --debug-grid -o out/furniture
 ```
 
 The lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel export
@@ -63,6 +66,9 @@ The normative documents are:
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — pipeline and crates;
 - [`docs/projections.md`](docs/projections.md) — projection formulas and their tests;
 - [`docs/walls.md`](docs/walls.md) — `.walls` format, 16-way masks and Tiled walls.
+- [`docs/backends.md`](docs/backends.md) — backends, Tiled export and sprite
+  sheets; [`docs/sprite-sheet.schema.json`](docs/sprite-sheet.schema.json) —
+  the `sheet.json` schema.
 
 Examples: [`examples/chair.model`](examples/chair.model),
 [`examples/classroom.scene`](examples/classroom.scene).
