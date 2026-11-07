@@ -820,7 +820,13 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     }
 
     let mut objects: Vec<scene_export_sprites::SheetObject> = Vec::new();
-    let mut materials = std::collections::BTreeMap::new();
+    // Object and material name -> file that first defined it, for conflicts.
+    let mut object_files: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    let mut materials: std::collections::BTreeMap<String, PathBuf> =
+        std::collections::BTreeMap::new();
+    let mut material_files: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     let mut scene_scale: Option<u32> = None;
 
     for path in &paths {
@@ -846,13 +852,19 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     eprintln!("iso-scene: scenes use different scales; pass --scale to pick one");
                     return ExitCode::from(2);
                 }
-                for (key, value) in &scene.materials {
-                    materials
-                        .entry(key.clone())
-                        .or_insert_with(|| value.clone());
+                if let Err(message) =
+                    merge_materials(&mut materials, &mut material_files, &scene.materials, path)
+                {
+                    eprintln!("iso-scene: {message}");
+                    return ExitCode::from(2);
                 }
                 for instance in &scene.instances {
-                    push_sheet_object(&mut objects, &instance.object);
+                    if let Err(message) =
+                        push_sheet_object(&mut objects, &mut object_files, &instance.object, path)
+                    {
+                        eprintln!("iso-scene: {message}");
+                        return ExitCode::from(2);
+                    }
                 }
             }
             Some("model") => {
@@ -860,13 +872,19 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     Ok(model) => model,
                     Err(diagnostic) => return report(path, &source, &diagnostic),
                 };
-                for (key, value) in &model.materials {
-                    materials
-                        .entry(key.clone())
-                        .or_insert_with(|| value.clone());
+                if let Err(message) =
+                    merge_materials(&mut materials, &mut material_files, &model.materials, path)
+                {
+                    eprintln!("iso-scene: {message}");
+                    return ExitCode::from(2);
                 }
                 for object in model.objects.values() {
-                    push_sheet_object(&mut objects, object);
+                    if let Err(message) =
+                        push_sheet_object(&mut objects, &mut object_files, object, path)
+                    {
+                        eprintln!("iso-scene: {message}");
+                        return ExitCode::from(2);
+                    }
                 }
             }
             _ => {
@@ -934,16 +952,68 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Add `object` unless an identical object of that name is already on the
+/// sheet. A different object with the same name is a conflict: picking one
+/// silently would drop the other from the sheet.
 fn push_sheet_object(
     objects: &mut Vec<scene_export_sprites::SheetObject>,
+    files: &mut std::collections::BTreeMap<String, String>,
     object: &std::sync::Arc<scene_core::CompiledObject>,
-) {
-    if !objects.iter().any(|entry| entry.name == object.name) {
-        objects.push(scene_export_sprites::SheetObject {
-            name: object.name.clone(),
-            object: object.clone(),
-        });
+    file: &str,
+) -> Result<(), String> {
+    match objects.iter().find(|entry| entry.name == object.name) {
+        Some(entry) if *entry.object == **object => Ok(()),
+        Some(_) => {
+            let first = files.get(&object.name).map_or("", String::as_str);
+            Err(format!(
+                "object `{}` in `{file}` differs from the one in `{first}`; rename one or pick with `--object`",
+                object.name
+            ))
+        }
+        None => {
+            files.insert(object.name.clone(), file.to_string());
+            objects.push(scene_export_sprites::SheetObject {
+                name: object.name.clone(),
+                object: object.clone(),
+            });
+            Ok(())
+        }
     }
+}
+
+/// Merge `incoming` materials; the same name bound to two files is a conflict.
+fn merge_materials(
+    materials: &mut std::collections::BTreeMap<String, PathBuf>,
+    files: &mut std::collections::BTreeMap<String, String>,
+    incoming: &std::collections::BTreeMap<String, PathBuf>,
+    file: &str,
+) -> Result<(), String> {
+    for (key, value) in incoming {
+        match materials.get(key) {
+            Some(known) if same_file(known, value) => {}
+            Some(known) => {
+                let first = files.get(key).map_or("", String::as_str);
+                return Err(format!(
+                    "material `{key}` is `{}` in `{file}` but `{}` in `{first}`",
+                    value.display(),
+                    known.display()
+                ));
+            }
+            None => {
+                files.insert(key.clone(), file.to_string());
+                materials.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!(
+            (a.canonicalize(), b.canonicalize()),
+            (Ok(a), Ok(b)) if a == b
+        )
 }
 
 #[allow(clippy::too_many_lines)]

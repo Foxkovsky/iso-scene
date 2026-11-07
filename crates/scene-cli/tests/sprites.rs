@@ -26,6 +26,50 @@ fn stderr(output: &Output) -> String {
 
 const THING_A: &str =
     "version 1;\nobject thing (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; }\n";
+const THING_B: &str =
+    "version 1;\nobject thing (2, 2) { box at (0, 0, 0) size (2, 2, 2) material wood; }\n";
+
+#[test]
+fn different_objects_with_one_name_are_a_conflict() {
+    let dir = scratch("collide");
+    write(&dir, "a.model", THING_A);
+    write(&dir, "b.model", THING_B);
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "sprites", "a.model", "b.model", "--scale", "8", "--views", "1",
+        ])
+        .args(["-o", "out"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("object `thing`"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!dir.join("out").exists());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn identical_objects_from_two_files_are_packed_once() {
+    let dir = scratch("same");
+    write(&dir, "a.model", THING_A);
+    write(&dir, "b.model", THING_A);
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "sprites", "a.model", "b.model", "--scale", "8", "--views", "1",
+        ])
+        .args(["-o", "out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let manifest = fs::read_to_string(dir.join("out/sheet.json")).unwrap();
+    assert_eq!(manifest.matches("\"name\": \"thing\"").count(), 1);
+    let _ = fs::remove_dir_all(dir);
+}
 
 #[test]
 fn sheet_name_must_be_a_stem() {
