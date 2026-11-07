@@ -3,6 +3,11 @@
   "displayName": "iso-scene",
   "description": "Живой предпросмотр iso-scene: изометрия, чертёж, воксели",
   "publisher": "local-iso",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Foxkovsky/iso-scene"
+  },
   "version": "0.4.0",
   "engines": {
     "vscode": "^1.85.0"

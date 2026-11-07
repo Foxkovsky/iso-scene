@@ -52,6 +52,20 @@ cargo build --release -p scene-cli
 node --test editors/vscode/test     # или make vscode-test
 ```
 
-Тесты проверяют клиент LSP и связку расширения с поддельным модулем
-`vscode` на настоящем `iso-scene lsp`; запуск в самом VS Code они не
-заменяют.
+Это быстрые тесты в Node: клиент LSP и связка расширения с поддельным
+модулем `vscode`, оба на настоящем `iso-scene lsp`.
+
+В самом VS Code (13 проверок на копии `examples/` в одноразовом профиле:
+ошибки в Problems при наборе и после правки включённой модели, подсказки,
+F12, автодополнение, символы, `.walls`, сборка, предпросмотр, откат на
+встроенные подсказки без CLI или со старым CLI):
+
+```bash
+make vscode-it                       # из исходников расширения
+VSCODE=/usr/share/code/code xvfb-run -a \
+    node editors/vscode/test/vscode/run.js --vsix iso-scene-0.4.0.vsix
+```
+
+`VSCODE` — исполняемый файл редактора (у Arch-пакета это
+`/usr/share/code/code`; обёртка `code` может передать запуск уже открытому
+окну). С `--vsix` пакет ставится в чистый профиль, и проверяется именно он.
