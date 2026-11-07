@@ -54,9 +54,9 @@ language-servers = ["iso-scene"]
 
 ### VS Code
 
-The extension in `editors/vscode` still has its own hover and completion;
-switching it to `iso-scene lsp` needs the `vscode-languageclient` package and
-is not done yet.
+The extension in `editors/vscode` (0.4.0+) starts `iso-scene lsp` itself,
+with a small built-in client and no npm dependencies. With an older CLI that
+has no `lsp`, it falls back to its built-in hovers and completions.
 
 ## MCP server: `iso-scene mcp`
 

@@ -5,7 +5,7 @@
 
 CARGO ?= cargo
 
-.PHONY: help fmt fmt-check check clippy test bench doc ci run clean
+.PHONY: help fmt fmt-check check clippy test bench doc ci run clean vscode-test
 
 help:
 	@printf '%s\n' \
@@ -14,6 +14,7 @@ help:
 		'make clippy     clippy with warnings as errors' \
 		'make test       run all tests' \
 		'make bench      run the criterion benchmarks' \
+		'make vscode-test test the VS Code extension (needs node)' \
 		'make doc        build documentation' \
 		'make ci         fmt-check + clippy + test + doc' \
 		'make run        run the CLI (pass ARGS=...)' \
@@ -39,6 +40,10 @@ doc:
 
 bench:
 	$(CARGO) bench --workspace
+
+vscode-test:
+	$(CARGO) build --release -p scene-cli
+	node --test editors/vscode/test
 
 ci: fmt-check clippy test doc
 

@@ -3,7 +3,7 @@
   "displayName": "iso-scene",
   "description": "Живой предпросмотр iso-scene: изометрия, чертёж, воксели",
   "publisher": "local-iso",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -16,6 +16,9 @@
     "onCommand:isoScene.sprites"
   ],
   "main": "./extension.js",
+  "scripts": {
+    "test": "node --test test"
+  },
   "contributes": {
     "languages": [
       {
@@ -80,7 +83,7 @@
         "isoScene.executable": {
           "type": "string",
           "default": "iso-scene",
-          "description": "Путь к CLI iso-scene. Если не найден в PATH, берётся ~/.cargo/bin/iso-scene."
+          "description": "Путь к CLI iso-scene (предпросмотр, сборка и языковой сервер `iso-scene lsp`). Если не найден в PATH, берётся ~/.cargo/bin/iso-scene."
         },
         "isoScene.updateDelay": {
           "type": "number",

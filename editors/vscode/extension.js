@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const figureHelp = require('./figure_help');
+const { LspClient } = require('./lsp_client');
 
 let panel;
 let current;
@@ -16,6 +17,8 @@ let activeTab = 'iso';
 let diagnostics;
 let status;
 let output;
+// Работающий `iso-scene lsp`; без него — встроенные подсказки figure_help.
+let lsp;
 
 function config() {
     const c = vscode.workspace.getConfiguration('isoScene');
@@ -80,9 +83,12 @@ function showError(document, message) {
     const match = text.match(/:(\d+):(?:\d+:)?\s*(?:error\[[^\]]+\]:\s*)?(.*)/);
     const line = match ? Math.max(0, Math.min(document.lineCount - 1, Number(match[1]) - 1)) : 0;
     const detail = match ? match[2] : text;
-    diagnostics.set(document.uri, [
-        new vscode.Diagnostic(document.lineAt(line).range, detail, vscode.DiagnosticSeverity.Error)
-    ]);
+    // С языковым сервером ошибки в Problems приходят от него.
+    if (!lsp) {
+        diagnostics.set(document.uri, [
+            new vscode.Diagnostic(document.lineAt(line).range, detail, vscode.DiagnosticSeverity.Error)
+        ]);
+    }
     if (panel) panel.webview.postMessage({ type: 'error', text });
 }
 
@@ -119,7 +125,7 @@ async function render(document, tab, token) {
             if (token !== version) return;
             panel.webview.postMessage({ type: 'render', kind: 'voxel', vox: imageData(out), info });
         }
-        diagnostics.delete(document.uri);
+        if (!lsp) diagnostics.delete(document.uri);
     } catch (error) {
         showError(document, error.message || error);
     } finally {
@@ -293,6 +299,95 @@ async function sprites(document) {
     }
 }
 
+function isScene(document) {
+    return document.languageId === 'iso-scene' && document.uri.scheme === 'file';
+}
+
+function toRange(range) {
+    return new vscode.Range(range.start.line, range.start.character, range.end.line, range.end.character);
+}
+
+function lspPosition(document, position) {
+    return { textDocument: { uri: document.uri.toString() }, position };
+}
+
+function openInLsp(document) {
+    if (!lsp || !isScene(document)) return;
+    lsp.notify('textDocument/didOpen', { textDocument: {
+        uri: document.uri.toString(), languageId: 'iso-scene',
+        version: document.version, text: document.getText()
+    } });
+}
+
+async function startLsp() {
+    if (!vscode.workspace.isTrusted) return;
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    const client = new LspClient(cliCandidates(), {
+        cwd: folder?.uri.fsPath, rootUri: folder ? folder.uri.toString() : null
+    });
+    client.on('log', (text) => output.append(text));
+    client.on('notification', (method, params) => {
+        if (method !== 'textDocument/publishDiagnostics') return;
+        diagnostics.set(vscode.Uri.parse(params.uri), params.diagnostics.map((d) => {
+            const diagnostic = new vscode.Diagnostic(toRange(d.range), d.message, vscode.DiagnosticSeverity.Error);
+            diagnostic.code = d.code;
+            diagnostic.source = 'iso-scene';
+            return diagnostic;
+        }));
+    });
+    client.on('exit', (code, signal, stopping) => {
+        if (lsp !== client) return;
+        lsp = undefined;
+        if (!stopping) output.appendLine(`iso-scene lsp остановился (${signal || code}); подсказки — встроенные.`);
+    });
+    try {
+        await client.start();
+    } catch (error) {
+        output.appendLine('iso-scene lsp недоступен (' + error.message + '); подсказки — встроенные. ' +
+            'Обнови CLI: cargo install --path crates/scene-cli');
+        return;
+    }
+    lsp = client;
+    vscode.workspace.textDocuments.forEach(openInLsp);
+}
+
+async function restartLsp() {
+    const old = lsp;
+    lsp = undefined;
+    if (old) await old.stop();
+    diagnostics.clear();
+    await startLsp();
+}
+
+function fallbackHover(document, position) {
+    const line = document.lineAt(position.line).text;
+    const match = /^\s*(box|cyl|sphere|slantbox|slantcyl|ramp|object|use|merge|place)\b/i.exec(line);
+    if (!match) return;
+    let key = match[1].toLowerCase();
+    if (key === 'box' && /^\s*box\s+from\b/i.test(line)) key = 'box from';
+    const start = match.index + match[0].search(/\S/);
+    const end = start + match[1].length;
+    if (position.character < start || position.character >= end) return;
+    const entry = figureHelp[key];
+    if (!entry) return;
+    const md = new vscode.MarkdownString();
+    md.appendCodeblock(entry.signature, 'text');
+    md.appendMarkdown('\n' + entry.description);
+    return new vscode.Hover(md, new vscode.Range(position.line, start, position.line, end));
+}
+
+function fallbackCompletion(document, position) {
+    const before = document.lineAt(position.line).text.slice(0, position.character);
+    if (!/^\s*[a-z]*$/i.test(before)) return;
+    return Object.entries(figureHelp).map(([name, entry]) => {
+        const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Snippet);
+        item.detail = entry.signature;
+        item.documentation = new vscode.MarkdownString(entry.description);
+        item.insertText = new vscode.SnippetString(entry.snippet);
+        return item;
+    });
+}
+
 function activate(context) {
     diagnostics = vscode.languages.createDiagnosticCollection('iso-scene');
     output = vscode.window.createOutputChannel('Iso Scene');
@@ -303,40 +398,63 @@ function activate(context) {
     const selector = { language: 'iso-scene', scheme: 'file' };
 
     const hover = vscode.languages.registerHoverProvider(selector, {
-        provideHover(document, position) {
-            const line = document.lineAt(position.line).text;
-            const match = /^\s*(box|cyl|sphere|slantbox|slantcyl|ramp|object|use|merge|place)\b/i.exec(line);
-            if (!match) return;
-            let key = match[1].toLowerCase();
-            if (key === 'box' && /^\s*box\s+from\b/i.test(line)) key = 'box from';
-            const start = match.index + match[0].search(/\S/);
-            const end = start + match[1].length;
-            if (position.character < start || position.character >= end) return;
-            const entry = figureHelp[key];
-            if (!entry) return;
-            const md = new vscode.MarkdownString();
-            md.appendCodeblock(entry.signature, 'text');
-            md.appendMarkdown('\n' + entry.description);
-            return new vscode.Hover(md, new vscode.Range(position.line, start, position.line, end));
+        async provideHover(document, position) {
+            if (!lsp) return fallbackHover(document, position);
+            const result = await lsp.request('textDocument/hover', lspPosition(document, position));
+            if (!result) return;
+            return new vscode.Hover(new vscode.MarkdownString(result.contents.value),
+                result.range ? toRange(result.range) : undefined);
         }
     });
 
     const completion = vscode.languages.registerCompletionItemProvider(selector, {
-        provideCompletionItems(document, position) {
-            const before = document.lineAt(position.line).text.slice(0, position.character);
-            if (!/^\s*[a-z]*$/i.test(before)) return;
-            return Object.entries(figureHelp).map(([name, entry]) => {
-                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Snippet);
-                item.detail = entry.signature;
-                item.documentation = new vscode.MarkdownString(entry.description);
-                item.insertText = new vscode.SnippetString(entry.snippet);
+        async provideCompletionItems(document, position) {
+            if (!lsp) return fallbackCompletion(document, position);
+            const items = await lsp.request('textDocument/completion', lspPosition(document, position));
+            return (items || []).map((entry) => {
+                const item = new vscode.CompletionItem(entry.label, Math.max(0, (entry.kind || 1) - 1));
+                item.detail = entry.detail;
+                if (entry.insertText) {
+                    item.insertText = entry.insertTextFormat === 2
+                        ? new vscode.SnippetString(entry.insertText) : entry.insertText;
+                }
                 return item;
             });
         }
+    }, ' ');
+
+    const definition = vscode.languages.registerDefinitionProvider(selector, {
+        async provideDefinition(document, position) {
+            if (!lsp) return;
+            const result = await lsp.request('textDocument/definition', lspPosition(document, position));
+            return result ? new vscode.Location(vscode.Uri.parse(result.uri), toRange(result.range)) : undefined;
+        }
     });
 
+    const symbols = vscode.languages.registerDocumentSymbolProvider(selector, {
+        async provideDocumentSymbols(document) {
+            if (!lsp) return;
+            const result = await lsp.request('textDocument/documentSymbol',
+                { textDocument: { uri: document.uri.toString() } });
+            return (result || []).map((symbol) => new vscode.DocumentSymbol(symbol.name, symbol.detail || '',
+                Math.max(0, symbol.kind - 1), toRange(symbol.range), toRange(symbol.selectionRange)));
+        }
+    });
+
+    startLsp();
+
     context.subscriptions.push(
-        hover, completion, diagnostics, status, output,
+        hover, completion, definition, symbols, diagnostics, status, output,
+        vscode.workspace.onDidOpenTextDocument(openInLsp),
+        vscode.workspace.onDidCloseTextDocument((document) => {
+            if (!lsp || !isScene(document)) return;
+            lsp.notify('textDocument/didClose', { textDocument: { uri: document.uri.toString() } });
+        }),
+        vscode.workspace.onDidSaveTextDocument((document) => {
+            if (!lsp || !isScene(document)) return;
+            lsp.notify('textDocument/didSave', { textDocument: { uri: document.uri.toString() } });
+        }),
+        vscode.workspace.onDidGrantWorkspaceTrust(() => { if (!lsp) startLsp(); }),
         vscode.commands.registerCommand('isoScene.preview', () => {
             const doc = vscode.window.activeTextEditor?.document || current;
             if (doc?.languageId === 'iso-scene') start(doc);
@@ -367,9 +485,16 @@ function activate(context) {
             sprites(doc);
         }),
         vscode.workspace.onDidChangeTextDocument((e) => {
+            if (lsp && isScene(e.document) && e.contentChanges.length > 0) {
+                lsp.notify('textDocument/didChange', {
+                    textDocument: { uri: e.document.uri.toString(), version: e.document.version },
+                    contentChanges: [{ text: e.document.getText() }]
+                });
+            }
             if (current && e.document === current && panel) schedule(current);
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('isoScene.executable')) restartLsp();
             if (e.affectsConfiguration('isoScene') && panel) schedule(current);
         }),
         vscode.window.onDidChangeActiveTextEditor((e) => {
@@ -389,6 +514,9 @@ function activate(context) {
 
 function deactivate() {
     clearTimeout(timer);
+    const client = lsp;
+    lsp = undefined;
+    return client ? client.stop() : undefined;
 }
 
 module.exports = { activate, deactivate };
