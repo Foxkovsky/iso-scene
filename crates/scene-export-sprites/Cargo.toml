@@ -15,3 +15,6 @@ scene-core = { path = "../scene-core" }
 scene-render = { path = "../scene-render" }
 scene-syntax = { path = "../scene-syntax" }
 serde_json = "1"
+
+[dev-dependencies]
+png = "0.17"

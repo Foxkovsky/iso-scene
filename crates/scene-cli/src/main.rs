@@ -500,9 +500,10 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
         rgba: vec![0; (sheet_w as usize) * (frame_h as usize) * 4],
     };
     for (index, (image, origin)) in rendered.iter().enumerate() {
-        let x = (origin[0] - min_x).round() as u32 + index as u32 * frame_w;
-        let y = (origin[1] - min_y).round() as u32;
-        blit(&mut sheet, image, x, y);
+        let left = index as u32 * frame_w;
+        let x = (origin[0] - min_x).round() as i64 + i64::from(left);
+        let y = (origin[1] - min_y).round() as i64;
+        scene_render::composite_over(&mut sheet, image, x, y, [left, 0, frame_w, frame_h]);
     }
 
     let output = output.unwrap_or_else(|| {
@@ -924,31 +925,6 @@ fn push_sheet_object(
             name: object.name.clone(),
             object: object.clone(),
         });
-    }
-}
-
-#[allow(clippy::cast_possible_truncation)]
-fn blit(dst: &mut scene_render::Image, src: &scene_render::Image, x: u32, y: u32) {
-    for sy in 0..src.height {
-        for sx in 0..src.width {
-            let di = (((y + sy) * dst.width + (x + sx)) * 4) as usize;
-            let si = ((sy * src.width + sx) * 4) as usize;
-            let alpha = u32::from(src.rgba[si + 3]);
-            if alpha == 0 {
-                continue;
-            }
-            if alpha == 255 {
-                dst.rgba[di..di + 4].copy_from_slice(&src.rgba[si..si + 4]);
-                continue;
-            }
-            let inverse = 255 - alpha;
-            for channel in 0..3 {
-                dst.rgba[di + channel] = ((u32::from(src.rgba[si + channel]) * alpha
-                    + u32::from(dst.rgba[di + channel]) * inverse)
-                    / 255) as u8;
-            }
-            dst.rgba[di + 3] = 255;
-        }
     }
 }
 

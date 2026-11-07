@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use scene_backend_iso::{Sprite, project_point, render_object_sprite_at};
 use scene_core::CompiledObject;
-use scene_render::{Image, write_png};
+use scene_render::{Image, composite_over, write_png};
 use scene_syntax::Diagnostic;
 use serde_json::{Value, json};
 
@@ -214,9 +214,17 @@ pub fn export(
         rgba: vec![0; (width as usize) * (height as usize) * 4],
     };
     for cell in &cells {
-        let x = f64::from(cell.column * cell_size[0]) + anchor[0] - cell.reference[0];
-        let y = f64::from(cell.row * cell_size[1]) + anchor[1] - cell.reference[1];
-        blit(&mut sheet, &cell.sprite.image, x, y);
+        let left = cell.column * cell_size[0];
+        let top = cell.row * cell_size[1];
+        let x = f64::from(left) + anchor[0] - cell.reference[0];
+        let y = f64::from(top) + anchor[1] - cell.reference[1];
+        composite_over(
+            &mut sheet,
+            &cell.sprite.image,
+            x.round() as i64,
+            y.round() as i64,
+            [left, top, cell_size[0], cell_size[1]],
+        );
     }
 
     let image_name = format!("{}.png", options.name);
@@ -456,40 +464,6 @@ fn tileset_json(
     })
 }
 
-fn blit(dst: &mut Image, src: &Image, x: f64, y: f64) {
-    let x = x.round() as i64;
-    let y = y.round() as i64;
-    for sy in 0..src.height {
-        let target_y = y + i64::from(sy);
-        if target_y < 0 || target_y >= i64::from(dst.height) {
-            continue;
-        }
-        for sx in 0..src.width {
-            let target_x = x + i64::from(sx);
-            if target_x < 0 || target_x >= i64::from(dst.width) {
-                continue;
-            }
-            let source = ((sy * src.width + sx) * 4) as usize;
-            let alpha = u32::from(src.rgba[source + 3]);
-            if alpha == 0 {
-                continue;
-            }
-            let target = ((target_y as u32 * dst.width + target_x as u32) * 4) as usize;
-            if alpha == 255 {
-                dst.rgba[target..target + 4].copy_from_slice(&src.rgba[source..source + 4]);
-                continue;
-            }
-            let inverse = 255 - alpha;
-            for channel in 0..3 {
-                dst.rgba[target + channel] = ((u32::from(src.rgba[source + channel]) * alpha
-                    + u32::from(dst.rgba[target + channel]) * inverse)
-                    / 255) as u8;
-            }
-            dst.rgba[target + 3] = 255;
-        }
-    }
-}
-
 fn write_json(path: &Path, value: &Value) -> Result<(), Diagnostic> {
     let text = serde_json::to_string_pretty(value).map_err(|cause| {
         error(
@@ -637,5 +611,79 @@ mod tests {
         assert_eq!(report.rows, 1);
         assert_eq!(report.columns, 1);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    fn chair_options(name: &str) -> SheetOptions {
+        SheetOptions {
+            name: name.into(),
+            scale: 8,
+            views: vec![0, 90, 180, 270],
+            animation: None,
+            tile_width: None,
+        }
+    }
+
+    #[test]
+    fn soft_shadows_stay_translucent() {
+        let objects = vec![SheetObject {
+            name: "chair".into(),
+            object: box_object("chair", 2.0, 1.0),
+        }];
+        let dir = std::env::temp_dir().join("iso-scene-sprites-alpha-test");
+        let report = export(&objects, &BTreeMap::new(), &chair_options("alpha"), &dir)
+            .expect("sheet exports");
+        let decoder = png::Decoder::new(std::io::BufReader::new(
+            fs::File::open(&report.image).unwrap(),
+        ));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buffer = vec![0; reader.output_buffer_size()];
+        reader.next_frame(&mut buffer).unwrap();
+        assert!(
+            buffer
+                .chunks_exact(4)
+                .any(|pixel| pixel[3] > 0 && pixel[3] < 255),
+            "the baked contact shadow must keep partial alpha"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn half_pixel_references_do_not_bleed_into_the_next_cell() {
+        let sprite = |reference_x: f64| Cell {
+            row: 0,
+            column: 0,
+            name: "x".into(),
+            rotation: 0,
+            angle: 0.0,
+            duration: None,
+            sprite: Sprite {
+                image: Image {
+                    width: 4,
+                    height: 2,
+                    rgba: [255, 0, 0, 255].repeat(8),
+                },
+                anchor: [reference_x, 2.0],
+            },
+            reference: [reference_x, 2.0],
+        };
+        // A cell of width 4 whose anchor is 2.0, with a sprite referenced at
+        // 1.5: the sprite lands at x = 0.5, which rounds to 1 and would spill
+        // one column into the neighbour without a clip.
+        let mut sheet = Image {
+            width: 8,
+            height: 2,
+            rgba: vec![0; 8 * 2 * 4],
+        };
+        let cell = sprite(1.5);
+        let x = 2.0 - cell.reference[0];
+        composite_over(
+            &mut sheet,
+            &cell.sprite.image,
+            x.round() as i64,
+            0,
+            [0, 0, 4, 2],
+        );
+        assert_eq!(sheet.pixel(4, 0)[3], 0, "column 4 belongs to the next cell");
+        assert_eq!(sheet.pixel(3, 0)[3], 255);
     }
 }
