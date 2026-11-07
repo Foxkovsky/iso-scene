@@ -617,6 +617,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let mut pivot = scene_export_sprites::Pivot::default();
     let mut shadow = true;
     let mut padding = 0_u32;
+    let mut debug_grid = false;
     let mut base_override: Option<PathBuf> = None;
     // Animation flags apply to the latest `--animation`; flags given before
     // the first one apply to the first.
@@ -726,6 +727,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                 };
                 object_filter.push(v);
             }
+            "--debug-grid" => debug_grid = true,
             "--exclude" => {
                 let Some(v) = value("--exclude") else {
                     return ExitCode::from(2);
@@ -1029,6 +1031,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         pivot,
         shadow,
         padding,
+        debug_grid,
         animations: specs,
         tile_width: tile_width.or_else(|| scale.checked_mul(2)),
     };
@@ -1055,6 +1058,9 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         report.manifest.display(),
         report.tileset.display()
     );
+    if let Some(debug) = &report.debug {
+        println!("wrote {}", debug.display());
+    }
     ExitCode::SUCCESS
 }
 
@@ -1483,6 +1489,7 @@ fn print_help() {
     println!("                  --pivot front|back|left|right|center anchors static views");
     println!("                  --shadow contact|none bakes or omits the contact shadow");
     println!("                  --padding <px> leaves transparent gaps around cells");
+    println!("                  --debug-grid also writes <name>.debug.png with cell borders");
     println!(
         "                  --animation <name> --from --to --frames --duration adds a frame row"
     );

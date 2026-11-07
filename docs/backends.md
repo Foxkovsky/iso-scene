@@ -269,6 +269,11 @@ between cells, so linear filtering, mipmaps or scaling cannot bleed one sprite
 into its neighbour. The manifest coordinates include it; the tileset writes it
 as `margin` and `spacing`.
 
+`--debug-grid` also writes `sheet.debug.png`: the sheet on a light background
+with each cell outlined, the anchor marked with a cross and a `name/view`
+(`name#frame` for animation frames) label, to check at a glance that nothing is
+clipped and the anchors line up.
+
 The tileset uses the same cell size, `columns` columns, and `tileoffset.x =
 (tileWidth - cellWidth) / 2` so a tile placed in a tile layer keeps the sprite
 bottom-centre on the cell. `tileoffset.y` shifts the image down by the empty
