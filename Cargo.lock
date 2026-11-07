@@ -452,6 +452,7 @@ dependencies = [
 name = "scene-export-tiled"
 version = "0.1.0"
 dependencies = [
+ "png",
  "rayon",
  "scene-backend-iso",
  "scene-core",

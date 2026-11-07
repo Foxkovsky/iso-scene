@@ -199,7 +199,17 @@ pub fn export_with(
             };
             let bounds = zero.world_bounds();
             let bottom_world = [bounds.max[0], bounds.max[1], bounds.min[2]];
-            let projected = project_point(bottom_world, f64::from(scale));
+            // The sprite anchor is the pixel of the object's local origin,
+            // which a quarter turn moves to another corner of the footprint.
+            let origin = zero.to_world([0.0, 0.0, 0.0]);
+            let projected = project_point(
+                [
+                    bottom_world[0] - origin[0],
+                    bottom_world[1] - origin[1],
+                    bottom_world[2],
+                ],
+                f64::from(scale),
+            );
             let bottom_px = [
                 sprite.anchor[0] + projected[0],
                 sprite.anchor[1] + projected[1],
@@ -396,19 +406,18 @@ pub fn export_with(
                 object_tiles[at] = 2 + sprite_index as u32;
             }
         }
-        let local_x = bottom_world[0] - min_x as f64;
-        let local_y = bottom_world[1] - min_y as f64;
-        let screen = project_point([local_x, local_y, bottom_world[2]], f64::from(scale));
-        // Tiled shifts isometric maps right by `height * tileWidth / 2` so that
-        // tile (0, 0) starts at the top of the diamond. Object coordinates are
-        // absolute pixels and have to carry the same shift.
-        let origin_x = f64::from(height) * f64::from(tile_w) / 2.0;
-        // Tiled derives an object's cell from its pixel position. A footprint
-        // corner lies exactly on a cell border, where Tiled rounds to the next
-        // cell and highlights the wrong diamond. Nudging the anchor a thousandth
-        // of a pixel up moves it inside the cell the object stands on.
-        let object_x = screen[0] + origin_x;
-        let object_y = screen[1] - ANCHOR_NUDGE;
+        // Tiled stores isometric object positions unprojected: both axes count
+        // `tileheight` pixels per cell, and Tiled projects them itself. An
+        // elevation of `z` blocks lifts the sprite by `z * tileheight` screen
+        // pixels, which is `z` cells back along both axes.
+        let cell_x = bottom_world[0] - min_x as f64 - bottom_world[2];
+        let cell_y = bottom_world[1] - min_y as f64 - bottom_world[2];
+        // Tiled derives an object's cell from its position. A footprint corner
+        // lies exactly on a cell border, where Tiled rounds to the next cell
+        // and highlights the wrong diamond. Nudging the anchor a thousandth of
+        // a pixel back moves it inside the cell the object stands on.
+        let object_x = cell_x * f64::from(tile_h) - ANCHOR_NUDGE;
+        let object_y = cell_y * f64::from(tile_h) - ANCHOR_NUDGE;
         objects.push(json!({
             "id": index + 1,
             "gid": 2 + sprite_index as u32,

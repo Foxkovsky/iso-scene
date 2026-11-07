@@ -48,10 +48,9 @@ fn simple_box_exports_to_a_tiled_map() {
     let objects = map["layers"][1]["objects"].as_array().expect("objects");
     assert_eq!(objects.len(), 1);
     assert_eq!(objects[0]["gid"], 2);
-    // A 1x1 object at (0, 0): footprint corner (1, 1) projects to (0, 16).
-    // Tiled's isometric origin adds height * tileWidth / 2 (16), which is the
-    // cell's bottom vertex.
-    assert_eq!(objects[0]["x"], 16.0);
+    // A 1x1 object at (0, 0): footprint corner (1, 1), one 16-pixel tile
+    // height per cell on both of Tiled's unprojected axes.
+    assert!((objects[0]["x"].as_f64().expect("x") - 16.0).abs() < 0.01);
     assert!((objects[0]["y"].as_f64().expect("y") - 16.0).abs() < 0.01);
 
     let ts: serde_json::Value = serde_json::from_str(
@@ -221,10 +220,94 @@ fn an_object_sits_on_the_projected_footprint_corner() {
     let map: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
     let object = &map["layers"][1]["objects"][0];
-    // Footprint corner (4, 4) with a 32x16 tile: (4-4)*16 = 0, (4+4)/2*16 = 64.
-    // The 4x4 map adds 4 * 32 / 2 = 64, which is the cell's bottom vertex.
-    assert_eq!(object["x"], 64.0);
+    // Footprint corner (4, 4) times the 16-pixel tile height.
+    assert!((object["x"].as_f64().expect("x") - 64.0).abs() < 0.01);
     assert!((object["y"].as_f64().expect("y") - 64.0).abs() < 0.01);
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// Where Tiled draws an isometric object: its `IsometricRenderer` projects the
+/// stored position, counting `tileheight` pixels per cell on both axes.
+fn tiled_screen(object: &serde_json::Value, map: &serde_json::Value) -> [f64; 2] {
+    let tile_w = map["tilewidth"].as_f64().expect("tilewidth");
+    let tile_h = map["tileheight"].as_f64().expect("tileheight");
+    let rows = map["height"].as_f64().expect("height");
+    let x = object["x"].as_f64().expect("x") / tile_h;
+    let y = object["y"].as_f64().expect("y") / tile_h;
+    [
+        (x - y) * tile_w / 2.0 + rows * tile_w / 2.0,
+        (x + y) * tile_h / 2.0,
+    ]
+}
+
+#[test]
+fn tiled_draws_objects_on_their_footprint_corner_off_the_diagonal() {
+    // Corner (5, 2) on a 6x4 map, and a raised object: the earlier exporter
+    // wrote screen pixels, which only coincide with Tiled's coordinates when
+    // the corner lies on the diagonal of a square map.
+    let scene = compile(
+        "version 1; object b (2, 1) { box at (0, 0, 0) size (2, 1, 1) material wood; } render iso; canvas (6, 4, 4); scale 16; place b at (3, 1, 0); place b at (0, 2, 1);",
+    );
+    let dir = temp_dir("off-diagonal");
+    let report = export(&scene, &dir).expect("export");
+    let map: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
+    let objects = map["layers"][1]["objects"].as_array().expect("objects");
+    let origin_x = 4.0 * 32.0 / 2.0;
+    // Screen pixel of the iso projection of world (x, y, z) on this map.
+    let iso = |x: f64, y: f64, z: f64| [(x - y) * 16.0 + origin_x, (x + y) * 8.0 - z * 16.0];
+    let mut expected = [iso(2.0, 3.0, 1.0), iso(5.0, 2.0, 0.0)];
+    let mut actual: Vec<[f64; 2]> = objects.iter().map(|o| tiled_screen(o, &map)).collect();
+    expected.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    actual.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(
+            (actual[0] - expected[0]).abs() < 0.01,
+            "{actual:?} != {expected:?}"
+        );
+        assert!(
+            (actual[1] - expected[1]).abs() < 0.01,
+            "{actual:?} != {expected:?}"
+        );
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_quarter_turn_does_not_shift_a_symmetric_sprite() {
+    // A full cube looks the same at every quarter turn. The sprite anchor is
+    // the pixel of the turned local origin, not of world (0, 0); confusing the
+    // two shifted turned sprites by their footprint inside the atlas cell.
+    let scene = compile(
+        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 16; place b at (0, 0, 0) rot 0; place b at (2, 0, 0) rot 90; place b at (0, 2, 0) rot 180; place b at (2, 2, 0) rot 270;",
+    );
+    let dir = temp_dir("quarter-turns");
+    let report = export(&scene, &dir).expect("export");
+    let ts: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(report.objects_tileset.as_ref().expect("objects tsj"))
+            .expect("read tsj"),
+    )
+    .expect("parse tsj");
+    let cell = usize::try_from(ts["tilewidth"].as_u64().expect("tilewidth")).expect("width");
+    let decoder = png::Decoder::new(std::io::BufReader::new(
+        fs::File::open(dir.join("objects.png")).expect("atlas"),
+    ));
+    let mut reader = decoder.read_info().expect("png header");
+    let mut atlas = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut atlas).expect("png data");
+    let width = info.width as usize;
+    assert_eq!(width, cell * 4);
+    // Faces are shaded per turn, so compare where the cube is, not its colours.
+    let column = |index: usize| -> Vec<bool> {
+        atlas
+            .chunks_exact(width * 4)
+            .flat_map(|row| row[index * cell * 4..(index + 1) * cell * 4].chunks_exact(4))
+            .map(|pixel| pixel[3] == 255)
+            .collect()
+    };
+    for index in 1..4 {
+        assert!(column(0) == column(index), "turn {index} moved the sprite");
+    }
     let _ = fs::remove_dir_all(dir);
 }
 
