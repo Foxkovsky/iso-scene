@@ -517,57 +517,18 @@ pub fn export(
         )
     })?;
 
-    let mut images = Vec::new();
-    let mut tilesets = Vec::new();
-    let mut debugs = Vec::new();
-    let mut atlases = Vec::new();
-    for page in &pages {
-        let mut sheet = Image {
-            width: page.width,
-            height: page.height,
-            rgba: vec![0; (page.width as usize) * (page.height as usize) * 4],
-        };
-        for cell in &page.cells {
-            let [left, top] = cell_origin(cell, page.cell_size, options.padding);
-            let x = f64::from(left) + page.anchor[0] - cell.reference[0];
-            let y = f64::from(top) + page.anchor[1] - cell.reference[1];
-            composite_over(
-                &mut sheet,
-                &cell.sprite.image,
-                x.round() as i64,
-                y.round() as i64,
-                [left, top, page.cell_size[0], page.cell_size[1]],
-            );
-        }
-        let image_path = out_dir.join(page.image_name());
-        write_png(&sheet, &image_path).map_err(|message| error("E0603", message))?;
-        images.push(image_path);
-
-        if options.debug_grid {
-            let path = out_dir.join(format!("{}.debug.png", page.stem));
-            let image = debug_grid(&sheet, page, options.padding);
-            write_png(&image, &path).map_err(|message| error("E0603", message))?;
-            debugs.push(path);
-        }
-
-        let tileset_path = out_dir.join(format!("{}.tsj", page.stem));
-        write_json(
-            &tileset_path,
-            &tileset_json(options, page, TiledLayer::Tiles),
-        )?;
-        tilesets.push(tileset_path);
-        let objects_path = out_dir.join(format!("{}.objects.tsj", page.stem));
-        write_json(
-            &objects_path,
-            &tileset_json(options, page, TiledLayer::Objects),
-        )?;
-
-        if options.atlas {
-            let path = out_dir.join(format!("{}.atlas.json", page.stem));
-            write_json(&path, &atlas_json(options, page))?;
-            atlases.push(path);
-        }
-    }
+    // Pages are independent files: write them in parallel, report in order.
+    let written: Vec<Result<PageFiles, Diagnostic>> = pages
+        .par_iter()
+        .map(|page| write_page(options, page, out_dir))
+        .collect();
+    let written = written
+        .into_iter()
+        .collect::<Result<Vec<PageFiles>, Diagnostic>>()?;
+    let mut images = written.iter().map(|files| files.image.clone());
+    let mut tilesets = written.iter().map(|files| files.tileset.clone());
+    let debug = written.iter().find_map(|files| files.debug.clone());
+    let atlas = written.iter().find_map(|files| files.atlas.clone());
 
     let manifest_path = out_dir.join(format!("{}.json", options.name));
     write_json(&manifest_path, &manifest_json(options, &pages))?;
@@ -577,22 +538,83 @@ pub fn export(
         .ok_or_else(|| error("E0602", "internal: no sheet page"))?;
     Ok(SheetReport {
         image: images
-            .into_iter()
             .next()
             .ok_or_else(|| error("E0602", "internal: no sheet image"))?,
         manifest: manifest_path,
         tileset: tilesets
-            .into_iter()
             .next()
             .ok_or_else(|| error("E0602", "internal: no tileset"))?,
-        debug: debugs.into_iter().next(),
-        atlas: atlases.into_iter().next(),
+        debug,
+        atlas,
         cells: first.cell_size,
         columns: first.columns,
         rows: first.rows,
         pages: pages.len(),
         sprites: objects.len() * options.views.len(),
         frames: animation_frames,
+    })
+}
+
+/// Files written for one page.
+struct PageFiles {
+    image: PathBuf,
+    tileset: PathBuf,
+    debug: Option<PathBuf>,
+    atlas: Option<PathBuf>,
+}
+
+/// Composite a page and write its image, tilesets and optional extras.
+fn write_page(
+    options: &SheetOptions,
+    page: &Page,
+    out_dir: &Path,
+) -> Result<PageFiles, Diagnostic> {
+    let mut sheet = Image {
+        width: page.width,
+        height: page.height,
+        rgba: vec![0; (page.width as usize) * (page.height as usize) * 4],
+    };
+    for cell in &page.cells {
+        let [left, top] = cell_origin(cell, page.cell_size, options.padding);
+        let x = f64::from(left) + page.anchor[0] - cell.reference[0];
+        let y = f64::from(top) + page.anchor[1] - cell.reference[1];
+        composite_over(
+            &mut sheet,
+            &cell.sprite.image,
+            x.round() as i64,
+            y.round() as i64,
+            [left, top, page.cell_size[0], page.cell_size[1]],
+        );
+    }
+    let image = out_dir.join(page.image_name());
+    write_png(&sheet, &image).map_err(|message| error("E0603", message))?;
+
+    let debug = if options.debug_grid {
+        let path = out_dir.join(format!("{}.debug.png", page.stem));
+        write_png(&debug_grid(&sheet, page, options.padding), &path)
+            .map_err(|message| error("E0603", message))?;
+        Some(path)
+    } else {
+        None
+    };
+
+    let tileset = out_dir.join(format!("{}.tsj", page.stem));
+    write_json(&tileset, &tileset_json(options, page, TiledLayer::Tiles))?;
+    let objects = out_dir.join(format!("{}.objects.tsj", page.stem));
+    write_json(&objects, &tileset_json(options, page, TiledLayer::Objects))?;
+
+    let atlas = if options.atlas {
+        let path = out_dir.join(format!("{}.atlas.json", page.stem));
+        write_json(&path, &atlas_json(options, page))?;
+        Some(path)
+    } else {
+        None
+    };
+    Ok(PageFiles {
+        image,
+        tileset,
+        debug,
+        atlas,
     })
 }
 
