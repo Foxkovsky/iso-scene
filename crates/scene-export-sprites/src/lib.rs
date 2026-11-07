@@ -294,6 +294,10 @@ pub fn export(
 /// In the 2:1 projection the local origin of a footprint is its far (top)
 /// corner, so a sprite anchored there hangs above the cell. The front corner is
 /// the point a game places on the floor and Tiled aligns to the cell bottom.
+///
+/// The corner comes from the declared footprint `(width, depth)` at floor
+/// level, not from the geometry's bounds: a table top or a cornice that
+/// overhangs the footprint must not lift the anchor into the air.
 fn front_corner(object: &CompiledObject, rotation: u16, scale: u32, sprite: &Sprite) -> [f64; 2] {
     let scale = f64::from(scale);
     let instance = scene_core::Instance {
@@ -302,11 +306,18 @@ fn front_corner(object: &CompiledObject, rotation: u16, scale: u32, sprite: &Spr
         rotation,
         angle: 0.0,
     };
-    let bounds = instance.world_bounds();
-    let (origin_x, origin_y) =
-        scene_core::rotate_xy(0.0, 0.0, object.width, object.depth, rotation);
-    let origin = project_point([origin_x, origin_y, 0.0], scale);
-    let front = project_point([bounds.max[0], bounds.max[1], bounds.min[2]], scale);
+    let origin = project_point(instance.to_world([0.0, 0.0, 0.0]), scale);
+    let front = [
+        [0.0, 0.0],
+        [object.width, 0.0],
+        [0.0, object.depth],
+        [object.width, object.depth],
+    ]
+    .into_iter()
+    .map(|[x, y]| project_point(instance.to_world([x, y, 0.0]), scale))
+    .fold([0.0, f64::NEG_INFINITY], |best, point| {
+        if point[1] > best[1] { point } else { best }
+    });
     [
         sprite.anchor[0] + front[0] - origin[0],
         sprite.anchor[1] + front[1] - origin[1],
@@ -800,5 +811,32 @@ mod tests {
         let error =
             export(&objects, &BTreeMap::new(), &chair_options("../evil"), &dir).unwrap_err();
         assert_eq!(error.code, "E0603");
+    }
+
+    #[test]
+    fn an_overhang_does_not_lift_the_static_anchor() {
+        let compile = |source: &str| {
+            let program = scene_syntax::parse(source).expect("test model parses");
+            scene_core::compile_model(&program, Path::new("."))
+                .expect("test model compiles")
+                .objects["table"]
+                .clone()
+        };
+        let plain = compile(
+            "version 1;\nobject table (1, 1) {\n    box at (0, 0, 0) size (1, 1, 1) material wood;\n}\n",
+        );
+        let overhang = compile(
+            "version 1;\nobject table (1, 1) {\n    box at (0, 0, 0) size (1, 1, 1) material wood;\n    box at (-0.5, -0.5, 1) size (2, 2, 0.25) material wood;\n}\n",
+        );
+        for rotation in [0, 90, 180, 270] {
+            let reference = |object: &CompiledObject| {
+                let sprite =
+                    render_object_sprite_at(object, rotation, 0.0, 8, &BTreeMap::new()).unwrap();
+                let corner = front_corner(object, rotation, 8, &sprite);
+                // The anchor relative to the object's origin pixel.
+                [corner[0] - sprite.anchor[0], corner[1] - sprite.anchor[1]]
+            };
+            assert_eq!(reference(&plain), reference(&overhang), "rot {rotation}");
+        }
     }
 }
