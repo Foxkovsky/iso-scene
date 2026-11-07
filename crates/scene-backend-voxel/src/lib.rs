@@ -220,6 +220,31 @@ fn wrapping(children: Vec<u8>) -> Vec<u8> {
     out
 }
 
+/// The smallest voxel size, rounded up to four decimals, at which a scene of
+/// `extent` blocks fits the grid limits; `None` if none is found.
+fn fitting_voxel_size(extent: [f64; 3], step: f64) -> Option<f64> {
+    let fits = |step: f64| {
+        let sides = extent.map(|side| (side / step).ceil().max(1.0));
+        sides.iter().all(|&side| side <= f64::from(MAX_AXIS))
+            && sides.iter().product::<f64>() <= f64::from(MAX_GRID)
+    };
+    let longest = extent.iter().fold(0.0_f64, |a, &b| a.max(b));
+    let volume: f64 = extent.iter().map(|&side| side.max(step)).product();
+    // Start from the analytic estimate and creep up past the rounding of the
+    // sides; the estimate is within a few percent.
+    let mut candidate = step
+        .max(longest / f64::from(MAX_AXIS))
+        .max((volume / f64::from(MAX_GRID)).cbrt());
+    for _ in 0..1_000 {
+        let rounded = (candidate * 10_000.0).ceil() / 10_000.0;
+        if rounded.is_finite() && fits(rounded) {
+            return Some(rounded);
+        }
+        candidate *= 1.001;
+    }
+    None
+}
+
 /// Voxelize a scene at `voxels_per_block` samples per block.
 ///
 /// # Errors
@@ -250,10 +275,14 @@ pub fn voxelize(scene: &SceneGraph, voxels_per_block: f64) -> Result<VoxelModel,
     ];
     let total = u64::from(size[0]) * u64::from(size[1]) * u64::from(size[2]);
     if size.iter().any(|&side| side > MAX_AXIS) || total > u64::from(MAX_GRID) {
-        let hint = if size.iter().any(|&side| side > MAX_AXIS) {
-            format!("an axis is longer than {MAX_AXIS} voxels; increase --voxel-size")
+        let reason = if size.iter().any(|&side| side > MAX_AXIS) {
+            format!("an axis is longer than {MAX_AXIS} voxels")
         } else {
-            format!("the model has {total} voxels; increase --voxel-size")
+            format!("the model has {total} voxels, more than {MAX_GRID}")
+        };
+        let hint = match fitting_voxel_size(extent, step) {
+            Some(fits) => format!("{reason}; it fits with --voxel-size {fits} or larger"),
+            None => format!("{reason}; make the scene smaller"),
         };
         return Err(error(
             "E0602",
