@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use scene_core::{CompiledObject, Instance, SceneGraph, rotate_xy};
-use scene_render::{Framebuffer, MeshFace, Palette, Texture, builtin, primitive_faces};
+use scene_render::{Framebuffer, MeshFace, Palette, Shape, Texture, builtin, primitive_faces};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Background, RenderKind};
 
@@ -238,45 +238,52 @@ fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnost
     let mut framebuffer = Framebuffer::new(width, height, background);
     let bias = 1.6 / scale;
 
+    // Fills first, then outlines over them, in face order. Projected points
+    // of all faces live in one buffer; `starts` delimits each face.
+    let mut buffer: Vec<[f64; 3]> = Vec::new();
+    let mut starts = Vec::with_capacity(faces.len() + 1);
     for face in &faces {
-        let projected = project_face(face, scale, origin);
-        for index in 1..projected.len().saturating_sub(1) {
-            match face.texture {
-                Some(texture) => framebuffer.triangle_textured(
-                    projected[0],
-                    projected[index],
-                    projected[index + 1],
-                    [face.points[0], face.points[index], face.points[index + 1]],
-                    face.color,
-                    texture,
-                ),
-                None => framebuffer.triangle(
-                    projected[0],
-                    projected[index],
-                    projected[index + 1],
-                    face.color,
-                ),
-            }
+        starts.push(buffer.len());
+        buffer.extend(
+            face.points
+                .iter()
+                .map(|point| project_vertex(*point, scale, origin)),
+        );
+    }
+    starts.push(buffer.len());
+    let projected = starts.windows(2).map(|range| &buffer[range[0]..range[1]]);
+    let mut shapes = Vec::with_capacity(buffer.len() * 2);
+    for (face, points) in faces.iter().zip(projected.clone()) {
+        for index in 1..points.len().saturating_sub(1) {
+            shapes.push(Shape::Triangle {
+                points: [points[0], points[index], points[index + 1]],
+                color: face.color,
+                shade: face.texture.map(|texture| {
+                    (
+                        texture,
+                        [face.points[0], face.points[index], face.points[index + 1]],
+                    )
+                }),
+            });
         }
     }
-
-    for face in &faces {
+    for (face, points) in faces.iter().zip(projected) {
         if !face.outline {
             continue;
         }
-        let projected = project_face(face, scale, origin);
-        for index in 0..projected.len() {
+        for index in 0..points.len() {
             if face.hidden.get(index).copied().unwrap_or(false) {
                 continue;
             }
-            framebuffer.line(
-                projected[index],
-                projected[(index + 1) % projected.len()],
-                face.line,
+            shapes.push(Shape::Line {
+                a: points[index],
+                b: points[(index + 1) % points.len()],
+                color: face.line,
                 bias,
-            );
+            });
         }
     }
+    framebuffer.draw(&shapes);
 
     Ok(Rendered {
         image: Image {
@@ -619,18 +626,14 @@ fn scene_size(
     Ok((width, height, [left as f64, top as f64]))
 }
 
-fn project_face(face: &Face, scale: f64, origin: [f64; 2]) -> Vec<[f64; 3]> {
-    face.points
-        .iter()
-        .map(|point| {
-            let projected = project_point(*point, scale);
-            [
-                projected[0] - origin[0],
-                projected[1] - origin[1],
-                view_depth(*point),
-            ]
-        })
-        .collect()
+/// Pixel position and view depth of a world point.
+fn project_vertex(point: [f64; 3], scale: f64, origin: [f64; 2]) -> [f64; 3] {
+    let projected = project_point(point, scale);
+    [
+        projected[0] - origin[0],
+        projected[1] - origin[1],
+        view_depth(point),
+    ]
 }
 
 struct Face {

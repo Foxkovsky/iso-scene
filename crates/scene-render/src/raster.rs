@@ -6,8 +6,22 @@
 )]
 
 //! Small z-buffered rasterizer for flat-coloured polygons.
+//!
+//! [`Framebuffer::draw`] renders a list of shapes in parallel: the image is
+//! cut into horizontal bands and every band replays the whole list, clipped
+//! to its rows. A pixel belongs to exactly one band and sees the same writes
+//! in the same order as a sequential pass, so the result does not depend on
+//! the number of threads.
+
+use rayon::prelude::*;
 
 use crate::material::Texture;
+
+/// Rows per band below which splitting the image is not worth it.
+const MIN_BAND_ROWS: usize = 32;
+/// Images smaller than this are drawn on the calling thread: waking the
+/// thread pool costs more than the bands would save.
+const MIN_PARALLEL_PIXELS: usize = 65_536;
 
 /// RGBA framebuffer with a depth channel.
 pub struct Framebuffer {
@@ -17,17 +31,33 @@ pub struct Framebuffer {
     depth: Vec<f64>,
 }
 
+/// One drawing command for [`Framebuffer::draw`]. Points are in pixels with
+/// the view depth (larger is closer) as the third coordinate.
+#[derive(Clone, Copy, Debug)]
+pub enum Shape {
+    /// A flat triangle, optionally shaded by a procedural texture evaluated at
+    /// the interpolated world position.
+    Triangle {
+        points: [[f64; 3]; 3],
+        color: [u8; 3],
+        shade: Option<(Texture, [[f64; 3]; 3])>,
+    },
+    /// A depth-tested line; `bias` is in world blocks.
+    Line {
+        a: [f64; 3],
+        b: [f64; 3],
+        color: [u8; 3],
+        bias: f64,
+    },
+}
+
 impl Framebuffer {
     #[must_use]
     pub fn new(width: usize, height: usize, background: [u8; 4]) -> Self {
-        let mut pixels = Vec::with_capacity(width * height * 4);
-        for _ in 0..width * height {
-            pixels.extend_from_slice(&background);
-        }
         Self {
             width,
             height,
-            pixels,
+            pixels: background.repeat(width * height),
             depth: vec![f64::NEG_INFINITY; width * height],
         }
     }
@@ -39,7 +69,7 @@ impl Framebuffer {
 
     /// Fill a triangle. The third coordinate is view depth (larger is closer).
     pub fn triangle(&mut self, a: [f64; 3], b: [f64; 3], c: [f64; 3], color: [u8; 3]) {
-        self.triangle_inner(a, b, c, color, None);
+        self.whole().triangle(a, b, c, color, None);
     }
 
     /// Fill a triangle and shade every pixel with a procedural texture.
@@ -53,10 +83,83 @@ impl Framebuffer {
         color: [u8; 3],
         texture: Texture,
     ) {
-        self.triangle_inner(a, b, c, color, Some((texture, world)));
+        self.whole()
+            .triangle(a, b, c, color, Some((texture, world)));
     }
 
-    fn triangle_inner(
+    /// Draw a depth-tested line. `bias` is in world blocks.
+    pub fn line(&mut self, a: [f64; 3], b: [f64; 3], color: [u8; 3], bias: f64) {
+        self.whole().line(a, b, color, bias);
+    }
+
+    /// Draw `shapes` in order, in parallel over horizontal bands. The result
+    /// is identical to drawing them one by one.
+    pub fn draw(&mut self, shapes: &[Shape]) {
+        let width = self.width;
+        if width == 0 || self.height == 0 {
+            return;
+        }
+        let threads = rayon::current_num_threads().max(1);
+        // A few bands per thread balance uneven rows; tiny images stay whole.
+        let rows = self.height.div_ceil(threads * 4).max(MIN_BAND_ROWS);
+        if rows >= self.height || width * self.height < MIN_PARALLEL_PIXELS {
+            let mut band = self.whole();
+            for shape in shapes {
+                band.shape(shape);
+            }
+            return;
+        }
+        self.pixels
+            .par_chunks_mut(rows * width * 4)
+            .zip(self.depth.par_chunks_mut(rows * width))
+            .enumerate()
+            .for_each(|(index, (pixels, depth))| {
+                let mut band = Band {
+                    width,
+                    top: index * rows,
+                    rows: depth.len() / width,
+                    pixels,
+                    depth,
+                };
+                for shape in shapes {
+                    band.shape(shape);
+                }
+            });
+    }
+
+    fn whole(&mut self) -> Band<'_> {
+        Band {
+            width: self.width,
+            top: 0,
+            rows: self.height,
+            pixels: &mut self.pixels,
+            depth: &mut self.depth,
+        }
+    }
+}
+
+/// Rows `top..top + rows` of a framebuffer.
+struct Band<'a> {
+    width: usize,
+    top: usize,
+    rows: usize,
+    pixels: &'a mut [u8],
+    depth: &'a mut [f64],
+}
+
+impl Band<'_> {
+    fn shape(&mut self, shape: &Shape) {
+        match *shape {
+            Shape::Triangle {
+                points: [a, b, c],
+                color,
+                shade,
+            } => self.triangle(a, b, c, color, shade),
+            Shape::Line { a, b, color, bias } => self.line(a, b, color, bias),
+        }
+    }
+
+    fn triangle(
         &mut self,
         a: [f64; 3],
         b: [f64; 3],
@@ -65,22 +168,19 @@ impl Framebuffer {
         shade: Option<(Texture, [[f64; 3]; 3])>,
     ) {
         let denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
-        if denominator.abs() < 1e-12 {
+        if denominator.abs() < 1e-12 || self.rows == 0 {
             return;
         }
 
+        let bottom = self.top + self.rows - 1;
         let min_x = a[0].min(b[0]).min(c[0]).floor().max(0.0) as usize;
         let max_x = a[0]
             .max(b[0])
             .max(c[0])
             .ceil()
             .min(self.width.saturating_sub(1) as f64) as usize;
-        let min_y = a[1].min(b[1]).min(c[1]).floor().max(0.0) as usize;
-        let max_y = a[1]
-            .max(b[1])
-            .max(c[1])
-            .ceil()
-            .min(self.height.saturating_sub(1) as f64) as usize;
+        let min_y = (a[1].min(b[1]).min(c[1]).floor().max(0.0) as usize).max(self.top);
+        let max_y = (a[1].max(b[1]).max(c[1]).ceil().max(0.0) as usize).min(bottom);
 
         if min_x > max_x || min_y > max_y {
             return;
@@ -118,7 +218,7 @@ impl Framebuffer {
                     continue;
                 }
                 let z = u * a[2] + v * b[2] + w * c[2];
-                let index = y * self.width + x;
+                let index = (y - self.top) * self.width + x;
                 if z > self.depth[index] + 1e-9 {
                     self.depth[index] = z;
                     let color = match &shade {
@@ -138,14 +238,28 @@ impl Framebuffer {
         }
     }
 
-    /// Draw a depth-tested line. `bias` is in world blocks.
-    pub fn line(&mut self, a: [f64; 3], b: [f64; 3], color: [u8; 3], bias: f64) {
+    fn line(&mut self, a: [f64; 3], b: [f64; 3], color: [u8; 3], bias: f64) {
         let delta_x = b[0] - a[0];
         let delta_y = b[1] - a[1];
         let samples = (delta_x.abs().max(delta_y.abs()) * 3.0).ceil().max(1.0) as usize;
 
-        for step in 0..=samples {
-            #[allow(clippy::cast_precision_loss)]
+        // Only the steps whose row can fall inside this band; the bounds are
+        // widened by two steps and every step is still checked exactly.
+        let (first, last) = if delta_y == 0.0 {
+            (0, samples)
+        } else {
+            let top = self.top as f64;
+            let bottom = (self.top + self.rows) as f64;
+            let enter = (top - a[1]) / delta_y * samples as f64;
+            let leave = (bottom - a[1]) / delta_y * samples as f64;
+            let low = (enter.min(leave).floor() - 2.0).max(0.0);
+            let high = (enter.max(leave).ceil() + 2.0).min(samples as f64);
+            if low.is_nan() || high.is_nan() || low > high {
+                return;
+            }
+            (low as usize, high as usize)
+        };
+        for step in first..=last {
             let t = step as f64 / samples as f64;
             let x = a[0] + delta_x * t;
             let y = a[1] + delta_y * t;
@@ -156,10 +270,10 @@ impl Framebuffer {
                 continue;
             }
             let (px, py) = (px as usize, py as usize);
-            if px >= self.width || py >= self.height {
+            if px >= self.width || py < self.top || py >= self.top + self.rows {
                 continue;
             }
-            let index = py * self.width + px;
+            let index = (py - self.top) * self.width + px;
             if z >= self.depth[index] - bias {
                 self.write(index, color);
             }
@@ -266,5 +380,72 @@ mod tests {
                 "case {case}: {a:?} {b:?} {c:?}"
             );
         }
+    }
+
+    #[test]
+    fn parallel_draw_matches_sequential_drawing() {
+        let mut state = 0x1234_5678_9abc_def1_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % 100_000) as f64 / 100.0 - 50.0
+        };
+        let (width, height) = (301, 517);
+        let texture = Texture {
+            kind: crate::material::TextureKind::Wood,
+            axis: 0,
+            scale: 0.4,
+            strength: 0.1,
+            seed: 3.0,
+        };
+        let mut shapes = Vec::new();
+        for index in 0..600 {
+            let mut point = || [next() * 4.0 + 150.0, next() * 6.0 + 250.0, next()];
+            let (a, b, c) = (point(), point(), point());
+            shapes.push(if index % 5 == 4 {
+                Shape::Line {
+                    a,
+                    b,
+                    color: [200, 10, 10],
+                    bias: 0.05,
+                }
+            } else {
+                Shape::Triangle {
+                    points: [a, b, c],
+                    color: [(index % 255) as u8, 90, 160],
+                    shade: (index % 3 == 0).then_some((texture, [a, b, c])),
+                }
+            });
+        }
+        let mut sequential = Framebuffer::new(width, height, [0, 0, 0, 0]);
+        for shape in &shapes {
+            match *shape {
+                Shape::Triangle {
+                    points: [a, b, c],
+                    color,
+                    shade: None,
+                } => {
+                    sequential.triangle(a, b, c, color);
+                }
+                Shape::Triangle {
+                    points: [a, b, c],
+                    color,
+                    shade: Some((texture, world)),
+                } => {
+                    sequential.triangle_textured(a, b, c, world, color, texture);
+                }
+                Shape::Line { a, b, color, bias } => sequential.line(a, b, color, bias),
+            }
+        }
+        let mut parallel = Framebuffer::new(width, height, [0, 0, 0, 0]);
+        parallel.draw(&shapes);
+        let (sequential, parallel) = (sequential.into_rgba(), parallel.into_rgba());
+        let differing = sequential
+            .iter()
+            .zip(&parallel)
+            .filter(|(left, right)| left != right)
+            .count();
+        assert_eq!(differing, 0, "parallel bands changed {differing} bytes");
     }
 }
