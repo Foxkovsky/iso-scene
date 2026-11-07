@@ -143,68 +143,201 @@ iso-scene sprites door.scene --views 4 \
 
 Input is one or more `.scene` or `.model` files. A scene contributes the
 objects it actually places (each object once, in placement order); a model
-contributes all objects defined in it. Use `--object <name>` (repeatable) to
-keep only some of them. The pixel scale is taken from the first scene; models
+contributes all objects defined in it, including helpers such as a
+`chair_leg` used by `chair`. Use `--object <name>` (repeatable) to keep only
+some of them, or `--exclude <name>` (repeatable) to drop some. The pixel scale is taken from the first scene; models
 and mixed inputs use `--scale` (default 16).
 
-`--views 1|2|4` selects the static sides: `0°`, `0°/180°`, or
-`0°/90°/180°/270°`. `--angles 0,90,180,270` picks them explicitly.
+Objects are identified by name. The same object reached from several files
+(for example a model included by two scenes) is packed once. Two *different*
+objects with one name are an error (exit code 2) instead of one silently
+replacing the other; rename one or pick with `--object`. Likewise a material
+name bound to two different files is an error.
 
-The output directory gets three files:
+`--name <stem>` sets the file names (`<stem>.png`, `.json`, `.tsj`). It must be
+a bare stem: no `/`, `\`, `..` and no extension.
+
+`--base <dir>` sets the directory relative paths are resolved from. When the
+working directory does not contain it, `<dir>` also becomes the project root
+that `include` and `material` paths must stay inside, so a sheet can be built
+from any directory. This applies to `render`, `voxel` and `tiled` too.
+
+A sheet holds at most 4 096 cells (objects × views + frames) and 1 024
+animation frames; these limits are checked before anything is rendered.
+
+`--views 1|2|4|8|16` selects the static sides: `0°`, `0°/180°` (front and
+back), the four quarter turns, or 8/16 evenly spaced directions (45° and
+22.5° steps). `--angles` picks any list of yaws in degrees, e.g.
+`--angles 0,90` for front and side. Quarter turns are exact; other angles turn
+the object freely, and the pivot is computed with the same transform, so every
+direction stands on the same floor line. `rotation` in the manifest is the
+view's yaw (an integer for whole degrees).
+
+Views always show the object itself in canonical orientation; the `rot` of a
+`place` in a scene does not change the sheet (a scene contributes *which*
+objects are packed, not how they are turned).
+
+`--projection iso|top|front|side` picks the camera. It defaults to the
+`render` of the first scene (iso for models), so `classroom_top.scene` gives a
+top-down sheet for a top-down game. Views turn the object the same way in
+every projection; pivots use the same footprint corners projected by that
+camera (in front and side views the footprint is a line, so `front` is the
+middle of the bottom edge). Contact shadows are an isometric effect and are
+not baked into orthographic sheets.
+
+The output directory gets these files:
 
 - `sheet.png` — transparent grid, one cell per object/view;
 - `sheet.json` — engine-neutral manifest;
-- `sheet.tsj` — Tiled tileset, including a Tiled `animation` block when a frame
-  row exists.
+- `sheet.tsj` — Tiled tileset for **tile layers**, including a Tiled
+  `animation` block when a frame row exists;
+- `sheet.objects.tsj` — the same tileset for **object layers** (tile objects).
 
-Rows are objects and columns are views, in the order they were loaded. An
+Rows are objects and columns are views, in the order they were loaded. Each
 animation gets its own row at the bottom, one column per frame, so a sheet can
-combine a 4-view turntable with an animated part. Empty cells stay transparent.
+combine a 4-view turntable with animated parts. Empty cells stay transparent.
 
-Every cell is anchored at its **bottom-centre**. For a static view the anchor
-is the footprint's front corner, the point that touches the floor; the object
-is placed so that this point lands on `(cell.width / 2, anchor.y)`. A game
-draws the cell at the object's floor position; Tiled uses the same point
-through `tileoffset`. For an animation frame the anchor is the object's local
-origin instead, because that is the hinge the part turns around: the pivot
-stays put while the leaf swings. `sheet.json` describes the anchor explicitly:
+`--animation <object>` may be repeated. `--from`, `--to`, `--frames`,
+`--duration`, `--durations`, `--rotation`, `--once` and `--label` apply to the
+latest `--animation` (flags given before the first one apply to the first):
+
+```bash
+iso-scene sprites door.scene --views 4 \
+    --animation door_leaf --label open  --from 0  --to 90 --frames 7 \
+    --animation door_leaf --label close --from 90 --to 0  --frames 4 \
+        --durations 60,60,60,400 --once \
+    -o out/door
+```
+
+`--label` names the animation in the manifest (default: the object name;
+two animations of one object need distinct labels). `--durations` gives one
+duration per frame in milliseconds. `--once` marks a one-shot animation:
+`loop: false` in `sheet.json` and a `loop` property on the Tiled tile. Tiled
+itself always loops tile animations, so the game decides what to do with it.
+At most 1 024 frames in total are allowed.
+
+All cells share one anchor at the horizontal centre of the cell. For a static
+view the anchor is a point of the declared footprint `(width, depth)` at floor
+level, chosen by `--pivot`:
+
+- `front` (default) — the front corner, the point nearest the viewer that
+  touches the floor; Tiled aligns it to the bottom of a tile cell;
+- `back`, `left`, `right` — the other corners;
+- `center` — the middle of the footprint, handy for inventory icons.
+
+The footprint is used rather than the geometry's bounds, so a table top or a
+cornice that overhangs the footprint does not move the anchor. The object is
+placed so that the pivot lands on `(cell.width / 2, anchor.y)`. A game draws
+the cell at the object's floor position; Tiled uses the same point through
+`tileoffset`. For an animation frame the anchor is the object's local origin
+instead (`pivot: "origin"`), because that is the hinge the part turns around:
+the hinge stays put while the leaf swings. Every sprite and frame in
+`sheet.json` names its `pivot`, so a consumer never has to assume one:
 
 ```json
 {
-  "image": "sheet.png",
-  "cell": { "width": 128, "height": 160 },
+  "format": "iso-scene-sprites", "version": 1,
+  "image": "sheet.png", "imageWidth": 512, "imageHeight": 320,
+  "name": "sheet", "projection": "iso", "scale": 32, "tileWidth": 64,
+  "views": [0, 90, 180, 270], "pivot": "front",
+  "cell": { "width": 128, "height": 160 }, "padding": 0, "shadow": true,
   "anchor": { "x": 64, "y": 132 },
   "columns": 4,
   "rows": 2,
   "sprites": [
     { "name": "chair", "view": 0, "rotation": 0,
       "x": 0, "y": 0, "w": 128, "h": 160,
-      "anchor": { "x": 64, "y": 132 } }
+      "anchor": { "x": 64, "y": 132 }, "pivot": "front",
+      "footprint": { "width": 1.8, "depth": 1.8 }, "source": "chair.model" }
   ],
   "animations": [
-    { "name": "door_leaf", "from": 0, "to": 90, "duration": 100,
+    { "name": "open", "object": "door_leaf", "from": 0, "to": 90,
+      "rotation": 0, "duration": 100, "loop": true,
       "frames": [
-        { "index": 0, "angle": 0, "duration": 100,
-          "x": 0, "y": 160, "w": 128, "h": 160,
-          "anchor": { "x": 64, "y": 132 } }
+        { "name": "door_leaf", "index": 0, "angle": 0, "duration": 100,
+          "rotation": 0, "x": 0, "y": 160, "w": 128, "h": 160,
+          "anchor": { "x": 64, "y": 132 }, "pivot": "origin",
+          "footprint": { "width": 1, "depth": 0.1 }, "source": "door.scene" }
       ] }
   ]
 }
 ```
 
-`rotation` is the quarter turn of a static view; `angle` is the extra yaw of an
-animation frame. `index` is the frame's column, so engines can advance frames
-without parsing the coordinates.
+The manifest is described formally by
+[`sprite-sheet.schema.json`](sprite-sheet.schema.json) (JSON Schema 2020-12);
+a test keeps the two in sync. `format` and `version` identify it, and
+`version` is bumped on incompatible changes. Pixel coordinates start at the
+top-left of the image. `rotation` is the yaw of a static view (or the quarter
+turn of an animation row); `angle` is the extra yaw of an animation frame.
+`index` is the frame's column, so engines can advance frames without parsing
+the coordinates. `footprint` is the declared object size in blocks and
+`source` the file the object came from.
+
+`--padding <px>` (default 0) leaves transparent pixels around the sheet and
+between cells, so linear filtering, mipmaps or scaling cannot bleed one sprite
+into its neighbour. The manifest coordinates include it; the tileset writes it
+as `margin` and `spacing`.
+
+`--atlas` also writes `sheet.atlas.json` in the TexturePacker "JSON Hash"
+format, which Phaser 3 (`this.load.atlas`) and PixiJS (`Spritesheet`) read
+directly. Frame keys are `object/view` for static views and `animation#frame`
+for animation frames; each frame has a `pivot` (the anchor as a fraction of the
+frame), animation frames have a `duration`, and `animations` lists the frame
+keys of every animation in order:
+
+```json
+{
+  "frames": {
+    "chair/0": { "frame": { "x": 0, "y": 0, "w": 128, "h": 160 },
+                 "rotated": false, "trimmed": false,
+                 "spriteSourceSize": { "x": 0, "y": 0, "w": 128, "h": 160 },
+                 "sourceSize": { "w": 128, "h": 160 },
+                 "pivot": { "x": 0.5, "y": 0.825 } },
+    "open#0": { "...": "...", "duration": 100 }
+  },
+  "animations": { "open": ["open#0", "open#1"] },
+  "meta": { "app": "iso-scene", "image": "sheet.png", "format": "RGBA8888",
+            "size": { "w": 512, "h": 320 }, "scale": "1" }
+}
+```
+
+All cells of a sheet share one size, so a single door makes every chair
+cell door-sized. `--max-rows <n>` splits the rows into pages of at most `n`
+rows — `sheet-1.png`, `sheet-2.png`, … each with its own cell size, anchor
+and tileset (`sheet-1.tsj`, …) — while `sheet.json` stays one manifest: its
+`pages` array lists every image, and each sprite and frame names its `page`
+(its `x`, `y`, `w`, `h` and `anchor` refer to that page). Inputs are packed in
+load order, so list small and large objects in separate groups to keep small
+cells together. Without `--max-rows` there is one page and the files keep their
+plain names.
+
+`--debug-grid` also writes `sheet.debug.png`: the sheet on a light background
+with each cell outlined, the anchor marked with a cross and a `name/view`
+(`name#frame` for animation frames) label, to check at a glance that nothing is
+clipped and the anchors line up.
 
 The tileset uses the same cell size, `columns` columns, and `tileoffset.x =
 (tileWidth - cellWidth) / 2` so a tile placed in a tile layer keeps the sprite
 bottom-centre on the cell. `tileoffset.y` shifts the image down by the empty
 bottom margin, so the anchor (not the cell's bottom edge) lands on the tile
 cell. `--tile-width` overrides the tile width used for that offset (by default
-`2 * scale`). The first frame tile carries the `animation` list; every static
-tile carries `name`, `rotation`, `view` and anchor properties.
+`2 * scale`). Tile objects on an isometric map are already bottom-centre aligned
+on their position, and Tiled adds `tileoffset` on top, so `sheet.objects.tsj`
+uses `tileoffset.x = 0` (same `y`, `objectalignment: bottom`). Both were checked
+with Tiled's `tmxrasterizer` on an isometric map: the anchor lands exactly on
+the cell's bottom vertex in a tile layer with `sheet.tsj` and for a tile object
+placed at that vertex with `sheet.objects.tsj`. The first frame tile carries the `animation` list; every static
+tile carries `name`, `rotation`, `view`, `pivot` and anchor properties.
+`tilecount` is `columns * rows` of the page, including empty cells (for
+example when an animation is longer than the view row): Tiled derives the tile
+grid from the image, so the count must match it. Empty cells are transparent
+tiles in the Tiled palette and have no entry in `sheet.json`.
 
-Contact shadows are baked into each sprite, like in the Tiled object atlas.
+Contact shadows are baked into each sprite (`--shadow contact`, the default;
+`--shadow none` leaves them out for games that draw their own), like in the
+Tiled object atlas, and
+keep their partial alpha: sprites are composited with straight-alpha "over",
+and each sprite is clipped to its own cell.
 
 ## Walls
 

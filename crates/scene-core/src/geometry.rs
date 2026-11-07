@@ -350,14 +350,10 @@ impl Instance {
     /// Object-local point to world space, including the extra yaw.
     #[must_use]
     pub fn to_world(&self, point: [f64; 3]) -> [f64; 3] {
-        let (x, y) = rotate_xy(
-            point[0],
-            point[1],
-            self.object.width,
-            self.object.depth,
-            self.rotation,
-        );
-        let (x, y) = rotate_degrees(x, y, self.angle);
+        // The yaw turns around the local origin, so apply it before the
+        // quarter turn moves that origin to another corner of the footprint.
+        let (x, y) = rotate_degrees(point[0], point[1], self.angle);
+        let (x, y) = rotate_xy(x, y, self.object.width, self.object.depth, self.rotation);
         [x + self.at[0], y + self.at[1], point[2] + self.at[2]]
     }
 
@@ -366,13 +362,13 @@ impl Instance {
     pub fn to_local(&self, point: [f64; 3]) -> [f64; 3] {
         let x = point[0] - self.at[0];
         let y = point[1] - self.at[1];
-        let (x, y) = rotate_degrees(x, y, -self.angle);
         let (x, y) = match self.rotation {
             90 => (y, self.object.depth - x),
             180 => (self.object.width - x, self.object.depth - y),
             270 => (self.object.width - y, x),
             _ => (x, y),
         };
+        let (x, y) = rotate_degrees(x, y, -self.angle);
         [x, y, point[2] - self.at[2]]
     }
 

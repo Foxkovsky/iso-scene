@@ -242,6 +242,57 @@ async function build(document) {
     }
 }
 
+async function sprites(document) {
+    const file = document.uri.fsPath;
+    const base = path.dirname(file);
+    const stem = path.basename(file, path.extname(file));
+    const views = await vscode.window.showQuickPick(
+        [
+            { label: '4', description: '0°/90°/180°/270°' },
+            { label: '8', description: 'шаг 45°' },
+            { label: '16', description: 'шаг 22.5°' },
+            { label: '2', description: 'перед и зад (0°/180°)' },
+            { label: '1', description: 'только 0°' }
+        ],
+        { title: 'Лист спрайтов: сколько направлений?' }
+    );
+    if (!views) return;
+    const pivot = await vscode.window.showQuickPick(
+        [
+            { label: 'front', description: 'передний угол следа — ставить на пол / в Tiled' },
+            { label: 'center', description: 'центр следа — иконки инвентаря' },
+            { label: 'back', description: 'задний угол' },
+            { label: 'left', description: 'левый угол' },
+            { label: 'right', description: 'правый угол' }
+        ],
+        { title: 'Лист спрайтов: якорь статических видов' }
+    );
+    if (!pivot) return;
+    const outDir = path.join(base, 'out', `${stem}-sprites`);
+    output.show(true);
+    output.appendLine('Лист спрайтов: ' + file);
+    try {
+        // The saved file is passed as is, so `source` in sheet.json names it.
+        const result = await runCli([
+            'sprites', path.basename(file), '--base', base,
+            '--views', views.label, '--pivot', pivot.label,
+            '--name', stem, '--atlas', '--debug-grid', '-o', outDir
+        ], base);
+        output.appendLine(result.stdout.trim());
+        diagnostics.delete(document.uri);
+        const debug = path.join(outDir, `${stem}.debug.png`);
+        const preview = fs.existsSync(debug) ? debug : path.join(outDir, `${stem}-1.debug.png`);
+        if (fs.existsSync(preview)) {
+            await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(preview), vscode.ViewColumn.Beside);
+        }
+        vscode.window.showInformationMessage('iso-scene: лист спрайтов в ' + outDir);
+    } catch (error) {
+        showError(document, error.message || error);
+        output.appendLine(String(error.message || error));
+        vscode.window.showErrorMessage('Ошибка экспорта листа спрайтов. Подробности в выводе Iso Scene.');
+    }
+}
+
 function activate(context) {
     diagnostics = vscode.languages.createDiagnosticCollection('iso-scene');
     output = vscode.window.createOutputChannel('Iso Scene');
@@ -299,6 +350,21 @@ function activate(context) {
             }
             if (doc.isDirty && !await doc.save()) return;
             build(doc);
+        }),
+        vscode.commands.registerCommand('isoScene.sprites', async () => {
+            const doc = vscode.window.activeTextEditor?.document || current;
+            if (!doc || doc.languageId !== 'iso-scene') return;
+            if (!vscode.workspace.isTrusted) {
+                vscode.window.showWarningMessage('Для экспорта нужно доверенное рабочее пространство.');
+                return;
+            }
+            const ext = path.extname(doc.uri.fsPath).toLowerCase();
+            if (ext !== '.scene' && ext !== '.model') {
+                vscode.window.showWarningMessage('Лист спрайтов строится из .scene или .model.');
+                return;
+            }
+            if (doc.isDirty && !await doc.save()) return;
+            sprites(doc);
         }),
         vscode.workspace.onDidChangeTextDocument((e) => {
             if (current && e.document === current && panel) schedule(current);

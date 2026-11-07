@@ -188,7 +188,9 @@ dependencies = [
 name = "scene-export-sprites"
 version = "0.1.0"
 dependencies = [
+ "png",
  "scene-backend-iso",
+ "scene-backend-ortho",
  "scene-core",
  "scene-render",
  "scene-syntax",

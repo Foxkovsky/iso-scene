@@ -199,7 +199,7 @@ fn render_scene(args: Vec<String>) -> ExitCode {
     let file = Path::new(&path);
     let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
     let base = base_override.as_deref().unwrap_or(fallback_base);
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let root = project_root(base_override.as_deref());
     let mut scene = if extension == Some("model") {
         let model = match scene_core::compile_model(&program, base) {
             Ok(model) => model,
@@ -379,22 +379,24 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
                 let Some(v) = value("--from") else {
                     return ExitCode::from(2);
                 };
-                if let Ok(n) = v.parse() {
-                    from = n;
-                } else {
-                    eprintln!("iso-scene: invalid angle `{v}`");
-                    return ExitCode::from(2);
+                match v.parse::<f64>() {
+                    Ok(n) if n.is_finite() => from = n,
+                    _ => {
+                        eprintln!("iso-scene: invalid angle `{v}`");
+                        return ExitCode::from(2);
+                    }
                 }
             }
             "--to" => {
                 let Some(v) = value("--to") else {
                     return ExitCode::from(2);
                 };
-                if let Ok(n) = v.parse() {
-                    to = n;
-                } else {
-                    eprintln!("iso-scene: invalid angle `{v}`");
-                    return ExitCode::from(2);
+                match v.parse::<f64>() {
+                    Ok(n) if n.is_finite() => to = n,
+                    _ => {
+                        eprintln!("iso-scene: invalid angle `{v}`");
+                        return ExitCode::from(2);
+                    }
                 }
             }
             "--frames" => {
@@ -402,9 +404,12 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 match v.parse::<u32>() {
-                    Ok(n) if n >= 1 => frames = n,
+                    Ok(n) if (1..=scene_export_sprites::MAX_FRAMES).contains(&n) => frames = n,
                     _ => {
-                        eprintln!("iso-scene: invalid frame count `{v}`");
+                        eprintln!(
+                            "iso-scene: invalid frame count `{v}`; use 1..={}",
+                            scene_export_sprites::MAX_FRAMES
+                        );
                         return ExitCode::from(2);
                     }
                 }
@@ -459,13 +464,7 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    let angles: Vec<f64> = if frames <= 1 {
-        vec![from]
-    } else {
-        (0..frames)
-            .map(|frame| from + (to - from) * f64::from(frame) / f64::from(frames - 1))
-            .collect()
-    };
+    let angles = scene_export_sprites::frame_angles(from, to, frames);
     let mut rendered = Vec::with_capacity(angles.len());
     for angle in &angles {
         let mut frame = scene.clone();
@@ -494,15 +493,25 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
         .unwrap_or(1)
         .max(1);
     let sheet_w = frame_w.saturating_mul(rendered.len() as u32);
+    if sheet_w > scene_export_sprites::MAX_SHEET_SIDE
+        || frame_h > scene_export_sprites::MAX_SHEET_SIDE
+        || u64::from(sheet_w) * u64::from(frame_h) > scene_export_sprites::MAX_SHEET_PIXELS
+    {
+        eprintln!(
+            "iso-scene: error[E0602]: animation sheet {sheet_w}x{frame_h} exceeds the limit; use fewer frames"
+        );
+        return ExitCode::from(1);
+    }
     let mut sheet = scene_render::Image {
         width: sheet_w,
         height: frame_h,
         rgba: vec![0; (sheet_w as usize) * (frame_h as usize) * 4],
     };
     for (index, (image, origin)) in rendered.iter().enumerate() {
-        let x = (origin[0] - min_x).round() as u32 + index as u32 * frame_w;
-        let y = (origin[1] - min_y).round() as u32;
-        blit(&mut sheet, image, x, y);
+        let left = index as u32 * frame_w;
+        let x = (origin[0] - min_x).round() as i64 + i64::from(left);
+        let y = (origin[1] - min_y).round() as i64;
+        scene_render::composite_over(&mut sheet, image, x, y, [left, 0, frame_w, frame_h]);
     }
 
     let output = output.unwrap_or_else(|| {
@@ -608,18 +617,23 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let mut paths: Vec<String> = Vec::new();
     let mut output = PathBuf::from("out/sprites");
     let mut name: Option<String> = None;
-    let mut views: Option<Vec<u16>> = None;
+    let mut views: Option<Vec<f64>> = None;
     let mut scale: Option<u32> = None;
     let mut tile_width: Option<u32> = None;
     let mut object_filter: Vec<String> = Vec::new();
+    let mut object_exclude: Vec<String> = Vec::new();
+    let mut pivot = scene_export_sprites::Pivot::default();
+    let mut shadow = true;
+    let mut padding = 0_u32;
+    let mut debug_grid = false;
+    let mut atlas = false;
+    let mut max_rows: Option<u32> = None;
+    let mut projection: Option<scene_export_sprites::Projection> = None;
     let mut base_override: Option<PathBuf> = None;
-    let mut animation_object: Option<String> = None;
-    let mut from = 0.0_f64;
-    let mut to = 90.0_f64;
-    let mut frames = 7_u32;
-    let mut duration = 120_u32;
-    let mut rotation = 0_u16;
-    let mut animation_flag = false;
+    // Animation flags apply to the latest `--animation`; flags given before
+    // the first one apply to the first.
+    let mut animations: Vec<AnimationDraft> = Vec::new();
+    let mut current = AnimationDraft::default();
     let mut args = args.into_iter();
 
     while let Some(argument) = args.next() {
@@ -653,9 +667,12 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 match v.parse::<u32>() {
-                    Ok(n) if n >= 1 => scale = Some(n),
+                    Ok(n) if (1..=scene_core::MAX_SCALE).contains(&n) => scale = Some(n),
                     _ => {
-                        eprintln!("iso-scene: invalid scale `{v}`");
+                        eprintln!(
+                            "iso-scene: invalid scale `{v}`; use 1..={}",
+                            scene_core::MAX_SCALE
+                        );
                         return ExitCode::from(2);
                     }
                 }
@@ -665,7 +682,9 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 match v.parse::<u32>() {
-                    Ok(n) if n >= 1 => tile_width = Some(n),
+                    Ok(n) if (1..=scene_export_sprites::MAX_TILE_WIDTH).contains(&n) => {
+                        tile_width = Some(n);
+                    }
                     _ => {
                         eprintln!("iso-scene: invalid tile width `{v}`");
                         return ExitCode::from(2);
@@ -677,11 +696,18 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 views = match v.as_str() {
-                    "1" => Some(vec![0]),
-                    "2" => Some(vec![0, 180]),
-                    "4" => Some(vec![0, 90, 180, 270]),
+                    "1" => Some(vec![0.0]),
+                    "2" => Some(vec![0.0, 180.0]),
+                    "4" | "8" | "16" => {
+                        let count: u16 = v.parse().unwrap_or(4);
+                        Some(
+                            (0..count)
+                                .map(|step| f64::from(step) * 360.0 / f64::from(count))
+                                .collect(),
+                        )
+                    }
                     _ => {
-                        eprintln!("iso-scene: `--views` must be 1, 2 or 4");
+                        eprintln!("iso-scene: `--views` must be 1, 2, 4, 8 or 16");
                         return ExitCode::from(2);
                     }
                 };
@@ -692,10 +718,10 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                 };
                 let mut angles = Vec::new();
                 for part in v.split(',') {
-                    match part.trim().parse::<u16>() {
-                        Ok(angle) if matches!(angle, 0 | 90 | 180 | 270) => angles.push(angle),
+                    match part.trim().parse::<f64>() {
+                        Ok(angle) if angle.is_finite() => angles.push(angle),
                         _ => {
-                            eprintln!("iso-scene: invalid angle `{part}`; use 0, 90, 180 or 270");
+                            eprintln!("iso-scene: invalid angle `{part}`");
                             return ExitCode::from(2);
                         }
                     }
@@ -712,35 +738,100 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                 };
                 object_filter.push(v);
             }
-            "--animation" => {
-                let Some(v) = value("--animation") else {
+            "--debug-grid" => debug_grid = true,
+            "--atlas" => atlas = true,
+            "--projection" => {
+                let Some(v) = value("--projection") else {
                     return ExitCode::from(2);
                 };
-                animation_object = Some(v);
+                let Some(parsed) = scene_export_sprites::Projection::parse(&v) else {
+                    eprintln!("iso-scene: `--projection` must be iso, top, front or side");
+                    return ExitCode::from(2);
+                };
+                projection = Some(parsed);
             }
-            "--from" => {
-                let Some(v) = value("--from") else {
+            "--max-rows" => {
+                let Some(v) = value("--max-rows") else {
                     return ExitCode::from(2);
                 };
-                match v.parse::<f64>() {
-                    Ok(n) if n.is_finite() => {
-                        from = n;
-                        animation_flag = true;
-                    }
+                match v.parse::<u32>() {
+                    Ok(n) if n >= 1 => max_rows = Some(n),
                     _ => {
-                        eprintln!("iso-scene: invalid angle `{v}`");
+                        eprintln!("iso-scene: invalid row count `{v}`");
                         return ExitCode::from(2);
                     }
                 }
             }
-            "--to" => {
-                let Some(v) = value("--to") else {
+            "--exclude" => {
+                let Some(v) = value("--exclude") else {
+                    return ExitCode::from(2);
+                };
+                object_exclude.push(v);
+            }
+            "--padding" => {
+                let Some(v) = value("--padding") else {
+                    return ExitCode::from(2);
+                };
+                match v.parse::<u32>() {
+                    Ok(n) if n <= 256 => padding = n,
+                    _ => {
+                        eprintln!("iso-scene: `--padding` must be 0..=256 pixels");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            "--shadow" => {
+                let Some(v) = value("--shadow") else {
+                    return ExitCode::from(2);
+                };
+                shadow = match v.as_str() {
+                    "contact" => true,
+                    "none" => false,
+                    _ => {
+                        eprintln!("iso-scene: `--shadow` must be contact or none");
+                        return ExitCode::from(2);
+                    }
+                };
+            }
+            "--pivot" => {
+                let Some(v) = value("--pivot") else {
+                    return ExitCode::from(2);
+                };
+                let Some(parsed) = scene_export_sprites::Pivot::parse(&v) else {
+                    eprintln!("iso-scene: `--pivot` must be front, back, left, right or center");
+                    return ExitCode::from(2);
+                };
+                pivot = parsed;
+            }
+            "--animation" => {
+                let Some(v) = value("--animation") else {
+                    return ExitCode::from(2);
+                };
+                if current.object.is_some() {
+                    animations.push(std::mem::take(&mut current));
+                }
+                current.object = Some(v);
+            }
+            "--label" => {
+                let Some(v) = value("--label") else {
+                    return ExitCode::from(2);
+                };
+                current.label = Some(v);
+                current.touched = true;
+            }
+            "--from" | "--to" => {
+                let flag = argument.clone();
+                let Some(v) = value(&flag) else {
                     return ExitCode::from(2);
                 };
                 match v.parse::<f64>() {
                     Ok(n) if n.is_finite() => {
-                        to = n;
-                        animation_flag = true;
+                        if flag == "--from" {
+                            current.from = n;
+                        } else {
+                            current.to = n;
+                        }
+                        current.touched = true;
                     }
                     _ => {
                         eprintln!("iso-scene: invalid angle `{v}`");
@@ -753,12 +844,15 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 match v.parse::<u32>() {
-                    Ok(n) if n >= 1 => {
-                        frames = n;
-                        animation_flag = true;
+                    Ok(n) if (1..=scene_export_sprites::MAX_FRAMES).contains(&n) => {
+                        current.frames = n;
+                        current.touched = true;
                     }
                     _ => {
-                        eprintln!("iso-scene: invalid frame count `{v}`");
+                        eprintln!(
+                            "iso-scene: invalid frame count `{v}`; use 1..={}",
+                            scene_export_sprites::MAX_FRAMES
+                        );
                         return ExitCode::from(2);
                     }
                 }
@@ -769,8 +863,8 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                 };
                 match v.parse::<u32>() {
                     Ok(n) if n >= 1 => {
-                        duration = n;
-                        animation_flag = true;
+                        current.duration = n;
+                        current.touched = true;
                     }
                     _ => {
                         eprintln!("iso-scene: invalid duration `{v}`");
@@ -778,14 +872,35 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     }
                 }
             }
+            "--durations" => {
+                let Some(v) = value("--durations") else {
+                    return ExitCode::from(2);
+                };
+                let mut durations = Vec::new();
+                for part in v.split(',') {
+                    match part.trim().parse::<u32>() {
+                        Ok(n) if n >= 1 => durations.push(n),
+                        _ => {
+                            eprintln!("iso-scene: invalid duration `{part}`");
+                            return ExitCode::from(2);
+                        }
+                    }
+                }
+                current.durations = durations;
+                current.touched = true;
+            }
+            "--once" => {
+                current.looped = false;
+                current.touched = true;
+            }
             "--rotation" => {
                 let Some(v) = value("--rotation") else {
                     return ExitCode::from(2);
                 };
                 match v.parse::<u16>() {
                     Ok(n) if matches!(n, 0 | 90 | 180 | 270) => {
-                        rotation = n;
-                        animation_flag = true;
+                        current.rotation = n;
+                        current.touched = true;
                     }
                     _ => {
                         eprintln!("iso-scene: `--rotation` must be 0, 90, 180 or 270");
@@ -801,14 +916,40 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         eprintln!("iso-scene: `sprites` needs a .scene or .model file");
         return ExitCode::from(2);
     }
-    if animation_object.is_none() && animation_flag {
-        eprintln!("iso-scene: `--from/--to/--frames/--duration` need `--animation`");
+    if current.object.is_some() {
+        animations.push(current);
+    } else if current.touched {
+        eprintln!(
+            "iso-scene: `--from/--to/--frames/--duration/--durations/--once/--rotation/--label` need `--animation`"
+        );
+        return ExitCode::from(2);
+    }
+    for draft in &animations {
+        if !draft.durations.is_empty() && draft.durations.len() != draft.frames as usize {
+            eprintln!(
+                "iso-scene: `--durations` lists {} values for {} frames",
+                draft.durations.len(),
+                draft.frames
+            );
+            return ExitCode::from(2);
+        }
+    }
+    let name = name.unwrap_or_else(|| "sheet".to_string());
+    if let Err(message) = scene_export_sprites::validate_name(&name) {
+        eprintln!("iso-scene: {message}");
         return ExitCode::from(2);
     }
 
     let mut objects: Vec<scene_export_sprites::SheetObject> = Vec::new();
-    let mut materials = std::collections::BTreeMap::new();
+    // Object and material name -> file that first defined it, for conflicts.
+    let mut object_files: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    let mut materials: std::collections::BTreeMap<String, PathBuf> =
+        std::collections::BTreeMap::new();
+    let mut material_files: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     let mut scene_scale: Option<u32> = None;
+    let mut scene_projection: Option<scene_export_sprites::Projection> = None;
 
     for path in &paths {
         let Some(source) = read(path) else {
@@ -821,7 +962,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         let file = Path::new(path);
         let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
         let base = base_override.as_deref().unwrap_or(fallback_base);
-        let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+        let root = project_root(base_override.as_deref());
         match file.extension().and_then(|value| value.to_str()) {
             Some("scene") => {
                 let scene = match scene_core::compile_scene(&program, base, &root) {
@@ -829,17 +970,29 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     Err(diagnostic) => return report(path, &source, &diagnostic),
                 };
                 scene_scale.get_or_insert(scene.scale);
+                scene_projection.get_or_insert(match scene.render {
+                    scene_syntax::ast::RenderKind::Iso => scene_export_sprites::Projection::Iso,
+                    scene_syntax::ast::RenderKind::Top => scene_export_sprites::Projection::Top,
+                    scene_syntax::ast::RenderKind::Front => scene_export_sprites::Projection::Front,
+                    scene_syntax::ast::RenderKind::Side => scene_export_sprites::Projection::Side,
+                });
                 if scale.is_none() && scene_scale.is_some_and(|known| known != scene.scale) {
                     eprintln!("iso-scene: scenes use different scales; pass --scale to pick one");
                     return ExitCode::from(2);
                 }
-                for (key, value) in &scene.materials {
-                    materials
-                        .entry(key.clone())
-                        .or_insert_with(|| value.clone());
+                if let Err(message) =
+                    merge_materials(&mut materials, &mut material_files, &scene.materials, path)
+                {
+                    eprintln!("iso-scene: {message}");
+                    return ExitCode::from(2);
                 }
                 for instance in &scene.instances {
-                    push_sheet_object(&mut objects, &instance.object);
+                    if let Err(message) =
+                        push_sheet_object(&mut objects, &mut object_files, &instance.object, path)
+                    {
+                        eprintln!("iso-scene: {message}");
+                        return ExitCode::from(2);
+                    }
                 }
             }
             Some("model") => {
@@ -847,13 +1000,19 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     Ok(model) => model,
                     Err(diagnostic) => return report(path, &source, &diagnostic),
                 };
-                for (key, value) in &model.materials {
-                    materials
-                        .entry(key.clone())
-                        .or_insert_with(|| value.clone());
+                if let Err(message) =
+                    merge_materials(&mut materials, &mut material_files, &model.materials, path)
+                {
+                    eprintln!("iso-scene: {message}");
+                    return ExitCode::from(2);
                 }
                 for object in model.objects.values() {
-                    push_sheet_object(&mut objects, object);
+                    if let Err(message) =
+                        push_sheet_object(&mut objects, &mut object_files, object, path)
+                    {
+                        eprintln!("iso-scene: {message}");
+                        return ExitCode::from(2);
+                    }
                 }
             }
             _ => {
@@ -863,7 +1022,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         }
     }
 
-    for wanted in &object_filter {
+    for wanted in object_filter.iter().chain(&object_exclude) {
         if !objects.iter().any(|entry| entry.name == *wanted) {
             eprintln!("iso-scene: no object named `{wanted}`");
             return ExitCode::from(2);
@@ -872,21 +1031,52 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     if !object_filter.is_empty() {
         objects.retain(|entry| object_filter.contains(&entry.name));
     }
+    objects.retain(|entry| !object_exclude.contains(&entry.name));
+    if objects.is_empty() {
+        eprintln!("iso-scene: every object was filtered out");
+        return ExitCode::from(2);
+    }
+    for draft in &animations {
+        let wanted = draft.object.as_deref().unwrap_or_default();
+        if !objects.iter().any(|entry| entry.name == wanted) {
+            eprintln!("iso-scene: no object named `{wanted}` to animate");
+            return ExitCode::from(2);
+        }
+    }
 
     let scale = scale.or(scene_scale).unwrap_or(16);
-    let animation = animation_object.map(|object| scene_export_sprites::AnimationSpec {
-        object,
-        from,
-        to,
-        frames,
-        duration,
-        rotation,
-    });
+    let mut specs: Vec<scene_export_sprites::AnimationSpec> = Vec::new();
+    for draft in animations {
+        let object = draft.object.unwrap_or_default();
+        let label = draft.label.unwrap_or_else(|| object.clone());
+        if specs.iter().any(|spec| spec.name == label) {
+            eprintln!("iso-scene: animation `{label}` is defined twice; name them with `--label`");
+            return ExitCode::from(2);
+        }
+        specs.push(scene_export_sprites::AnimationSpec {
+            name: label,
+            object,
+            from: draft.from,
+            to: draft.to,
+            frames: draft.frames,
+            duration: draft.duration,
+            durations: draft.durations,
+            looped: draft.looped,
+            rotation: draft.rotation,
+        });
+    }
     let options = scene_export_sprites::SheetOptions {
-        name: name.unwrap_or_else(|| "sheet".to_string()),
+        name,
         scale,
-        views: views.unwrap_or_else(|| vec![0, 90, 180, 270]),
-        animation,
+        projection: projection.or(scene_projection).unwrap_or_default(),
+        views: views.unwrap_or_else(|| vec![0.0, 90.0, 180.0, 270.0]),
+        pivot,
+        shadow,
+        padding,
+        debug_grid,
+        atlas,
+        max_rows,
+        animations: specs,
         tile_width: tile_width.or_else(|| scale.checked_mul(2)),
     };
 
@@ -912,43 +1102,133 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         report.manifest.display(),
         report.tileset.display()
     );
+    for extra in report.debug.iter().chain(&report.atlas) {
+        println!("wrote {}", extra.display());
+    }
+    if report.pages > 1 {
+        println!(
+            "{} pages; the figures above are for the first, see {} for all",
+            report.pages,
+            report.manifest.display()
+        );
+    }
     ExitCode::SUCCESS
 }
 
-fn push_sheet_object(
-    objects: &mut Vec<scene_export_sprites::SheetObject>,
-    object: &std::sync::Arc<scene_core::CompiledObject>,
-) {
-    if !objects.iter().any(|entry| entry.name == object.name) {
-        objects.push(scene_export_sprites::SheetObject {
-            name: object.name.clone(),
-            object: object.clone(),
-        });
+/// Animation flags collected for one `--animation`.
+struct AnimationDraft {
+    object: Option<String>,
+    label: Option<String>,
+    from: f64,
+    to: f64,
+    frames: u32,
+    duration: u32,
+    durations: Vec<u32>,
+    looped: bool,
+    rotation: u16,
+    /// Any animation flag was given (to reject flags without `--animation`).
+    touched: bool,
+}
+
+impl Default for AnimationDraft {
+    fn default() -> Self {
+        Self {
+            object: None,
+            label: None,
+            from: 0.0,
+            to: 90.0,
+            frames: 7,
+            duration: 120,
+            durations: Vec::new(),
+            looped: true,
+            rotation: 0,
+            touched: false,
+        }
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
-fn blit(dst: &mut scene_render::Image, src: &scene_render::Image, x: u32, y: u32) {
-    for sy in 0..src.height {
-        for sx in 0..src.width {
-            let di = (((y + sy) * dst.width + (x + sx)) * 4) as usize;
-            let si = ((sy * src.width + sx) * 4) as usize;
-            let alpha = u32::from(src.rgba[si + 3]);
-            if alpha == 0 {
-                continue;
-            }
-            if alpha == 255 {
-                dst.rgba[di..di + 4].copy_from_slice(&src.rgba[si..si + 4]);
-                continue;
-            }
-            let inverse = 255 - alpha;
-            for channel in 0..3 {
-                dst.rgba[di + channel] = ((u32::from(src.rgba[si + channel]) * alpha
-                    + u32::from(dst.rgba[di + channel]) * inverse)
-                    / 255) as u8;
-            }
-            dst.rgba[di + 3] = 255;
+/// Add `object` unless an identical object of that name is already on the
+/// sheet. A different object with the same name is a conflict: picking one
+/// silently would drop the other from the sheet.
+fn push_sheet_object(
+    objects: &mut Vec<scene_export_sprites::SheetObject>,
+    files: &mut std::collections::BTreeMap<String, String>,
+    object: &std::sync::Arc<scene_core::CompiledObject>,
+    file: &str,
+) -> Result<(), String> {
+    match objects.iter().find(|entry| entry.name == object.name) {
+        Some(entry) if *entry.object == **object => Ok(()),
+        Some(_) => {
+            let first = files.get(&object.name).map_or("", String::as_str);
+            Err(format!(
+                "object `{}` in `{file}` differs from the one in `{first}`; rename one or pick with `--object`",
+                object.name
+            ))
         }
+        None => {
+            files.insert(object.name.clone(), file.to_string());
+            objects.push(scene_export_sprites::SheetObject {
+                name: object.name.clone(),
+                object: object.clone(),
+                source: Some(file.to_string()),
+            });
+            Ok(())
+        }
+    }
+}
+
+/// Merge `incoming` materials; the same name bound to two files is a conflict.
+fn merge_materials(
+    materials: &mut std::collections::BTreeMap<String, PathBuf>,
+    files: &mut std::collections::BTreeMap<String, String>,
+    incoming: &std::collections::BTreeMap<String, PathBuf>,
+    file: &str,
+) -> Result<(), String> {
+    for (key, value) in incoming {
+        match materials.get(key) {
+            Some(known) if same_file(known, value) => {}
+            Some(known) => {
+                let first = files.get(key).map_or("", String::as_str);
+                return Err(format!(
+                    "material `{key}` is `{}` in `{file}` but `{}` in `{first}`",
+                    value.display(),
+                    known.display()
+                ));
+            }
+            None => {
+                files.insert(key.clone(), file.to_string());
+                materials.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!(
+            (a.canonicalize(), b.canonicalize()),
+            (Ok(a), Ok(b)) if a == b
+        )
+}
+
+/// Directory that `include` and `material` paths must stay inside.
+///
+/// Without `--base` it is the working directory. With `--base`, the working
+/// directory is kept when it contains the base (so includes may still reach
+/// siblings of the base), otherwise the base itself is the root, so a project
+/// can be built from anywhere.
+fn project_root(base_override: Option<&Path>) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let Some(base) = base_override else {
+        return cwd;
+    };
+    let base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    let cwd_canonical = cwd.canonicalize().unwrap_or(cwd);
+    if base.starts_with(&cwd_canonical) {
+        cwd_canonical
+    } else {
+        base
     }
 }
 
@@ -1033,7 +1313,7 @@ fn voxel_scene(args: Vec<String>) -> ExitCode {
     let file = Path::new(&path);
     let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
     let base = base_override.as_deref().unwrap_or(fallback_base);
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let root = project_root(base_override.as_deref());
     let scene = if extension == Some("model") {
         let model = match scene_core::compile_model(&program, base) {
             Ok(model) => model,
@@ -1154,14 +1434,13 @@ fn tiled_scene(args: Vec<String>) -> ExitCode {
     let file = Path::new(&path);
     let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
     let base = base_override.as_deref().unwrap_or(fallback_base);
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let root = project_root(base_override.as_deref());
     let scene = match scene_core::compile_scene(&program, base, &root) {
         Ok(scene) => scene,
         Err(diagnostic) => return report(&path, &source, &diagnostic),
     };
     let walls = if let Some(walls_path) = walls_path {
         let walls_file = Path::new(&walls_path);
-        let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         match scene_walls::load(walls_file, &root) {
             Ok(walls) => Some(walls),
             Err(diagnostic) => {
@@ -1256,9 +1535,20 @@ fn print_help() {
     println!(
         "  sprites <file>  pack objects from .scene/.model files into a sprite sheet + JSON/TSJ"
     );
-    println!("                  --views 1|2|4 or --angles 0,90,180,270; --object filters");
+    println!("                  --views 1|2|4|8|16 or --angles 0,45,90,...");
+    println!("                  --object <name> keeps, --exclude <name> drops objects");
+    println!("                  --pivot front|back|left|right|center anchors static views");
+    println!("                  --shadow contact|none bakes or omits the contact shadow");
+    println!("                  --padding <px> leaves transparent gaps around cells");
+    println!("                  --debug-grid also writes <name>.debug.png with cell borders");
+    println!("                  --atlas also writes <name>.atlas.json for Phaser/PixiJS");
+    println!("                  --max-rows <n> splits the sheet into pages of n rows");
+    println!("                  --projection iso|top|front|side (default: the scene's render)");
     println!(
         "                  --animation <name> --from --to --frames --duration adds a frame row"
+    );
+    println!(
+        "                  (repeatable; --durations a,b,.. --once --label <name> per animation)"
     );
     println!("                  --walls <file> adds a 16-way wall tile layer with Wang set");
     println!(

@@ -3,7 +3,7 @@
   "displayName": "iso-scene",
   "description": "Живой предпросмотр iso-scene: изометрия, чертёж, воксели",
   "publisher": "local-iso",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -12,7 +12,8 @@
   ],
   "activationEvents": [
     "onLanguage:iso-scene",
-    "onCommand:isoScene.preview"
+    "onCommand:isoScene.preview",
+    "onCommand:isoScene.sprites"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -46,6 +47,10 @@
       {
         "command": "isoScene.build",
         "title": "Scene: собрать"
+      },
+      {
+        "command": "isoScene.sprites",
+        "title": "Scene: экспорт листа спрайтов"
       }
     ],
     "menus": {
@@ -59,6 +64,13 @@
           "command": "isoScene.build",
           "when": "editorLangId == iso-scene",
           "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "isoScene.sprites",
+          "when": "resourceExtname == .scene || resourceExtname == .model",
+          "group": "iso-scene"
         }
       ]
     },
