@@ -464,56 +464,6 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    let angles = scene_export_sprites::frame_angles(from, to, frames);
-    let mut rendered = Vec::with_capacity(angles.len());
-    for angle in &angles {
-        let mut frame = scene.clone();
-        frame.background = scene_syntax::ast::Background::Transparent;
-        frame.instances[index].angle = *angle;
-        match scene_backend_iso::render_with_origin(&frame) {
-            Ok((image, origin)) => rendered.push((image, origin)),
-            Err(diagnostic) => return report(&path, &source, &diagnostic),
-        }
-    }
-
-    let mut min_x = f64::INFINITY;
-    let mut min_y = f64::INFINITY;
-    let mut max_x = f64::NEG_INFINITY;
-    let mut max_y = f64::NEG_INFINITY;
-    for (image, origin) in &rendered {
-        min_x = min_x.min(origin[0]);
-        min_y = min_y.min(origin[1]);
-        max_x = max_x.max(origin[0] + f64::from(image.width));
-        max_y = max_y.max(origin[1] + f64::from(image.height));
-    }
-    let frame_w = u32::try_from((max_x - min_x).ceil() as isize)
-        .unwrap_or(1)
-        .max(1);
-    let frame_h = u32::try_from((max_y - min_y).ceil() as isize)
-        .unwrap_or(1)
-        .max(1);
-    let sheet_w = frame_w.saturating_mul(rendered.len() as u32);
-    if sheet_w > scene_export_sprites::MAX_SHEET_SIDE
-        || frame_h > scene_export_sprites::MAX_SHEET_SIDE
-        || u64::from(sheet_w) * u64::from(frame_h) > scene_export_sprites::MAX_SHEET_PIXELS
-    {
-        eprintln!(
-            "iso-scene: error[E0602]: animation sheet {sheet_w}x{frame_h} exceeds the limit; use fewer frames"
-        );
-        return ExitCode::from(1);
-    }
-    let mut sheet = scene_render::Image {
-        width: sheet_w,
-        height: frame_h,
-        rgba: vec![0; (sheet_w as usize) * (frame_h as usize) * 4],
-    };
-    for (index, (image, origin)) in rendered.iter().enumerate() {
-        let left = index as u32 * frame_w;
-        let x = (origin[0] - min_x).round() as i64 + i64::from(left);
-        let y = (origin[1] - min_y).round() as i64;
-        scene_render::composite_over(&mut sheet, image, x, y, [left, 0, frame_w, frame_h]);
-    }
-
     let output = output.unwrap_or_else(|| {
         let stem = file
             .file_stem()
@@ -521,89 +471,35 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
             .unwrap_or("animation");
         PathBuf::from("out").join(stem)
     });
-    if let Err(error) = fs::create_dir_all(&output) {
-        eprintln!("iso-scene: cannot create `{}`: {error}", output.display());
-        return ExitCode::from(2);
-    }
-    let stem = output
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("animation")
-        .to_string();
-    let png_name = format!("{stem}.png");
-    let png_path = output.join(&png_name);
-    if let Err(message) = scene_render::write_png(&sheet, &png_path) {
-        eprintln!("iso-scene: {message}");
-        return ExitCode::from(2);
-    }
-    let animation: Vec<serde_json::Value> = (0..rendered.len())
-        .map(|frame| serde_json::json!({"tileid": frame, "duration": duration}))
-        .collect();
-    let tileset = serde_json::json!({
-        "type": "tileset",
-        "name": stem,
-        "version": "1.10",
-        "tiledversion": "1.12.2",
-        "tilewidth": frame_w,
-        "tileheight": frame_h,
-        "tilecount": rendered.len(),
-        "columns": rendered.len(),
-        "image": png_name,
-        "imagewidth": sheet_w,
-        "imageheight": frame_h,
-        "margin": 0,
-        "spacing": 0,
-        "tiles": [{"id": 0, "animation": animation}]
-    });
-    let tsj_name = format!("{stem}.tsj");
-    if let Err(error) = fs::write(
-        output.join(&tsj_name),
-        serde_json::to_string_pretty(&tileset).unwrap_or_default() + "\n",
-    ) {
-        eprintln!("iso-scene: cannot write `{}`: {error}", output.display());
-        return ExitCode::from(2);
-    }
-    let map = serde_json::json!({
-        "type": "map",
-        "version": "1.10",
-        "tiledversion": "1.12.2",
-        "orientation": "isometric",
-        "renderorder": "right-down",
-        "width": 1,
-        "height": 1,
-        "tilewidth": frame_w,
-        "tileheight": frame_h,
-        "infinite": false,
-        "nextlayerid": 2,
-        "nextobjectid": 1,
-        "tilesets": [{"firstgid": 1, "source": tsj_name}],
-        "layers": [{
-            "type": "tilelayer",
-            "name": "animation",
-            "id": 1,
-            "width": 1,
-            "height": 1,
-            "x": 0,
-            "y": 0,
-            "opacity": 1,
-            "visible": true,
-            "data": [1]
-        }]
-    });
-    if let Err(error) = fs::write(
-        output.join("scene.tmj"),
-        serde_json::to_string_pretty(&map).unwrap_or_default() + "\n",
-    ) {
-        eprintln!("iso-scene: cannot write scene.tmj: {error}");
-        return ExitCode::from(2);
-    }
+    let options = scene_export_sprites::animate::AnimateOptions {
+        name: output
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("animation")
+            .to_string(),
+        from,
+        to,
+        frames,
+        duration,
+    };
+    let report =
+        match scene_export_sprites::animate::export_animation(&scene, index, &options, &output) {
+            Ok(report) => report,
+            Err(diagnostic) => {
+                eprintln!(
+                    "iso-scene: error[{}]: {}",
+                    diagnostic.code, diagnostic.message
+                );
+                return ExitCode::from(1);
+            }
+        };
     println!(
         "wrote {} frames {}x{} ({} ms each); open `{}` in Tiled",
-        rendered.len(),
-        frame_w,
-        frame_h,
+        report.frames,
+        report.frame_size[0],
+        report.frame_size[1],
         duration,
-        output.join("scene.tmj").display()
+        report.map.display()
     );
     ExitCode::SUCCESS
 }

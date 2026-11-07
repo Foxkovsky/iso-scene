@@ -24,6 +24,7 @@ const MIN_BAND_ROWS: usize = 32;
 const MIN_PARALLEL_PIXELS: usize = 65_536;
 
 /// RGBA framebuffer with a depth channel.
+#[derive(Clone)]
 pub struct Framebuffer {
     width: usize,
     height: usize,
@@ -33,7 +34,7 @@ pub struct Framebuffer {
 
 /// One drawing command for [`Framebuffer::draw`]. Points are in pixels with
 /// the view depth (larger is closer) as the third coordinate.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
     /// A flat triangle, optionally shaded by a procedural texture evaluated at
     /// the interpolated world position.
@@ -49,6 +50,67 @@ pub enum Shape {
         color: [u8; 3],
         bias: f64,
     },
+}
+
+impl Shape {
+    /// Pixel rectangle `[left, top, right, bottom)` that contains every pixel
+    /// this shape can write, with a pixel of margin.
+    #[must_use]
+    pub fn pixel_bounds(&self) -> [f64; 4] {
+        let points: &[[f64; 3]] = match self {
+            Self::Triangle { points, .. } => points,
+            Self::Line { a, b, .. } => &[*a, *b][..],
+        };
+        let mut bounds = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for point in points {
+            bounds[0] = bounds[0].min(point[0]);
+            bounds[1] = bounds[1].min(point[1]);
+            bounds[2] = bounds[2].max(point[0]);
+            bounds[3] = bounds[3].max(point[1]);
+        }
+        [
+            bounds[0].floor() - 1.0,
+            bounds[1].floor() - 1.0,
+            bounds[2].ceil() + 2.0,
+            bounds[3].ceil() + 2.0,
+        ]
+    }
+}
+
+/// Union of [`Shape::pixel_bounds`] clamped to a `width` x `height` image, as
+/// `[left, top, right, bottom)`; `None` when nothing is inside.
+#[must_use]
+pub fn region_of<'a>(
+    shapes: impl IntoIterator<Item = &'a Shape>,
+    width: usize,
+    height: usize,
+) -> Option<[usize; 4]> {
+    let mut region = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for shape in shapes {
+        let bounds = shape.pixel_bounds();
+        region[0] = region[0].min(bounds[0]);
+        region[1] = region[1].min(bounds[1]);
+        region[2] = region[2].max(bounds[2]);
+        region[3] = region[3].max(bounds[3]);
+    }
+    let clamp = |value: f64, limit: usize| value.clamp(0.0, limit as f64) as usize;
+    let region = [
+        clamp(region[0], width),
+        clamp(region[1], height),
+        clamp(region[2], width),
+        clamp(region[3], height),
+    ];
+    (region[0] < region[2] && region[1] < region[3]).then_some(region)
 }
 
 impl Framebuffer {
@@ -118,6 +180,8 @@ impl Framebuffer {
                     width,
                     top: index * rows,
                     rows: depth.len() / width,
+                    left: 0,
+                    right: width,
                     pixels,
                     depth,
                 };
@@ -127,22 +191,58 @@ impl Framebuffer {
             });
     }
 
+    /// Reset the pixels `[left, top, right, bottom)` to `background` and redraw
+    /// `shapes` clipped to them. Every pixel of the region ends up exactly as if
+    /// the whole image had been drawn from scratch with `shapes`.
+    pub fn draw_region(&mut self, shapes: &[Shape], region: [usize; 4], background: [u8; 4]) {
+        let [left, top, right, bottom] = region;
+        let (right, bottom) = (right.min(self.width), bottom.min(self.height));
+        if left >= right || top >= bottom {
+            return;
+        }
+        for y in top..bottom {
+            let row = y * self.width;
+            for x in left..right {
+                self.depth[row + x] = f64::NEG_INFINITY;
+                self.pixels[(row + x) * 4..(row + x) * 4 + 4].copy_from_slice(&background);
+            }
+        }
+        let width = self.width;
+        let mut band = Band {
+            width,
+            top,
+            rows: bottom - top,
+            left,
+            right,
+            pixels: &mut self.pixels[top * width * 4..bottom * width * 4],
+            depth: &mut self.depth[top * width..bottom * width],
+        };
+        for shape in shapes {
+            band.shape(shape);
+        }
+    }
+
     fn whole(&mut self) -> Band<'_> {
         Band {
             width: self.width,
             top: 0,
             rows: self.height,
+            left: 0,
+            right: self.width,
             pixels: &mut self.pixels,
             depth: &mut self.depth,
         }
     }
 }
 
-/// Rows `top..top + rows` of a framebuffer.
+/// Rows `top..top + rows` of a framebuffer, drawn only in columns
+/// `left..right`.
 struct Band<'a> {
     width: usize,
     top: usize,
     rows: usize,
+    left: usize,
+    right: usize,
     pixels: &'a mut [u8],
     depth: &'a mut [f64],
 }
@@ -179,6 +279,12 @@ impl Band<'_> {
             .max(c[0])
             .ceil()
             .min(self.width.saturating_sub(1) as f64) as usize;
+        if self.right == 0 {
+            return;
+        }
+        // Clip the scan to this band's columns; spans below still start from
+        // the unclipped bounds, so the covered pixels are unchanged.
+        let (scan_from, scan_to) = (self.left, self.right - 1);
         let min_y = (a[1].min(b[1]).min(c[1]).floor().max(0.0) as usize).max(self.top);
         let max_y = (a[1].max(b[1]).max(c[1]).ceil().max(0.0) as usize).min(bottom);
 
@@ -209,7 +315,7 @@ impl Band<'_> {
             ) else {
                 continue;
             };
-            for x in from..=to {
+            for x in from.max(scan_from)..=to.min(scan_to) {
                 let px = x as f64 + 0.5;
                 let u = ((b[1] - c[1]) * (px - c[0]) + (c[0] - b[0]) * (py - c[1])) / denominator;
                 let v = ((c[1] - a[1]) * (px - c[0]) + (a[0] - c[0]) * (py - c[1])) / denominator;
@@ -270,7 +376,7 @@ impl Band<'_> {
                 continue;
             }
             let (px, py) = (px as usize, py as usize);
-            if px >= self.width || py < self.top || py >= self.top + self.rows {
+            if px < self.left || px >= self.right || py < self.top || py >= self.top + self.rows {
                 continue;
             }
             let index = (py - self.top) * self.width + px;
@@ -447,5 +553,85 @@ mod tests {
             .filter(|(left, right)| left != right)
             .count();
         assert_eq!(differing, 0, "parallel bands changed {differing} bytes");
+    }
+
+    #[test]
+    fn redrawing_a_region_matches_a_full_draw() {
+        let mut state = 0x0bad_cafe_dead_beef_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % 100_000) as f64 / 100.0 - 50.0
+        };
+        let (width, height) = (240, 260);
+        for round in 0..20 {
+            // A scene of static shapes with a few moving ones in the middle of
+            // the list, as an animated instance would be.
+            let mut shapes = Vec::new();
+            let mut moving = Vec::new();
+            for index in 0..120 {
+                let spread = if (40..50).contains(&index) { 0.6 } else { 2.5 };
+                let centre = if (40..50).contains(&index) {
+                    [60.0 + f64::from(round), 90.0]
+                } else {
+                    [120.0, 130.0]
+                };
+                let mut point = || {
+                    [
+                        centre[0] + next() * spread,
+                        centre[1] + next() * spread,
+                        next(),
+                    ]
+                };
+                let (a, b, c) = (point(), point(), point());
+                shapes.push(if index % 4 == 3 {
+                    Shape::Line {
+                        a,
+                        b,
+                        color: [250, 0, 0],
+                        bias: 0.05,
+                    }
+                } else {
+                    Shape::Triangle {
+                        points: [a, b, c],
+                        color: [(index * 2) as u8, 99, 7],
+                        shade: None,
+                    }
+                });
+                moving.push((40..50).contains(&index));
+            }
+            let background = [10, 20, 30, 0];
+            let mut full = Framebuffer::new(width, height, background);
+            full.draw(&shapes);
+            let still: Vec<Shape> = shapes
+                .iter()
+                .zip(&moving)
+                .filter(|(_, moving)| !**moving)
+                .map(|(shape, _)| *shape)
+                .collect();
+            let mut base = Framebuffer::new(width, height, background);
+            base.draw(&still);
+            let region = region_of(
+                shapes
+                    .iter()
+                    .zip(&moving)
+                    .filter(|(_, moving)| **moving)
+                    .map(|(shape, _)| shape),
+                width,
+                height,
+            )
+            .expect("moving shapes are on screen");
+            let mut frame = base.clone();
+            frame.draw_region(&shapes, region, background);
+            assert!(frame.depth == full.depth, "round {round}: depth differs");
+            let differing = frame
+                .into_rgba()
+                .iter()
+                .zip(&full.into_rgba())
+                .filter(|(left, right)| left != right)
+                .count();
+            assert_eq!(differing, 0, "round {round}");
+        }
     }
 }

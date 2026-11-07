@@ -10,6 +10,7 @@ publish = false
 workspace = true
 
 [dependencies]
+rayon = "1.12"
 scene-core = { path = "../scene-core" }
 scene-render = { path = "../scene-render" }
 scene-syntax = { path = "../scene-syntax" }

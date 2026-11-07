@@ -385,6 +385,7 @@ name = "scene-backend-iso"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "rayon",
  "scene-core",
  "scene-render",
  "scene-syntax",

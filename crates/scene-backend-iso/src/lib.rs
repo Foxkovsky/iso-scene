@@ -15,8 +15,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use rayon::prelude::*;
 use scene_core::{CompiledObject, Instance, SceneGraph, rotate_xy};
-use scene_render::{Framebuffer, MeshFace, Palette, Shape, Texture, builtin, primitive_faces};
+use scene_render::{
+    Framebuffer, MeshFace, Palette, Shape, Texture, builtin, primitive_faces, region_of,
+};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Background, RenderKind};
 
@@ -219,6 +222,56 @@ fn add_contact_shadow(
 }
 
 fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnostic> {
+    let frame = prepare(scene, margin)?;
+    let mut framebuffer = Framebuffer::new(frame.width, frame.height, frame.background);
+    framebuffer.draw(&frame.shapes);
+    Ok(frame.finish(framebuffer))
+}
+
+/// A scene turned into drawing commands, before rasterization.
+struct Prepared {
+    width: usize,
+    height: usize,
+    origin: [f64; 2],
+    background: [u8; 4],
+    shapes: Vec<Shape>,
+    /// Instance each shape comes from, parallel to `shapes`.
+    owners: Vec<usize>,
+}
+
+impl Prepared {
+    fn finish(&self, framebuffer: Framebuffer) -> Rendered {
+        Rendered {
+            image: Image {
+                width: u32::try_from(self.width).unwrap_or(0),
+                height: u32::try_from(self.height).unwrap_or(0),
+                rgba: framebuffer.into_rgba(),
+            },
+            origin: self.origin,
+        }
+    }
+
+    /// Image size and origin, the key under which frames can share a base.
+    fn geometry(&self) -> (usize, usize, [u64; 2]) {
+        (
+            self.width,
+            self.height,
+            [self.origin[0].to_bits(), self.origin[1].to_bits()],
+        )
+    }
+
+    /// Shapes not owned by `instance`, in order.
+    fn still(&self, instance: usize) -> Vec<Shape> {
+        self.shapes
+            .iter()
+            .zip(&self.owners)
+            .filter(|(_, owner)| **owner != instance)
+            .map(|(shape, _)| *shape)
+            .collect()
+    }
+}
+
+fn prepare(scene: &SceneGraph, margin: f64) -> Result<Prepared, Diagnostic> {
     if scene.render != RenderKind::Iso {
         return Err(error(
             "E0604",
@@ -235,7 +288,6 @@ fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnost
         Background::Transparent => [0, 0, 0, 0],
         Background::Color(rgb) => [rgb[0], rgb[1], rgb[2], 255],
     };
-    let mut framebuffer = Framebuffer::new(width, height, background);
     let bias = 1.6 / scale;
 
     // Fills first, then outlines over them, in face order. Projected points
@@ -253,6 +305,7 @@ fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnost
     starts.push(buffer.len());
     let projected = starts.windows(2).map(|range| &buffer[range[0]..range[1]]);
     let mut shapes = Vec::with_capacity(buffer.len() * 2);
+    let mut owners = Vec::with_capacity(buffer.len() * 2);
     for (face, points) in faces.iter().zip(projected.clone()) {
         for index in 1..points.len().saturating_sub(1) {
             shapes.push(Shape::Triangle {
@@ -265,6 +318,7 @@ fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnost
                     )
                 }),
             });
+            owners.push(face.instance);
         }
     }
     for (face, points) in faces.iter().zip(projected) {
@@ -281,18 +335,135 @@ fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnost
                 color: face.line,
                 bias,
             });
+            owners.push(face.instance);
         }
     }
-    framebuffer.draw(&shapes);
-
-    Ok(Rendered {
-        image: Image {
-            width: u32::try_from(width).unwrap_or(0),
-            height: u32::try_from(height).unwrap_or(0),
-            rgba: framebuffer.into_rgba(),
-        },
+    Ok(Prepared {
+        width,
+        height,
         origin,
+        background,
+        shapes,
+        owners,
     })
+}
+
+/// Frames of an animation, prepared but not yet rasterized: their sizes are
+/// known, so a caller can check limits before any pixel is allocated.
+pub struct Frames {
+    index: usize,
+    prepared: Vec<Prepared>,
+}
+
+impl Frames {
+    /// Pixel origin and size of every frame, in order.
+    #[must_use]
+    pub fn layout(&self) -> Vec<([f64; 2], [u32; 2])> {
+        self.prepared
+            .iter()
+            .map(|frame| {
+                (
+                    frame.origin,
+                    [
+                        u32::try_from(frame.width).unwrap_or(u32::MAX),
+                        u32::try_from(frame.height).unwrap_or(u32::MAX),
+                    ],
+                )
+            })
+            .collect()
+    }
+
+    /// Rasterize every frame; returns each image with its pixel origin.
+    ///
+    /// A pixel's colour depends only on the shapes that cover it, in order.
+    /// So the still part of the scene is drawn once per frame size, and each
+    /// frame only redraws, with the full shape list, the region the turning
+    /// instance can touch. Frames are identical to rendering each one from
+    /// scratch; a frame whose still shapes differ from the shared base (e.g.
+    /// welded with the turning part) is simply drawn in full.
+    #[must_use]
+    pub fn render(&self) -> Vec<(IsoImage, [f64; 2])> {
+        let index = self.index;
+        // One still base per frame geometry, from the first frame that has it.
+        let mut bases: Vec<Base> = Vec::new();
+        for frame in &self.prepared {
+            if bases.iter().any(|base| base.geometry == frame.geometry()) {
+                continue;
+            }
+            let still = frame.still(index);
+            let mut framebuffer = Framebuffer::new(frame.width, frame.height, frame.background);
+            framebuffer.draw(&still);
+            bases.push(Base {
+                geometry: frame.geometry(),
+                still,
+                framebuffer,
+            });
+        }
+        self.prepared
+            .par_iter()
+            .map(|frame| {
+                let shared = bases.iter().find(|base| {
+                    base.geometry == frame.geometry() && base.still == frame.still(index)
+                });
+                let framebuffer = if let Some(base) = shared {
+                    let mut framebuffer = base.framebuffer.clone();
+                    let moving = frame
+                        .shapes
+                        .iter()
+                        .zip(&frame.owners)
+                        .filter(|(_, owner)| **owner == index)
+                        .map(|(shape, _)| shape);
+                    if let Some(region) = region_of(moving, frame.width, frame.height) {
+                        framebuffer.draw_region(&frame.shapes, region, frame.background);
+                    }
+                    framebuffer
+                } else {
+                    let mut framebuffer =
+                        Framebuffer::new(frame.width, frame.height, frame.background);
+                    framebuffer.draw(&frame.shapes);
+                    framebuffer
+                };
+                let rendered = frame.finish(framebuffer);
+                (rendered.image, rendered.origin)
+            })
+            .collect()
+    }
+}
+
+/// Prepare `scene` once per angle, turning instance `index` around its local
+/// origin by that angle. [`Frames::render`] then rasterizes them.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`render`] and `E0604` for an instance
+/// index outside the scene.
+pub fn prepare_frames(
+    scene: &SceneGraph,
+    index: usize,
+    angles: &[f64],
+) -> Result<Frames, Diagnostic> {
+    if index >= scene.instances.len() {
+        return Err(error("E0604", format!("scene has no instance {index}")));
+    }
+    let prepared: Vec<Result<Prepared, Diagnostic>> = angles
+        .par_iter()
+        .map(|angle| {
+            let mut frame = scene.clone();
+            frame.instances[index].angle = *angle;
+            prepare(&frame, MARGIN)
+        })
+        .collect();
+    Ok(Frames {
+        index,
+        prepared: prepared.into_iter().collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+/// The still part of the frames that share one image size and origin.
+struct Base {
+    geometry: (usize, usize, [u64; 2]),
+    still: Vec<Shape>,
+    framebuffer: Framebuffer,
 }
 
 /// Encode an image as an RGBA PNG.
@@ -645,6 +816,8 @@ struct Face {
     /// Parts in one merge group are welded: internal faces and shared seams go.
     group: Option<u32>,
     hidden: Vec<bool>,
+    /// Index of the instance the face belongs to.
+    instance: usize,
 }
 
 fn collect_faces(
@@ -652,7 +825,7 @@ fn collect_faces(
     palettes: &BTreeMap<String, Palette>,
 ) -> Result<Vec<Face>, Diagnostic> {
     let mut faces = Vec::new();
-    for instance in &scene.instances {
+    for (owner, instance) in scene.instances.iter().enumerate() {
         for part in &instance.object.parts {
             let palette = palette_for(part.material.as_deref(), scene, palettes)?;
             for MeshFace {
@@ -674,6 +847,7 @@ fn collect_faces(
                     texture: palette.texture,
                     group: part.group,
                     hidden,
+                    instance: owner,
                 });
             }
         }
@@ -1069,6 +1243,7 @@ mod tests {
             group: None,
             hidden,
             texture: None,
+            instance: 0,
         }
     }
 
@@ -1188,5 +1363,30 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn prepared_frames_match_rendering_each_frame_alone() {
+        let source = "version 1;\nobject frame (3, 1) {\n    box at (0, 0, 0) size (0.2, 1, 3) material wood;\n    box at (2.8, 0, 0) size (0.2, 1, 3) material wood;\n    box at (0, 0, 2.8) size (3, 1, 0.2) material wood;\n}\nobject leaf (2.6, 0.1) {\n    merge {\n        box at (0, 0, 0) size (2.6, 0.1, 2.8) material wood;\n        box at (2.2, -0.15, 1.3) size (0.2, 0.15, 0.1) material wood;\n    }\n}\nrender iso;\nscale 16;\ncanvas (4, 4, 4);\nplace frame at (0, 1, 0) rot 0;\nplace leaf at (0.2, 1.4, 0) rot 90;\nplace frame at (0, 2.2, 0) rot 90;\n";
+        let program = scene_syntax::parse(source).expect("scene parses");
+        let mut scene = scene_core::compile_scene(&program, Path::new("."), Path::new("."))
+            .expect("scene compiles");
+        scene.background = Background::Transparent;
+        let angles = [0.0, 15.0, 45.0, 90.0, 135.0];
+        let frames = prepare_frames(&scene, 1, &angles).expect("frames prepare");
+        let layout = frames.layout();
+        let rendered = frames.render();
+        for ((angle, (image, origin)), (layout_origin, size)) in
+            angles.iter().zip(&rendered).zip(&layout)
+        {
+            let mut alone = scene.clone();
+            alone.instances[1].angle = *angle;
+            let (expected, expected_origin) = render_with_origin(&alone).expect("renders");
+            assert_eq!(image, &expected, "angle {angle}");
+            assert_eq!(origin, &expected_origin);
+            assert_eq!(layout_origin, &expected_origin);
+            assert_eq!(*size, [expected.width, expected.height]);
+        }
+        assert!(prepare_frames(&scene, 3, &angles).is_err());
     }
 }

@@ -18,6 +18,8 @@
     clippy::too_many_arguments
 )]
 
+pub mod animate;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
