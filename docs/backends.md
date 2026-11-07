@@ -164,8 +164,17 @@ from any directory. This applies to `render`, `voxel` and `tiled` too.
 A sheet holds at most 4 096 cells (objects × views + frames) and 1 024
 animation frames; these limits are checked before anything is rendered.
 
-`--views 1|2|4` selects the static sides: `0°`, `0°/180°`, or
-`0°/90°/180°/270°`. `--angles 0,90,180,270` picks them explicitly.
+`--views 1|2|4|8|16` selects the static sides: `0°`, `0°/180°` (front and
+back), the four quarter turns, or 8/16 evenly spaced directions (45° and
+22.5° steps). `--angles` picks any list of yaws in degrees, e.g.
+`--angles 0,90` for front and side. Quarter turns are exact; other angles turn
+the object freely, and the pivot is computed with the same transform, so every
+direction stands on the same floor line. `rotation` in the manifest is the
+view's yaw (an integer for whole degrees).
+
+Views always show the object itself in canonical orientation; the `rot` of a
+`place` in a scene does not change the sheet (a scene contributes *which*
+objects are packed, not how they are turned).
 
 The output directory gets three files:
 
@@ -219,8 +228,8 @@ the hinge stays put while the leaf swings. Every sprite and frame in
 }
 ```
 
-`rotation` is the quarter turn of a static view; `angle` is the extra yaw of an
-animation frame. `index` is the frame's column, so engines can advance frames
+`rotation` is the yaw of a static view (or the quarter turn of an animation
+row); `angle` is the extra yaw of an animation frame. `index` is the frame's column, so engines can advance frames
 without parsing the coordinates.
 
 The tileset uses the same cell size, `columns` columns, and `tileoffset.x =

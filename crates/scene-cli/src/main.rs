@@ -609,7 +609,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let mut paths: Vec<String> = Vec::new();
     let mut output = PathBuf::from("out/sprites");
     let mut name: Option<String> = None;
-    let mut views: Option<Vec<u16>> = None;
+    let mut views: Option<Vec<f64>> = None;
     let mut scale: Option<u32> = None;
     let mut tile_width: Option<u32> = None;
     let mut object_filter: Vec<String> = Vec::new();
@@ -679,11 +679,18 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 views = match v.as_str() {
-                    "1" => Some(vec![0]),
-                    "2" => Some(vec![0, 180]),
-                    "4" => Some(vec![0, 90, 180, 270]),
+                    "1" => Some(vec![0.0]),
+                    "2" => Some(vec![0.0, 180.0]),
+                    "4" | "8" | "16" => {
+                        let count: u16 = v.parse().unwrap_or(4);
+                        Some(
+                            (0..count)
+                                .map(|step| f64::from(step) * 360.0 / f64::from(count))
+                                .collect(),
+                        )
+                    }
                     _ => {
-                        eprintln!("iso-scene: `--views` must be 1, 2 or 4");
+                        eprintln!("iso-scene: `--views` must be 1, 2, 4, 8 or 16");
                         return ExitCode::from(2);
                     }
                 };
@@ -694,10 +701,10 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                 };
                 let mut angles = Vec::new();
                 for part in v.split(',') {
-                    match part.trim().parse::<u16>() {
-                        Ok(angle) if matches!(angle, 0 | 90 | 180 | 270) => angles.push(angle),
+                    match part.trim().parse::<f64>() {
+                        Ok(angle) if angle.is_finite() => angles.push(angle),
                         _ => {
-                            eprintln!("iso-scene: invalid angle `{part}`; use 0, 90, 180 or 270");
+                            eprintln!("iso-scene: invalid angle `{part}`");
                             return ExitCode::from(2);
                         }
                     }
@@ -933,7 +940,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let options = scene_export_sprites::SheetOptions {
         name,
         scale,
-        views: views.unwrap_or_else(|| vec![0, 90, 180, 270]),
+        views: views.unwrap_or_else(|| vec![0.0, 90.0, 180.0, 270.0]),
         pivot,
         animation,
         tile_width: tile_width.or_else(|| scale.checked_mul(2)),
@@ -1351,7 +1358,7 @@ fn print_help() {
     println!(
         "  sprites <file>  pack objects from .scene/.model files into a sprite sheet + JSON/TSJ"
     );
-    println!("                  --views 1|2|4 or --angles 0,90,180,270; --object filters");
+    println!("                  --views 1|2|4|8|16 or --angles 0,45,90,...; --object filters");
     println!("                  --pivot front|back|left|right|center anchors static views");
     println!(
         "                  --animation <name> --from --to --frames --duration adds a frame row"

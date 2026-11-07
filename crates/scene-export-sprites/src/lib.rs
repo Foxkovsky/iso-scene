@@ -112,8 +112,9 @@ pub struct SheetOptions {
     pub name: String,
     /// Pixels per block.
     pub scale: u32,
-    /// Quarter turns for the static views, in order.
-    pub views: Vec<u16>,
+    /// Yaw of each static view in degrees, in order. Quarter turns are exact;
+    /// other angles (e.g. 45° for eight directions) turn the object freely.
+    pub views: Vec<f64>,
     /// Footprint point that static views put on the anchor.
     pub pivot: Pivot,
     /// Optional animation row.
@@ -143,7 +144,7 @@ struct Cell {
     name: String,
     /// Quarter turn used for the view.
     rotation: u16,
-    /// Extra yaw used for animation frames.
+    /// Extra yaw: the rest of a free view angle, or the animated angle.
     angle: f64,
     duration: Option<u32>,
     sprite: Sprite,
@@ -174,6 +175,9 @@ pub fn export(
     }
     if options.views.is_empty() {
         return Err(error("E0602", "at least one view or angle is required"));
+    }
+    if options.views.iter().any(|view| !view.is_finite()) {
+        return Err(error("E0602", "view angles must be finite"));
     }
     validate_name(&options.name).map_err(|message| error("E0603", message))?;
     let animation_frames = match &options.animation {
@@ -215,12 +219,14 @@ pub fn export(
 
     let mut cells = Vec::new();
     for (row, entry) in objects.iter().enumerate() {
-        for (column, rotation) in options.views.iter().enumerate() {
+        for (column, view) in options.views.iter().enumerate() {
+            let (rotation, angle) = split_view(*view);
             let sprite =
-                render_object_sprite_at(&entry.object, *rotation, 0.0, options.scale, materials)?;
+                render_object_sprite_at(&entry.object, rotation, angle, options.scale, materials)?;
             let reference = footprint_pivot(
                 &entry.object,
-                *rotation,
+                rotation,
+                angle,
                 options.scale,
                 &sprite,
                 options.pivot,
@@ -229,8 +235,8 @@ pub fn export(
                 row: row as u32,
                 column: column as u32,
                 name: entry.name.clone(),
-                rotation: *rotation,
-                angle: 0.0,
+                rotation,
+                angle,
                 duration: None,
                 sprite,
                 reference,
@@ -356,6 +362,7 @@ pub fn export(
 fn footprint_pivot(
     object: &CompiledObject,
     rotation: u16,
+    angle: f64,
     scale: u32,
     sprite: &Sprite,
     pivot: Pivot,
@@ -365,7 +372,7 @@ fn footprint_pivot(
         object: std::sync::Arc::new(object.clone()),
         at: [0.0, 0.0, 0.0],
         rotation,
-        angle: 0.0,
+        angle,
     };
     let origin = project_point(instance.to_world([0.0, 0.0, 0.0]), scale);
     let corners: Vec<[f64; 2]> = [
@@ -399,6 +406,28 @@ fn footprint_pivot(
         sprite.anchor[0] + point[0] - origin[0],
         sprite.anchor[1] + point[1] - origin[1],
     ]
+}
+
+/// Split a view yaw into an exact quarter turn and the remaining degrees.
+fn split_view(view: f64) -> (u16, f64) {
+    let view = view.rem_euclid(360.0);
+    let quarter = (view / 90.0).floor().clamp(0.0, 3.0);
+    let rest = view - quarter * 90.0;
+    // Snap float noise such as 89.999999 to the next exact quarter turn.
+    if (90.0 - rest).abs() < 1e-9 {
+        return ((((quarter as u16) + 1) % 4) * 90, 0.0);
+    }
+    ((quarter as u16) * 90, rest)
+}
+
+/// Degrees as a JSON number: an integer when whole, so quarter turns keep
+/// their `0/90/180/270` form.
+fn degrees_json(degrees: f64) -> Value {
+    if degrees.fract() == 0.0 && degrees.abs() < 1e15 {
+        json!(degrees as i64)
+    } else {
+        json!(degrees)
+    }
 }
 
 /// Uniform cell size and the bottom-centre anchor inside a cell.
@@ -491,11 +520,22 @@ fn manifest_json(
     })
 }
 
+/// Yaw of a static view in degrees; for an animation frame only its quarter
+/// turn (the animated part is reported as `angle`).
+fn view_degrees(cell: &Cell) -> f64 {
+    let quarter = f64::from(cell.rotation);
+    if cell.duration.is_some() {
+        quarter
+    } else {
+        quarter + cell.angle
+    }
+}
+
 fn cell_json(cell: &Cell, cell_size: [u32; 2], anchor: [f64; 2]) -> Value {
     json!({
         "name": cell.name,
         "view": cell.column,
-        "rotation": cell.rotation,
+        "rotation": degrees_json(view_degrees(cell)),
         "x": cell.column * cell_size[0],
         "y": cell.row * cell_size[1],
         "w": cell_size[0],
@@ -524,7 +564,11 @@ fn tileset_json(
                 "properties": [
                     {"name": "name", "type": "string", "value": cell.name},
                     {"name": "view", "type": "int", "value": cell.column},
-                    {"name": "rotation", "type": "int", "value": cell.rotation},
+                    {
+                        "name": "rotation",
+                        "type": if view_degrees(cell).fract() == 0.0 { "int" } else { "float" },
+                        "value": degrees_json(view_degrees(cell))
+                    },
                     {"name": "pivot", "type": "string", "value": options.pivot.name()},
                     {"name": "anchor-x", "type": "float", "value": anchor[0]},
                     {"name": "anchor-y", "type": "float", "value": anchor[1]}
@@ -664,7 +708,7 @@ mod tests {
         let options = SheetOptions {
             name: "sheet".into(),
             scale: 8,
-            views: vec![0, 90, 180, 270],
+            views: vec![0.0, 90.0, 180.0, 270.0],
             pivot: Pivot::Front,
             animation: None,
             tile_width: Some(16),
@@ -705,7 +749,7 @@ mod tests {
         let options = SheetOptions {
             name: "door".into(),
             scale: 8,
-            views: vec![0, 180],
+            views: vec![0.0, 180.0],
             pivot: Pivot::Front,
             animation: Some(AnimationSpec {
                 object: "door".into(),
@@ -755,7 +799,7 @@ mod tests {
         let options = SheetOptions {
             name: "one".into(),
             scale: 8,
-            views: vec![0],
+            views: vec![0.0],
             pivot: Pivot::Front,
             animation: None,
             tile_width: None,
@@ -771,7 +815,7 @@ mod tests {
         SheetOptions {
             name: name.into(),
             scale: 8,
-            views: vec![0, 90, 180, 270],
+            views: vec![0.0, 90.0, 180.0, 270.0],
             pivot: Pivot::Front,
             animation: None,
             tile_width: None,
@@ -920,7 +964,7 @@ mod tests {
             let reference = |object: &CompiledObject| {
                 let sprite =
                     render_object_sprite_at(object, rotation, 0.0, 8, &BTreeMap::new()).unwrap();
-                let corner = footprint_pivot(object, rotation, 8, &sprite, Pivot::Front);
+                let corner = footprint_pivot(object, rotation, 0.0, 8, &sprite, Pivot::Front);
                 // The anchor relative to the object's origin pixel.
                 [corner[0] - sprite.anchor[0], corner[1] - sprite.anchor[1]]
             };
@@ -933,7 +977,7 @@ mod tests {
         let object = box_object("desk", 2.0, 1.0);
         let sprite = render_object_sprite_at(&object, 0, 0.0, 8, &BTreeMap::new()).unwrap();
         let at = |pivot| {
-            let point = footprint_pivot(&object, 0, 8, &sprite, pivot);
+            let point = footprint_pivot(&object, 0, 0.0, 8, &sprite, pivot);
             [point[0] - sprite.anchor[0], point[1] - sprite.anchor[1]]
         };
         // Screen offsets from the origin corner at scale 8: x = (x - y) * 8,
@@ -945,5 +989,41 @@ mod tests {
         assert_eq!(at(Pivot::Center), [4.0, 6.0]);
         assert_eq!(Pivot::parse("center"), Some(Pivot::Center));
         assert_eq!(Pivot::parse("middle"), None);
+    }
+
+    #[test]
+    fn view_angles_split_into_quarter_turns_and_a_rest() {
+        assert_eq!(split_view(0.0), (0, 0.0));
+        assert_eq!(split_view(90.0), (90, 0.0));
+        assert_eq!(split_view(135.0), (90, 45.0));
+        assert_eq!(split_view(-90.0), (270, 0.0));
+        assert_eq!(split_view(360.0), (0, 0.0));
+        assert_eq!(split_view(89.999_999_999_9), (90, 0.0));
+        assert_eq!(degrees_json(90.0), json!(90));
+        assert_eq!(degrees_json(22.5), json!(22.5));
+    }
+
+    #[test]
+    fn eight_directions_report_their_angles() {
+        let objects = vec![SheetObject {
+            name: "desk".into(),
+            object: box_object("desk", 2.0, 1.0),
+        }];
+        let mut options = chair_options("eight");
+        options.views = (0..8).map(|step| f64::from(step) * 45.0).collect();
+        let dir = std::env::temp_dir().join("iso-scene-sprites-eight-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        assert_eq!(report.columns, 8);
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(&report.manifest).unwrap()).unwrap();
+        let rotations: Vec<Value> = manifest["sprites"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|sprite| sprite["rotation"].clone())
+            .collect();
+        assert_eq!(rotations[1], json!(45));
+        assert_eq!(rotations[2], json!(90));
+        let _ = fs::remove_dir_all(dir);
     }
 }
