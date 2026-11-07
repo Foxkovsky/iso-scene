@@ -5,7 +5,7 @@
 
 CARGO ?= cargo
 
-.PHONY: help fmt fmt-check check clippy test doc ci run clean
+.PHONY: help fmt fmt-check check clippy test bench doc ci run clean
 
 help:
 	@printf '%s\n' \
@@ -13,6 +13,7 @@ help:
 		'make check      cargo check --workspace --all-targets' \
 		'make clippy     clippy with warnings as errors' \
 		'make test       run all tests' \
+		'make bench      run the criterion benchmarks' \
 		'make doc        build documentation' \
 		'make ci         fmt-check + clippy + test + doc' \
 		'make run        run the CLI (pass ARGS=...)' \
@@ -35,6 +36,9 @@ test:
 
 doc:
 	$(CARGO) doc --workspace --no-deps
+
+bench:
+	$(CARGO) bench --workspace
 
 ci: fmt-check clippy test doc
 

@@ -405,3 +405,30 @@ fn projection_follows_the_scene_unless_given() {
     assert_eq!(manifest(&dir, "out2")["projection"], "side");
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn animate_accepts_a_base_outside_the_working_directory() {
+    let dir = scratch("animate-base");
+    let project = dir.join("project");
+    let elsewhere = dir.join("elsewhere");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&elsewhere).unwrap();
+    write(&project, "frame.model", THING_A);
+    write(
+        &project,
+        "door.scene",
+        "version 1;\ninclude \"frame.model\";\nrender iso;\nscale 8;\ncanvas (2, 2, 2);\nplace thing at (0, 0, 0) rot 0;\n",
+    );
+    let output = binary()
+        .current_dir(&elsewhere)
+        .arg("animate")
+        .arg(project.join("door.scene"))
+        .arg("--base")
+        .arg(&project)
+        .args(["--object", "thing", "--frames", "2", "-o", "out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(elsewhere.join("out/out.png").exists());
+    let _ = fs::remove_dir_all(dir);
+}

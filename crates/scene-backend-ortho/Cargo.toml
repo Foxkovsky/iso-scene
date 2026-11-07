@@ -13,3 +13,10 @@ workspace = true
 scene-core = { path = "../scene-core" }
 scene-render = { path = "../scene-render" }
 scene-syntax = { path = "../scene-syntax" }
+
+[dev-dependencies]
+criterion = { version = "0.7", default-features = false }
+
+[[bench]]
+name = "render"
+harness = false

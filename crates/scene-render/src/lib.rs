@@ -8,4 +8,4 @@ pub mod raster;
 pub use image::{Image, Rect, composite_over, write_png};
 pub use material::{Palette, Texture, builtin};
 pub use mesh::{MeshFace, primitive_faces};
-pub use raster::Framebuffer;
+pub use raster::{Framebuffer, Shape, region_of};

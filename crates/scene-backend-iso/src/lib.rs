@@ -15,8 +15,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use rayon::prelude::*;
 use scene_core::{CompiledObject, Instance, SceneGraph, rotate_xy};
-use scene_render::{Framebuffer, MeshFace, Palette, Texture, builtin, primitive_faces};
+use scene_render::{
+    Framebuffer, MeshFace, Palette, Shape, Texture, builtin, primitive_faces, region_of,
+};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Background, RenderKind};
 
@@ -193,8 +196,17 @@ fn add_contact_shadow(
     let radius_x = ((max[0] - min[0]) / 2.0 * 0.92).max(0.5);
     let radius_y = ((max[1] - min[1]) / 2.0 * 0.92).max(0.5);
     let color = [10.0, 12.0, 16.0];
-    for y in 0..image.height {
-        for x in 0..image.width {
+    // Outside `center ± radius` the L1 distance is at least 1 and nothing is
+    // drawn, so only that box (plus a pixel) is visited.
+    let span = |center: f64, radius: f64, size: u32| {
+        let low = (center - radius - 1.0).floor().max(0.0);
+        let high = (center + radius + 1.0).ceil().min(f64::from(size));
+        (low as u32, (high as u32).max(low as u32))
+    };
+    let (left, right) = span(center[0], radius_x, image.width);
+    let (top, bottom) = span(center[1], radius_y, image.height);
+    for y in top..bottom {
+        for x in left..right {
             let dx = (f64::from(x) + 0.5 - center[0]).abs() / radius_x;
             let dy = (f64::from(y) + 0.5 - center[1]).abs() / radius_y;
             // The footprint projects to a diamond, so use an L1 falloff.
@@ -219,6 +231,56 @@ fn add_contact_shadow(
 }
 
 fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnostic> {
+    let frame = prepare(scene, margin)?;
+    let mut framebuffer = Framebuffer::new(frame.width, frame.height, frame.background);
+    framebuffer.draw(&frame.shapes);
+    Ok(frame.finish(framebuffer))
+}
+
+/// A scene turned into drawing commands, before rasterization.
+struct Prepared {
+    width: usize,
+    height: usize,
+    origin: [f64; 2],
+    background: [u8; 4],
+    shapes: Vec<Shape>,
+    /// Instance each shape comes from, parallel to `shapes`.
+    owners: Vec<usize>,
+}
+
+impl Prepared {
+    fn finish(&self, framebuffer: Framebuffer) -> Rendered {
+        Rendered {
+            image: Image {
+                width: u32::try_from(self.width).unwrap_or(0),
+                height: u32::try_from(self.height).unwrap_or(0),
+                rgba: framebuffer.into_rgba(),
+            },
+            origin: self.origin,
+        }
+    }
+
+    /// Image size and origin, the key under which frames can share a base.
+    fn geometry(&self) -> (usize, usize, [u64; 2]) {
+        (
+            self.width,
+            self.height,
+            [self.origin[0].to_bits(), self.origin[1].to_bits()],
+        )
+    }
+
+    /// Shapes not owned by `instance`, in order.
+    fn still(&self, instance: usize) -> Vec<Shape> {
+        self.shapes
+            .iter()
+            .zip(&self.owners)
+            .filter(|(_, owner)| **owner != instance)
+            .map(|(shape, _)| *shape)
+            .collect()
+    }
+}
+
+fn prepare(scene: &SceneGraph, margin: f64) -> Result<Prepared, Diagnostic> {
     if scene.render != RenderKind::Iso {
         return Err(error(
             "E0604",
@@ -235,57 +297,182 @@ fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnost
         Background::Transparent => [0, 0, 0, 0],
         Background::Color(rgb) => [rgb[0], rgb[1], rgb[2], 255],
     };
-    let mut framebuffer = Framebuffer::new(width, height, background);
     let bias = 1.6 / scale;
 
+    // Fills first, then outlines over them, in face order. Projected points
+    // of all faces live in one buffer; `starts` delimits each face.
+    let mut buffer: Vec<[f64; 3]> = Vec::new();
+    let mut starts = Vec::with_capacity(faces.len() + 1);
     for face in &faces {
-        let projected = project_face(face, scale, origin);
-        for index in 1..projected.len().saturating_sub(1) {
-            match face.texture {
-                Some(texture) => framebuffer.triangle_textured(
-                    projected[0],
-                    projected[index],
-                    projected[index + 1],
-                    [face.points[0], face.points[index], face.points[index + 1]],
-                    face.color,
-                    texture,
-                ),
-                None => framebuffer.triangle(
-                    projected[0],
-                    projected[index],
-                    projected[index + 1],
-                    face.color,
-                ),
-            }
+        starts.push(buffer.len());
+        buffer.extend(
+            face.points
+                .iter()
+                .map(|point| project_vertex(*point, scale, origin)),
+        );
+    }
+    starts.push(buffer.len());
+    let projected = starts.windows(2).map(|range| &buffer[range[0]..range[1]]);
+    let mut shapes = Vec::with_capacity(buffer.len() * 2);
+    let mut owners = Vec::with_capacity(buffer.len() * 2);
+    for (face, points) in faces.iter().zip(projected.clone()) {
+        for index in 1..points.len().saturating_sub(1) {
+            shapes.push(Shape::Triangle {
+                points: [points[0], points[index], points[index + 1]],
+                color: face.color,
+                shade: face.texture.map(|texture| {
+                    (
+                        texture,
+                        [face.points[0], face.points[index], face.points[index + 1]],
+                    )
+                }),
+            });
+            owners.push(face.instance);
         }
     }
-
-    for face in &faces {
+    for (face, points) in faces.iter().zip(projected) {
         if !face.outline {
             continue;
         }
-        let projected = project_face(face, scale, origin);
-        for index in 0..projected.len() {
+        for index in 0..points.len() {
             if face.hidden.get(index).copied().unwrap_or(false) {
                 continue;
             }
-            framebuffer.line(
-                projected[index],
-                projected[(index + 1) % projected.len()],
-                face.line,
+            shapes.push(Shape::Line {
+                a: points[index],
+                b: points[(index + 1) % points.len()],
+                color: face.line,
                 bias,
-            );
+            });
+            owners.push(face.instance);
         }
     }
-
-    Ok(Rendered {
-        image: Image {
-            width: u32::try_from(width).unwrap_or(0),
-            height: u32::try_from(height).unwrap_or(0),
-            rgba: framebuffer.into_rgba(),
-        },
+    Ok(Prepared {
+        width,
+        height,
         origin,
+        background,
+        shapes,
+        owners,
     })
+}
+
+/// Frames of an animation, prepared but not yet rasterized: their sizes are
+/// known, so a caller can check limits before any pixel is allocated.
+pub struct Frames {
+    index: usize,
+    prepared: Vec<Prepared>,
+}
+
+impl Frames {
+    /// Pixel origin and size of every frame, in order.
+    #[must_use]
+    pub fn layout(&self) -> Vec<([f64; 2], [u32; 2])> {
+        self.prepared
+            .iter()
+            .map(|frame| {
+                (
+                    frame.origin,
+                    [
+                        u32::try_from(frame.width).unwrap_or(u32::MAX),
+                        u32::try_from(frame.height).unwrap_or(u32::MAX),
+                    ],
+                )
+            })
+            .collect()
+    }
+
+    /// Rasterize every frame; returns each image with its pixel origin.
+    ///
+    /// A pixel's colour depends only on the shapes that cover it, in order.
+    /// So the still part of the scene is drawn once per frame size, and each
+    /// frame only redraws, with the full shape list, the region the turning
+    /// instance can touch. Frames are identical to rendering each one from
+    /// scratch; a frame whose still shapes differ from the shared base (e.g.
+    /// welded with the turning part) is simply drawn in full.
+    #[must_use]
+    pub fn render(&self) -> Vec<(IsoImage, [f64; 2])> {
+        let index = self.index;
+        // One still base per frame geometry, from the first frame that has it.
+        let mut bases: Vec<Base> = Vec::new();
+        for frame in &self.prepared {
+            if bases.iter().any(|base| base.geometry == frame.geometry()) {
+                continue;
+            }
+            let still = frame.still(index);
+            let mut framebuffer = Framebuffer::new(frame.width, frame.height, frame.background);
+            framebuffer.draw(&still);
+            bases.push(Base {
+                geometry: frame.geometry(),
+                still,
+                framebuffer,
+            });
+        }
+        self.prepared
+            .par_iter()
+            .map(|frame| {
+                let shared = bases.iter().find(|base| {
+                    base.geometry == frame.geometry() && base.still == frame.still(index)
+                });
+                let framebuffer = if let Some(base) = shared {
+                    let mut framebuffer = base.framebuffer.clone();
+                    let moving = frame
+                        .shapes
+                        .iter()
+                        .zip(&frame.owners)
+                        .filter(|(_, owner)| **owner == index)
+                        .map(|(shape, _)| shape);
+                    if let Some(region) = region_of(moving, frame.width, frame.height) {
+                        framebuffer.draw_region(&frame.shapes, region, frame.background);
+                    }
+                    framebuffer
+                } else {
+                    let mut framebuffer =
+                        Framebuffer::new(frame.width, frame.height, frame.background);
+                    framebuffer.draw(&frame.shapes);
+                    framebuffer
+                };
+                let rendered = frame.finish(framebuffer);
+                (rendered.image, rendered.origin)
+            })
+            .collect()
+    }
+}
+
+/// Prepare `scene` once per angle, turning instance `index` around its local
+/// origin by that angle. [`Frames::render`] then rasterizes them.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`render`] and `E0604` for an instance
+/// index outside the scene.
+pub fn prepare_frames(
+    scene: &SceneGraph,
+    index: usize,
+    angles: &[f64],
+) -> Result<Frames, Diagnostic> {
+    if index >= scene.instances.len() {
+        return Err(error("E0604", format!("scene has no instance {index}")));
+    }
+    let prepared: Vec<Result<Prepared, Diagnostic>> = angles
+        .par_iter()
+        .map(|angle| {
+            let mut frame = scene.clone();
+            frame.instances[index].angle = *angle;
+            prepare(&frame, MARGIN)
+        })
+        .collect();
+    Ok(Frames {
+        index,
+        prepared: prepared.into_iter().collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
+/// The still part of the frames that share one image size and origin.
+struct Base {
+    geometry: (usize, usize, [u64; 2]),
+    still: Vec<Shape>,
+    framebuffer: Framebuffer,
 }
 
 /// Encode an image as an RGBA PNG.
@@ -619,18 +806,14 @@ fn scene_size(
     Ok((width, height, [left as f64, top as f64]))
 }
 
-fn project_face(face: &Face, scale: f64, origin: [f64; 2]) -> Vec<[f64; 3]> {
-    face.points
-        .iter()
-        .map(|point| {
-            let projected = project_point(*point, scale);
-            [
-                projected[0] - origin[0],
-                projected[1] - origin[1],
-                view_depth(*point),
-            ]
-        })
-        .collect()
+/// Pixel position and view depth of a world point.
+fn project_vertex(point: [f64; 3], scale: f64, origin: [f64; 2]) -> [f64; 3] {
+    let projected = project_point(point, scale);
+    [
+        projected[0] - origin[0],
+        projected[1] - origin[1],
+        view_depth(point),
+    ]
 }
 
 struct Face {
@@ -642,6 +825,8 @@ struct Face {
     /// Parts in one merge group are welded: internal faces and shared seams go.
     group: Option<u32>,
     hidden: Vec<bool>,
+    /// Index of the instance the face belongs to.
+    instance: usize,
 }
 
 fn collect_faces(
@@ -649,7 +834,7 @@ fn collect_faces(
     palettes: &BTreeMap<String, Palette>,
 ) -> Result<Vec<Face>, Diagnostic> {
     let mut faces = Vec::new();
-    for instance in &scene.instances {
+    for (owner, instance) in scene.instances.iter().enumerate() {
         for part in &instance.object.parts {
             let palette = palette_for(part.material.as_deref(), scene, palettes)?;
             for MeshFace {
@@ -671,6 +856,7 @@ fn collect_faces(
                     texture: palette.texture,
                     group: part.group,
                     hidden,
+                    instance: owner,
                 });
             }
         }
@@ -686,16 +872,113 @@ type EdgeKey = (VertexKey, VertexKey);
 ///
 /// Without this, a long edge and a shorter collinear edge that shares only its
 /// top part never compare equal, and the seam between them stays visible.
-fn split_group_edges(faces: &mut [Face]) {
-    let mut vertices: BTreeMap<u32, Vec<[f64; 3]>> = BTreeMap::new();
-    for face in faces.iter() {
+/// Vertices of one merge group, bucketed in a uniform grid so that "which
+/// vertices can lie on this edge" looks at a few cells instead of them all.
+struct GroupVertices {
+    points: Vec<[f64; 3]>,
+    /// Grid cell size in blocks.
+    cell: f64,
+    /// Vertex indices per cell, in original order.
+    grid: BTreeMap<[i64; 3], Vec<usize>>,
+}
+
+impl GroupVertices {
+    /// Tolerance around a segment, larger than the on-segment test's 1e-6.
+    const TOLERANCE: f64 = 1e-6;
+
+    fn new(points: Vec<[f64; 3]>, cell: f64) -> Self {
+        let mut grid: BTreeMap<[i64; 3], Vec<usize>> = BTreeMap::new();
+        for (index, point) in points.iter().enumerate() {
+            grid.entry(Self::key(*point, cell)).or_default().push(index);
+        }
+        Self { points, cell, grid }
+    }
+
+    fn key(point: [f64; 3], cell: f64) -> [i64; 3] {
+        point.map(|value| (value / cell).floor() as i64)
+    }
+
+    /// Indices, in their original order, of every vertex inside the segment's
+    /// bounding box widened by the tolerance; any vertex on the segment is
+    /// among them.
+    fn near_segment(&self, a: [f64; 3], b: [f64; 3]) -> Vec<usize> {
+        let low = [0, 1, 2].map(|axis| a[axis].min(b[axis]) - Self::TOLERANCE);
+        let high = [0, 1, 2].map(|axis| a[axis].max(b[axis]) + Self::TOLERANCE);
+        let inside = |point: &[f64; 3]| {
+            (0..3).all(|axis| point[axis] >= low[axis] && point[axis] <= high[axis])
+        };
+        let first = Self::key(low, self.cell);
+        let last = Self::key(high, self.cell);
+        let cells = (0..3).fold(1_i128, |count, axis| {
+            count.saturating_mul(i128::from(last[axis] - first[axis] + 1))
+        });
+        let mut found: Vec<usize> = if cells > self.points.len() as i128 {
+            // A segment spanning more cells than there are vertices: scanning
+            // the vertices directly is cheaper.
+            (0..self.points.len())
+                .filter(|&index| inside(&self.points[index]))
+                .collect()
+        } else {
+            let mut found = Vec::new();
+            for x in first[0]..=last[0] {
+                for y in first[1]..=last[1] {
+                    for z in first[2]..=last[2] {
+                        if let Some(indices) = self.grid.get(&[x, y, z]) {
+                            found.extend(
+                                indices
+                                    .iter()
+                                    .copied()
+                                    .filter(|&index| inside(&self.points[index])),
+                            );
+                        }
+                    }
+                }
+            }
+            found
+        };
+        found.sort_unstable();
+        found
+    }
+}
+
+/// Vertices of every merge group, indexed for segment queries.
+fn group_vertices(faces: &[Face]) -> BTreeMap<u32, GroupVertices> {
+    let mut collected: BTreeMap<u32, Vec<[f64; 3]>> = BTreeMap::new();
+    for face in faces {
         if let Some(group) = face.group {
-            vertices
+            collected
                 .entry(group)
                 .or_default()
                 .extend_from_slice(&face.points);
         }
     }
+    // Cells about as large as an average edge keep each lookup to a few cells.
+    let mut edge_length: BTreeMap<u32, (f64, usize)> = BTreeMap::new();
+    for face in faces {
+        if let Some(group) = face.group {
+            let entry = edge_length.entry(group).or_insert((0.0, 0));
+            let count = face.points.len();
+            for index in 0..count {
+                let a = face.points[index];
+                let b = face.points[(index + 1) % count];
+                entry.0 +=
+                    ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt();
+                entry.1 += 1;
+            }
+        }
+    }
+    collected
+        .into_iter()
+        .map(|(group, points)| {
+            let (total, count) = edge_length.get(&group).copied().unwrap_or((1.0, 1));
+            let cell = (total / count.max(1) as f64).max(1e-3);
+            (group, GroupVertices::new(points, cell))
+        })
+        .collect()
+}
+
+fn split_group_edges(faces: &mut [Face]) {
+    let vertices = group_vertices(faces);
     for face in faces.iter_mut() {
         let Some(group) = face.group else {
             continue;
@@ -717,7 +1000,8 @@ fn split_group_edges(faces: &mut [Face]) {
                 continue;
             }
             let mut hits: Vec<(f64, [f64; 3])> = Vec::new();
-            for vertex in group_vertices {
+            for index in group_vertices.near_segment(a, b) {
+                let vertex = &group_vertices.points[index];
                 if (vertex[0] - a[0]).abs() < 1e-9
                     && (vertex[1] - a[1]).abs() < 1e-9
                     && (vertex[2] - a[2]).abs() < 1e-9
@@ -968,6 +1252,7 @@ mod tests {
             group: None,
             hidden,
             texture: None,
+            instance: 0,
         }
     }
 
@@ -1036,5 +1321,81 @@ mod tests {
             position(1) < position(0),
             "the handle in front must be painted last: {order:?}"
         );
+    }
+
+    #[test]
+    fn the_vertex_grid_finds_every_vertex_on_a_segment() {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            // Quarter-block coordinates make many vertices fall on edges.
+            (state % 41) as f64 * 0.25 - 5.0
+        };
+        let points: Vec<[f64; 3]> = (0..400).map(|_| [next(), next(), next()]).collect();
+        for cell in [0.001, 0.3, 1.0, 7.0] {
+            let grid = GroupVertices::new(points.clone(), cell);
+            for _ in 0..300 {
+                let a = points[(next().abs() * 37.0) as usize % points.len()];
+                let mut b = a;
+                // Axis-aligned and diagonal segments.
+                b[(next().abs() as usize) % 3] += next();
+                if next() > 2.0 {
+                    b[0] += next();
+                }
+                let near = grid.near_segment(a, b);
+                assert!(
+                    near.windows(2).all(|pair| pair[0] < pair[1]),
+                    "original order"
+                );
+                let direction = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let length = direction.iter().map(|d| d * d).sum::<f64>();
+                for (index, vertex) in points.iter().enumerate() {
+                    if length < 1e-12 {
+                        break;
+                    }
+                    let offset = [vertex[0] - a[0], vertex[1] - a[1], vertex[2] - a[2]];
+                    let t = (0..3)
+                        .map(|axis| offset[axis] * direction[axis])
+                        .sum::<f64>()
+                        / length;
+                    let distance = (0..3)
+                        .map(|axis| (vertex[axis] - (a[axis] + direction[axis] * t)).powi(2))
+                        .sum::<f64>();
+                    if t > 1e-9 && t < 1.0 - 1e-9 && distance < 1e-12 {
+                        assert!(
+                            near.contains(&index),
+                            "cell {cell}: missed {vertex:?} on {a:?}..{b:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_frames_match_rendering_each_frame_alone() {
+        let source = "version 1;\nobject frame (3, 1) {\n    box at (0, 0, 0) size (0.2, 1, 3) material wood;\n    box at (2.8, 0, 0) size (0.2, 1, 3) material wood;\n    box at (0, 0, 2.8) size (3, 1, 0.2) material wood;\n}\nobject leaf (2.6, 0.1) {\n    merge {\n        box at (0, 0, 0) size (2.6, 0.1, 2.8) material wood;\n        box at (2.2, -0.15, 1.3) size (0.2, 0.15, 0.1) material wood;\n    }\n}\nrender iso;\nscale 16;\ncanvas (4, 4, 4);\nplace frame at (0, 1, 0) rot 0;\nplace leaf at (0.2, 1.4, 0) rot 90;\nplace frame at (0, 2.2, 0) rot 90;\n";
+        let program = scene_syntax::parse(source).expect("scene parses");
+        let mut scene = scene_core::compile_scene(&program, Path::new("."), Path::new("."))
+            .expect("scene compiles");
+        scene.background = Background::Transparent;
+        let angles = [0.0, 15.0, 45.0, 90.0, 135.0];
+        let frames = prepare_frames(&scene, 1, &angles).expect("frames prepare");
+        let layout = frames.layout();
+        let rendered = frames.render();
+        for ((angle, (image, origin)), (layout_origin, size)) in
+            angles.iter().zip(&rendered).zip(&layout)
+        {
+            let mut alone = scene.clone();
+            alone.instances[1].angle = *angle;
+            let (expected, expected_origin) = render_with_origin(&alone).expect("renders");
+            assert_eq!(image, &expected, "angle {angle}");
+            assert_eq!(origin, &expected_origin);
+            assert_eq!(layout_origin, &expected_origin);
+            assert_eq!(*size, [expected.width, expected.height]);
+        }
+        assert!(prepare_frames(&scene, 3, &angles).is_err());
     }
 }

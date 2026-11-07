@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use scene_core::{CompiledObject, Instance, SceneGraph};
-use scene_render::{Framebuffer, MeshFace, Palette, builtin, primitive_faces};
+use scene_render::{Framebuffer, MeshFace, Palette, Shape, builtin, primitive_faces};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Background, RenderKind};
 
@@ -194,33 +194,35 @@ pub fn render_with_origin(scene: &SceneGraph) -> Result<(OrthoImage, [f64; 2]), 
     let mut framebuffer = Framebuffer::new(width, height, background);
     let bias = 1.6 / scale;
 
-    for face in &faces {
-        let projected = project_face(view, face, scale, origin);
-        for index in 1..projected.len().saturating_sub(1) {
-            framebuffer.triangle(
-                projected[0],
-                projected[index],
-                projected[index + 1],
-                face.color,
-            );
+    // Fills first, then outlines over them, in face order.
+    let projected: Vec<Vec<[f64; 3]>> = faces
+        .iter()
+        .map(|face| project_face(view, face, scale, origin))
+        .collect();
+    let mut shapes = Vec::new();
+    for (face, points) in faces.iter().zip(&projected) {
+        for index in 1..points.len().saturating_sub(1) {
+            shapes.push(Shape::Triangle {
+                points: [points[0], points[index], points[index + 1]],
+                color: face.color,
+                shade: None,
+            });
         }
     }
-
-    for face in &faces {
+    for (face, points) in faces.iter().zip(&projected) {
         if !face.outline {
             continue;
         }
-        let projected = project_face(view, face, scale, origin);
-        for index in 0..projected.len() {
-            framebuffer.line(
-                projected[index],
-                projected[(index + 1) % projected.len()],
-                face.line,
+        for index in 0..points.len() {
+            shapes.push(Shape::Line {
+                a: points[index],
+                b: points[(index + 1) % points.len()],
+                color: face.line,
                 bias,
-            );
+            });
         }
     }
-
+    framebuffer.draw(&shapes);
     Ok((
         Image {
             width: u32::try_from(width).unwrap_or(0),
