@@ -183,9 +183,28 @@ The output directory gets three files:
 - `sheet.tsj` — Tiled tileset, including a Tiled `animation` block when a frame
   row exists.
 
-Rows are objects and columns are views, in the order they were loaded. An
+Rows are objects and columns are views, in the order they were loaded. Each
 animation gets its own row at the bottom, one column per frame, so a sheet can
-combine a 4-view turntable with an animated part. Empty cells stay transparent.
+combine a 4-view turntable with animated parts. Empty cells stay transparent.
+
+`--animation <object>` may be repeated. `--from`, `--to`, `--frames`,
+`--duration`, `--durations`, `--rotation`, `--once` and `--label` apply to the
+latest `--animation` (flags given before the first one apply to the first):
+
+```bash
+iso-scene sprites door.scene --views 4 \
+    --animation door_leaf --label open  --from 0  --to 90 --frames 7 \
+    --animation door_leaf --label close --from 90 --to 0  --frames 4 \
+        --durations 60,60,60,400 --once \
+    -o out/door
+```
+
+`--label` names the animation in the manifest (default: the object name;
+two animations of one object need distinct labels). `--durations` gives one
+duration per frame in milliseconds. `--once` marks a one-shot animation:
+`loop: false` in `sheet.json` and a `loop` property on the Tiled tile. Tiled
+itself always loops tile animations, so the game decides what to do with it.
+At most 1 024 frames in total are allowed.
 
 All cells share one anchor at the horizontal centre of the cell. For a static
 view the anchor is a point of the declared footprint `(width, depth)` at floor
@@ -218,7 +237,8 @@ the hinge stays put while the leaf swings. Every sprite and frame in
       "anchor": { "x": 64, "y": 132 }, "pivot": "front" }
   ],
   "animations": [
-    { "name": "door_leaf", "from": 0, "to": 90, "duration": 100,
+    { "name": "open", "object": "door_leaf", "from": 0, "to": 90,
+      "rotation": 0, "duration": 100, "loop": true,
       "frames": [
         { "index": 0, "angle": 0, "duration": 100,
           "x": 0, "y": 160, "w": 128, "h": 160,

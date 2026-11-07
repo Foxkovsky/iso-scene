@@ -46,6 +46,8 @@ pub struct SheetObject {
 /// A rotation animation packed as one row of frames.
 #[derive(Clone, Debug)]
 pub struct AnimationSpec {
+    /// Name of the animation in the manifest; unique within the sheet.
+    pub name: String,
     /// Object to turn; must be one of the sheet objects.
     pub object: String,
     /// First angle in degrees.
@@ -56,6 +58,12 @@ pub struct AnimationSpec {
     pub frames: u32,
     /// Frame duration in milliseconds.
     pub duration: u32,
+    /// Per-frame durations in milliseconds; empty means `duration` for every
+    /// frame, otherwise exactly one entry per frame.
+    pub durations: Vec<u32>,
+    /// Whether the animation repeats; `false` plays once and holds the last
+    /// frame.
+    pub looped: bool,
     /// Quarter turn applied before the animated angle.
     pub rotation: u16,
 }
@@ -119,8 +127,8 @@ pub struct SheetOptions {
     pub pivot: Pivot,
     /// Bake a soft contact shadow under every sprite.
     pub shadow: bool,
-    /// Optional animation row.
-    pub animation: Option<AnimationSpec>,
+    /// Animation rows, one per entry, below the static views.
+    pub animations: Vec<AnimationSpec>,
     /// Tile width used for the Tiled `tileoffset`, when known.
     pub tile_width: Option<u32>,
 }
@@ -148,6 +156,8 @@ struct Cell {
     rotation: u16,
     /// Extra yaw: the rest of a free view angle, or the animated angle.
     angle: f64,
+    /// Index into `SheetOptions::animations` for an animation frame.
+    animation: Option<usize>,
     duration: Option<u32>,
     sprite: Sprite,
     /// Pixel that must sit on the cell anchor: the footprint pivot for a
@@ -157,14 +167,15 @@ struct Cell {
 
 /// Render objects into `out_dir`.
 ///
-/// Rows are objects (one row per object), columns are views; an animation, if
-/// requested, gets its own row at the bottom. Empty cells stay transparent.
+/// Rows are objects (one row per object), columns are views; every animation
+/// gets its own row at the bottom. Empty cells stay transparent.
 ///
 /// # Errors
 ///
-/// Returns `E0602` for an unknown animation object, an empty view list, too
-/// many cells or frames, or a sheet that exceeds the size limit, and `E0603`
-/// for an invalid sheet name or a file error.
+/// Returns `E0602` for an invalid animation (unknown object, duplicate name,
+/// wrong number of durations), an empty view list, too many cells or frames,
+/// or a sheet that exceeds the size limit, and `E0603` for an invalid sheet
+/// name or a file error.
 #[allow(clippy::too_many_lines)]
 pub fn export(
     objects: &[SheetObject],
@@ -182,30 +193,48 @@ pub fn export(
         return Err(error("E0602", "view angles must be finite"));
     }
     validate_name(&options.name).map_err(|message| error("E0603", message))?;
-    let animation_frames = match &options.animation {
-        Some(animation) => {
-            if animation.frames == 0 {
-                return Err(error("E0602", "an animation needs at least one frame"));
-            }
-            if animation.frames > MAX_FRAMES {
-                return Err(error(
-                    "E0602",
-                    format!(
-                        "{} animation frames exceed the limit of {MAX_FRAMES}",
-                        animation.frames
-                    ),
-                ));
-            }
-            if !objects.iter().any(|entry| entry.name == animation.object) {
-                return Err(error(
-                    "E0602",
-                    format!("scene has no object `{}`", animation.object),
-                ));
-            }
-            animation.frames as usize
+    let mut animation_frames = 0_usize;
+    let mut longest_animation = 0_usize;
+    for (index, animation) in options.animations.iter().enumerate() {
+        if animation.frames == 0 {
+            return Err(error("E0602", "an animation needs at least one frame"));
         }
-        None => 0,
-    };
+        if !animation.durations.is_empty() && animation.durations.len() != animation.frames as usize
+        {
+            return Err(error(
+                "E0602",
+                format!(
+                    "animation `{}` has {} frames but {} durations",
+                    animation.name,
+                    animation.frames,
+                    animation.durations.len()
+                ),
+            ));
+        }
+        if !objects.iter().any(|entry| entry.name == animation.object) {
+            return Err(error(
+                "E0602",
+                format!("scene has no object `{}`", animation.object),
+            ));
+        }
+        if options.animations[..index]
+            .iter()
+            .any(|other| other.name == animation.name)
+        {
+            return Err(error(
+                "E0602",
+                format!("animation name `{}` is used twice", animation.name),
+            ));
+        }
+        animation_frames = animation_frames.saturating_add(animation.frames as usize);
+        longest_animation = longest_animation.max(animation.frames as usize);
+    }
+    if animation_frames > MAX_FRAMES as usize {
+        return Err(error(
+            "E0602",
+            format!("{animation_frames} animation frames exceed the limit of {MAX_FRAMES}"),
+        ));
+    }
     let cell_count = objects
         .len()
         .saturating_mul(options.views.len())
@@ -216,8 +245,8 @@ pub fn export(
             format!("{cell_count} sprite cells exceed the limit of {MAX_CELLS}"),
         ));
     }
-    let columns = options.views.len().max(animation_frames).max(1) as u32;
-    let rows = objects.len() as u32 + u32::from(options.animation.is_some());
+    let columns = options.views.len().max(longest_animation).max(1) as u32;
+    let rows = (objects.len() + options.animations.len()) as u32;
 
     let mut cells = Vec::new();
     for (row, entry) in objects.iter().enumerate() {
@@ -245,18 +274,19 @@ pub fn export(
                 name: entry.name.clone(),
                 rotation,
                 angle,
+                animation: None,
                 duration: None,
                 sprite,
                 reference,
             });
         }
     }
-    if let Some(animation) = &options.animation {
+    for (index, animation) in options.animations.iter().enumerate() {
         let entry = objects
             .iter()
             .find(|entry| entry.name == animation.object)
             .ok_or_else(|| error("E0602", "internal animation lookup failed"))?;
-        let row = objects.len() as u32;
+        let row = (objects.len() + index) as u32;
         let angles = frame_angles(animation.from, animation.to, animation.frames);
         for (column, angle) in angles.into_iter().enumerate() {
             let sprite = render_object_sprite_with(
@@ -267,13 +297,19 @@ pub fn export(
                 materials,
                 options.shadow,
             )?;
+            let duration = animation
+                .durations
+                .get(column)
+                .copied()
+                .unwrap_or(animation.duration);
             cells.push(Cell {
                 row,
                 column: column as u32,
                 name: entry.name.clone(),
                 rotation: animation.rotation,
                 angle,
-                duration: Some(animation.duration),
+                animation: Some(index),
+                duration: Some(duration),
                 reference: sprite.anchor,
                 sprite,
             });
@@ -478,7 +514,7 @@ fn manifest_json(
 ) -> Value {
     let sprites: Vec<Value> = cells
         .iter()
-        .filter(|cell| cell.duration.is_none())
+        .filter(|cell| cell.animation.is_none())
         .map(|cell| {
             let mut sprite = cell_json(cell, cell_size, anchor);
             if let Some(object) = sprite.as_object_mut() {
@@ -488,12 +524,13 @@ fn manifest_json(
         })
         .collect();
     let animations: Vec<Value> = options
-        .animation
-        .as_ref()
-        .map(|animation| {
+        .animations
+        .iter()
+        .enumerate()
+        .map(|(index, animation)| {
             let frames: Vec<Value> = cells
                 .iter()
-                .filter(|cell| cell.duration.is_some())
+                .filter(|cell| cell.animation == Some(index))
                 .map(|cell| {
                     let mut frame = cell_json(cell, cell_size, anchor);
                     if let Some(object) = frame.as_object_mut() {
@@ -507,14 +544,16 @@ fn manifest_json(
                 })
                 .collect();
             json!({
-                "name": animation.object,
+                "name": animation.name,
+                "object": animation.object,
                 "from": animation.from,
                 "to": animation.to,
+                "rotation": animation.rotation,
                 "duration": animation.duration,
+                "loop": animation.looped,
                 "frames": frames
             })
         })
-        .into_iter()
         .collect();
 
     json!({
@@ -534,7 +573,7 @@ fn manifest_json(
 /// turn (the animated part is reported as `angle`).
 fn view_degrees(cell: &Cell) -> f64 {
     let quarter = f64::from(cell.rotation);
-    if cell.duration.is_some() {
+    if cell.animation.is_some() {
         quarter
     } else {
         quarter + cell.angle
@@ -566,7 +605,7 @@ fn tileset_json(
 ) -> Value {
     let mut tiles: Vec<Value> = cells
         .iter()
-        .filter(|cell| cell.duration.is_none())
+        .filter(|cell| cell.animation.is_none())
         .map(|cell| {
             json!({
                 "id": cell.row * columns + cell.column,
@@ -587,10 +626,10 @@ fn tileset_json(
         })
         .collect();
 
-    if let Some(animation) = &options.animation {
+    for (index, animation) in options.animations.iter().enumerate() {
         let frames: Vec<Value> = cells
             .iter()
-            .filter(|cell| cell.duration.is_some())
+            .filter(|cell| cell.animation == Some(index))
             .map(|cell| {
                 json!({
                     "tileid": cell.row * columns + cell.column,
@@ -600,13 +639,16 @@ fn tileset_json(
             .collect();
         if let Some(first) = cells
             .iter()
-            .find(|cell| cell.duration.is_some() && cell.column == 0)
+            .find(|cell| cell.animation == Some(index) && cell.column == 0)
         {
+            // Tiled always loops tile animations; `loop` tells the game.
             tiles.push(json!({
                 "id": first.row * columns + first.column,
                 "type": animation.object,
                 "properties": [
-                    {"name": "name", "type": "string", "value": animation.object},
+                    {"name": "name", "type": "string", "value": animation.name},
+                    {"name": "object", "type": "string", "value": animation.object},
+                    {"name": "loop", "type": "bool", "value": animation.looped},
                     {"name": "pivot", "type": "string", "value": "origin"},
                     {"name": "anchor-x", "type": "float", "value": anchor[0]},
                     {"name": "anchor-y", "type": "float", "value": anchor[1]}
@@ -615,6 +657,7 @@ fn tileset_json(
             }));
         }
     }
+    tiles.sort_by_key(|tile| tile["id"].as_u64().unwrap_or(0));
 
     let offset_x = options.tile_width.map_or(0, |tile_width| {
         (i64::from(tile_width) - i64::from(cell_size[0])) / 2
@@ -721,7 +764,7 @@ mod tests {
             views: vec![0.0, 90.0, 180.0, 270.0],
             pivot: Pivot::Front,
             shadow: true,
-            animation: None,
+            animations: Vec::new(),
             tile_width: Some(16),
         };
         let dir = std::env::temp_dir().join("iso-scene-sprites-test");
@@ -763,14 +806,17 @@ mod tests {
             views: vec![0.0, 180.0],
             pivot: Pivot::Front,
             shadow: true,
-            animation: Some(AnimationSpec {
+            animations: vec![AnimationSpec {
+                name: "door".into(),
                 object: "door".into(),
                 from: 0.0,
                 to: 90.0,
                 frames: 5,
                 duration: 100,
+                durations: Vec::new(),
+                looped: true,
                 rotation: 0,
-            }),
+            }],
             tile_width: None,
         };
         let dir = std::env::temp_dir().join("iso-scene-sprites-anim-test");
@@ -814,7 +860,7 @@ mod tests {
             views: vec![0.0],
             pivot: Pivot::Front,
             shadow: true,
-            animation: None,
+            animations: Vec::new(),
             tile_width: None,
         };
         let dir = std::env::temp_dir().join("iso-scene-sprites-one-test");
@@ -831,7 +877,7 @@ mod tests {
             views: vec![0.0, 90.0, 180.0, 270.0],
             pivot: Pivot::Front,
             shadow: true,
-            animation: None,
+            animations: Vec::new(),
             tile_width: None,
         }
     }
@@ -868,6 +914,7 @@ mod tests {
             name: "x".into(),
             rotation: 0,
             angle: 0.0,
+            animation: None,
             duration: None,
             sprite: Sprite {
                 image: Image {
@@ -907,14 +954,17 @@ mod tests {
             object: box_object("door", 1.0, 1.0),
         }];
         let mut options = chair_options("limits");
-        options.animation = Some(AnimationSpec {
+        options.animations = vec![AnimationSpec {
+            name: "door".into(),
             object: "door".into(),
             from: 0.0,
             to: 90.0,
             frames: MAX_FRAMES + 1,
             duration: 100,
+            durations: Vec::new(),
+            looped: true,
             rotation: 0,
-        });
+        }];
         let dir = std::env::temp_dir().join("iso-scene-sprites-limit-test");
         let error = export(&objects, &BTreeMap::new(), &options, &dir).unwrap_err();
         assert_eq!(error.code, "E0602");
@@ -1072,5 +1122,79 @@ mod tests {
             .count();
         assert_eq!(soft, 0);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    fn door_animation(name: &str, frames: u32) -> AnimationSpec {
+        AnimationSpec {
+            name: name.into(),
+            object: "door".into(),
+            from: 0.0,
+            to: 90.0,
+            frames,
+            duration: 100,
+            durations: Vec::new(),
+            looped: true,
+            rotation: 0,
+        }
+    }
+
+    #[test]
+    fn several_animations_get_one_row_each_with_timing_and_loop() {
+        let objects = vec![SheetObject {
+            name: "door".into(),
+            object: box_object("door", 1.0, 1.0),
+        }];
+        let mut options = chair_options("doors");
+        let mut close = door_animation("close", 3);
+        close.from = 90.0;
+        close.to = 0.0;
+        close.durations = vec![50, 60, 400];
+        close.looped = false;
+        options.animations = vec![door_animation("open", 5), close];
+        let dir = std::env::temp_dir().join("iso-scene-sprites-many-anim-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        assert_eq!(report.rows, 3);
+        assert_eq!(report.columns, 5);
+        assert_eq!(report.frames, 8);
+
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(&report.manifest).unwrap()).unwrap();
+        let close = &manifest["animations"][1];
+        assert_eq!(close["name"], "close");
+        assert_eq!(close["object"], "door");
+        assert_eq!(close["loop"], false);
+        assert_eq!(close["frames"][2]["duration"], 400);
+        assert_eq!(close["frames"][0]["y"], 2 * report.cells[1]);
+
+        let tileset: Value =
+            serde_json::from_str(&fs::read_to_string(&report.tileset).unwrap()).unwrap();
+        let animated: Vec<&Value> = tileset["tiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|tile| tile.get("animation").is_some())
+            .collect();
+        assert_eq!(animated.len(), 2);
+        assert_eq!(animated[1]["animation"][2]["duration"], 400);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn invalid_animations_are_rejected() {
+        let objects = vec![SheetObject {
+            name: "door".into(),
+            object: box_object("door", 1.0, 1.0),
+        }];
+        let dir = std::env::temp_dir().join("iso-scene-sprites-bad-anim-test");
+        let mut options = chair_options("bad");
+        options.animations = vec![door_animation("a", 3), door_animation("a", 3)];
+        let error = export(&objects, &BTreeMap::new(), &options, &dir).unwrap_err();
+        assert!(error.message.contains("used twice"), "{}", error.message);
+        let mut timed = door_animation("b", 3);
+        timed.durations = vec![10, 20];
+        options.animations = vec![timed];
+        let error = export(&objects, &BTreeMap::new(), &options, &dir).unwrap_err();
+        assert!(error.message.contains("durations"), "{}", error.message);
+        assert!(!dir.exists());
     }
 }

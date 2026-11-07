@@ -149,3 +149,42 @@ fn base_outside_the_working_directory_resolves_includes() {
     assert!(elsewhere.join("out/sheet.png").exists());
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn animation_flags_apply_to_the_latest_animation() {
+    let dir = scratch("anims");
+    write(&dir, "a.model", THING_A);
+    let output = binary()
+        .current_dir(&dir)
+        .args(["sprites", "a.model", "--scale", "8", "--views", "1"])
+        .args(["--animation", "thing", "--label", "open", "--frames", "4"])
+        .args(["--animation", "thing", "--label", "close", "--from", "90"])
+        .args([
+            "--to",
+            "0",
+            "--frames",
+            "2",
+            "--durations",
+            "50,500",
+            "--once",
+        ])
+        .args(["-o", "out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let manifest = fs::read_to_string(dir.join("out/sheet.json")).unwrap();
+    assert!(manifest.contains("\"name\": \"open\""), "{manifest}");
+    assert!(manifest.contains("\"name\": \"close\""), "{manifest}");
+    assert!(manifest.contains("\"loop\": false"), "{manifest}");
+    assert!(manifest.contains("\"duration\": 500"), "{manifest}");
+
+    // The same object twice without labels collides.
+    let output = binary()
+        .current_dir(&dir)
+        .args(["sprites", "a.model", "--scale", "8"])
+        .args(["--animation", "thing", "--animation", "thing", "-o", "out2"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    let _ = fs::remove_dir_all(dir);
+}
