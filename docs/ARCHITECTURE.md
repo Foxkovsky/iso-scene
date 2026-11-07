@@ -61,6 +61,29 @@ Rules:
 - procedural textures use an explicit seed;
 - floating-point math is `f64`; rounding to pixels happens at one place per
   backend.
+- parallel work never changes output: rasterization runs over horizontal
+  bands that each replay the full shape list in order, and independent items
+  (sheet cells, pages, frames, atlas sprites) are collected in input order
+  with the first error in input order winning.
+
+## Performance
+
+Rendering is parallel and incremental where it can be without changing a
+pixel:
+
+- `scene_render::Framebuffer::draw` rasterizes a shape list over horizontal
+  bands with `rayon`; each triangle row scans only its covered span, and
+  lines skip the steps outside a band;
+- merge groups find edge-splitting vertices through a uniform grid instead of
+  a full scan;
+- `scene_backend_iso::prepare_frames` builds animation frames as shape lists,
+  checks their size, draws the still part of the scene once per frame size
+  and redraws only the region the turning instance can touch;
+- the sprite and Tiled exporters render cells, pages and atlas sprites in
+  parallel.
+
+`make bench` runs the criterion benchmarks of the iso and ortho backends and
+of the sprite exporter. `AGENTS.md` lists the rules for performance changes.
 
 ## Bounded evaluation
 

@@ -27,6 +27,8 @@ needed, update the spec and grammar first, then the code.
 - Enforce the limits from `docs/spec.md` §9 before allocating.
 - Sandbox `include` and `material` paths to the project root.
 - Backends consume `SceneGraph`; they must not parse source.
+- Keep it blazing fast: follow "Performance" below; never merge a measured
+  slowdown without saying why in the commit message.
 - Keep changes inside this repository. The older Python project at
   `~/Документы/PixelArt/Изометрия` is a reference/oracle and must not be edited.
 
@@ -38,7 +40,40 @@ make ci
 ```
 
 Before claiming success, run `cargo test --workspace` and `cargo clippy
---workspace --all-targets -- -D warnings`.
+--workspace --all-targets -- -D warnings`. For changes that can affect speed,
+also run `make bench` (see "Performance").
+
+## Performance
+
+`iso-scene` must be blazing fast: previews in the VS Code extension rebuild on
+every keystroke, and sprite sheets, animations and maps are rebuilt in game
+asset pipelines. Speed is a feature with the same weight as correctness.
+
+- **Measure, do not guess.** Benchmarks live in `crates/*/benches` (criterion).
+  Before a change that can affect speed, save a baseline:
+  `cargo bench -p <crate> -- --save-baseline before`; after it, compare with
+  `cargo bench -p <crate> -- --baseline before` and quote the numbers in the
+  commit message. A regression above ~5% needs a reason in the message.
+- **Add a benchmark** for every new heavy path (a backend, an exporter, a
+  geometry pass) before optimizing it.
+- **Optimizations must not change output.** Pixels, SVG, VOX and JSON stay
+  byte-identical. Prove it with a test (e.g. parallel drawing equals
+  sequential drawing, an index finds exactly what a full scan finds) and by
+  comparing the outputs of a corpus of examples before and after.
+- **Parallelize independent work** with `rayon`: sheet cells, pages, animation
+  frames, atlas sprites, image bands. Collect results in input order and
+  report the first error in input order, so the thread count never changes
+  the output or the diagnostics.
+- **Do not wake the thread pool for tiny work.** Small images and single
+  items run on the calling thread (see `MIN_PARALLEL_PIXELS` in
+  `scene-render`).
+- **Do work once.** Prepare geometry once and reuse it (e.g. animation frames
+  share the still part of a scene); load files once; no allocation, system
+  call or environment lookup inside per-pixel loops.
+- **No quadratic geometry.** Spatial lookups go through an index (sorted
+  arrays or a grid) that visits candidates in their original order.
+- **Check limits before expensive work**, not after: prepare cheaply,
+  validate sizes against `docs/spec.md` §9, then rasterize.
 
 ## Current state
 
