@@ -86,10 +86,31 @@ impl Framebuffer {
             return;
         }
 
+        // Each barycentric coordinate is linear along a row:
+        // `lambda(px) = slope * px + offset(py)`. Solving `lambda >= -1e-9`
+        // for every coordinate bounds the covered span of the row, so only
+        // that span is scanned instead of the whole bounding box.
+        let slope_u = (b[1] - c[1]) / denominator;
+        let slope_v = (c[1] - a[1]) / denominator;
+        let slope_w = -(slope_u + slope_v);
         for y in min_y..=max_y {
-            for x in min_x..=max_x {
+            let py = y as f64 + 0.5;
+            let offset_u = ((c[0] - b[0]) * (py - c[1]) - (b[1] - c[1]) * c[0]) / denominator;
+            let offset_v = ((a[0] - c[0]) * (py - c[1]) - (c[1] - a[1]) * c[0]) / denominator;
+            let offset_w = 1.0 - offset_u - offset_v;
+            let Some((from, to)) = row_span(
+                [
+                    (slope_u, offset_u),
+                    (slope_v, offset_v),
+                    (slope_w, offset_w),
+                ],
+                min_x,
+                max_x,
+            ) else {
+                continue;
+            };
+            for x in from..=to {
                 let px = x as f64 + 0.5;
-                let py = y as f64 + 0.5;
                 let u = ((b[1] - c[1]) * (px - c[0]) + (c[0] - b[0]) * (py - c[1])) / denominator;
                 let v = ((c[1] - a[1]) * (px - c[0]) + (a[0] - c[0]) * (py - c[1])) / denominator;
                 let w = 1.0 - u - v;
@@ -151,5 +172,99 @@ impl Framebuffer {
         self.pixels[base + 1] = color[1];
         self.pixels[base + 2] = color[2];
         self.pixels[base + 3] = 255;
+    }
+}
+
+/// Columns `from..=to` of a row that may lie inside a triangle, given each
+/// barycentric coordinate as `slope * px + offset` with `px = x + 0.5`.
+///
+/// The bounds are widened by a pixel on each side so that rounding in the
+/// solved bounds can never skip a pixel the exact per-pixel test would accept.
+fn row_span(lines: [(f64, f64); 3], min_x: usize, max_x: usize) -> Option<(usize, usize)> {
+    let mut low = min_x as f64;
+    let mut high = max_x as f64;
+    for (slope, offset) in lines {
+        if slope == 0.0 {
+            if offset < -1e-9 {
+                return None;
+            }
+            continue;
+        }
+        // `slope * px + offset >= -1e-9` with `px = x + 0.5`.
+        let edge = (-1e-9 - offset) / slope - 0.5;
+        if slope > 0.0 {
+            low = low.max((edge - 1.0).floor());
+        } else {
+            high = high.min((edge + 1.0).ceil());
+        }
+    }
+    if low.is_nan() || high.is_nan() || low > high {
+        return None;
+    }
+    Some((low as usize, high as usize))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The rasterizer before row spans: scan the whole bounding box.
+    fn reference(width: usize, height: usize, a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> Vec<bool> {
+        let mut covered = vec![false; width * height];
+        let denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+        if denominator.abs() < 1e-12 {
+            return covered;
+        }
+        for y in 0..height {
+            for x in 0..width {
+                let px = x as f64 + 0.5;
+                let py = y as f64 + 0.5;
+                let u = ((b[1] - c[1]) * (px - c[0]) + (c[0] - b[0]) * (py - c[1])) / denominator;
+                let v = ((c[1] - a[1]) * (px - c[0]) + (a[0] - c[0]) * (py - c[1])) / denominator;
+                let w = 1.0 - u - v;
+                if u >= -1e-9 && v >= -1e-9 && w >= -1e-9 {
+                    covered[y * width + x] = true;
+                }
+            }
+        }
+        covered
+    }
+
+    #[test]
+    fn row_spans_cover_exactly_the_pixels_of_a_full_scan() {
+        // Deterministic pseudo-random triangles, including iso-like slopes
+        // through pixel centres, slivers and off-screen vertices.
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % 10_000) as f64 / 100.0 - 20.0
+        };
+        let (width, height) = (64, 48);
+        for case in 0..2_000 {
+            let mut point = || {
+                let (x, y) = (next(), next());
+                if case % 3 == 0 {
+                    // Snap to half pixels so edges pass through pixel centres.
+                    [(x * 2.0).round() / 2.0, (y * 2.0).round() / 2.0, 0.0]
+                } else {
+                    [x, y, 0.0]
+                }
+            };
+            let (a, b, c) = (point(), point(), point());
+            let mut framebuffer = Framebuffer::new(width, height, [0, 0, 0, 0]);
+            framebuffer.triangle(a, b, c, [255, 255, 255]);
+            let drawn: Vec<bool> = framebuffer
+                .into_rgba()
+                .chunks_exact(4)
+                .map(|pixel| pixel[3] == 255)
+                .collect();
+            assert_eq!(
+                drawn,
+                reference(width, height, a, b, c),
+                "case {case}: {a:?} {b:?} {c:?}"
+            );
+        }
     }
 }
