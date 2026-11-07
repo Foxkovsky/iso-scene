@@ -10,6 +10,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
 use scene_backend_iso::{Sprite, project_point, render_object_sprite};
 use scene_core::SceneGraph;
 use scene_render::{Image, write_png};
@@ -174,41 +175,46 @@ pub fn export_with(
         }
     }
 
-    let mut sprites: Vec<SpriteEntry> = Vec::with_capacity(keys.len());
-    for key in keys {
-        let Some(instance) = scene
-            .instances
-            .iter()
-            .find(|instance| instance.object.name == key.name && instance.rotation == key.rotation)
-        else {
-            return Err(error("E0602", "internal sprite lookup failed"));
-        };
-        let sprite = render_object_sprite(
-            instance.object.as_ref(),
-            instance.rotation,
-            scale,
-            &scene.materials,
-        )?;
-        let zero = scene_core::Instance {
-            object: instance.object.clone(),
-            at: [0.0, 0.0, 0.0],
-            rotation: instance.rotation,
-            angle: 0.0,
-        };
-        let bounds = zero.world_bounds();
-        let bottom_world = [bounds.max[0], bounds.max[1], bounds.min[2]];
-        let projected = project_point(bottom_world, f64::from(scale));
-        let bottom_px = [
-            sprite.anchor[0] + projected[0],
-            sprite.anchor[1] + projected[1],
-        ];
-        sprites.push(SpriteEntry {
-            key,
-            sprite,
-            bottom_world,
-            bottom_px,
-        });
-    }
+    // Sprites are independent: render them in parallel, keep key order, and
+    // let the first failing key (in order) decide the error.
+    let rendered: Vec<Result<SpriteEntry, Diagnostic>> = keys
+        .into_par_iter()
+        .map(|key| {
+            let Some(instance) = scene.instances.iter().find(|instance| {
+                instance.object.name == key.name && instance.rotation == key.rotation
+            }) else {
+                return Err(error("E0602", "internal sprite lookup failed"));
+            };
+            let sprite = render_object_sprite(
+                instance.object.as_ref(),
+                instance.rotation,
+                scale,
+                &scene.materials,
+            )?;
+            let zero = scene_core::Instance {
+                object: instance.object.clone(),
+                at: [0.0, 0.0, 0.0],
+                rotation: instance.rotation,
+                angle: 0.0,
+            };
+            let bounds = zero.world_bounds();
+            let bottom_world = [bounds.max[0], bounds.max[1], bounds.min[2]];
+            let projected = project_point(bottom_world, f64::from(scale));
+            let bottom_px = [
+                sprite.anchor[0] + projected[0],
+                sprite.anchor[1] + projected[1],
+            ];
+            Ok(SpriteEntry {
+                key,
+                sprite,
+                bottom_world,
+                bottom_px,
+            })
+        })
+        .collect();
+    let sprites = rendered
+        .into_iter()
+        .collect::<Result<Vec<SpriteEntry>, Diagnostic>>()?;
 
     let max_left = sprites
         .iter()

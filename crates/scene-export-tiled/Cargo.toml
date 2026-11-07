@@ -10,6 +10,7 @@ publish = false
 workspace = true
 
 [dependencies]
+rayon = "1.12"
 scene-backend-iso = { path = "../scene-backend-iso" }
 scene-core = { path = "../scene-core" }
 scene-render = { path = "../scene-render" }
