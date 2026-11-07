@@ -127,3 +127,36 @@ fn unclosed_layout_is_rejected() {
     .expect_err("unclosed");
     assert_eq!(error.code, "E0201");
 }
+
+fn front_walls(source: &str) -> Vec<(u32, u32)> {
+    layout(source)
+        .cells
+        .iter()
+        .filter(|cell| cell.front)
+        .map(|cell| (cell.x, cell.y))
+        .collect()
+}
+
+#[test]
+fn near_walls_of_a_room_are_in_front() {
+    // Outdoor floor around the room does not make the far walls front walls.
+    let front =
+        front_walls("version 1;\nlayout {\n\".....\"\n\".###.\"\n\".#..#\"\n\".####\"\n}\n");
+    assert_eq!(front, [(4, 2), (2, 3), (3, 3)]);
+}
+
+#[test]
+fn a_wall_right_behind_a_gap_stays_at_the_back() {
+    // The door at (2, 3) stands in front of the wall at (1, 3), so that wall
+    // must not be drawn over it; the wall at (3, 3) is in front of the door.
+    let front =
+        front_walls("version 1;\nlayout {\n\"#####\"\n\"#...#\"\n\"#...#\"\n\"##D##\"\n}\n");
+    assert_eq!(front, [(4, 1), (4, 2), (3, 3)]);
+}
+
+#[test]
+fn a_gap_closes_the_room() {
+    // The floor behind a door gap is still indoors.
+    let front = front_walls("version 1;\nlayout {\n\"###\"\n\"D.#\"\n\"###\"\n}\n");
+    assert_eq!(front, [(2, 1), (1, 2)]);
+}

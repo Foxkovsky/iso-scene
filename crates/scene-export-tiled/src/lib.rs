@@ -16,13 +16,31 @@ use scene_core::SceneGraph;
 use scene_render::{Image, write_png};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::RenderKind;
-use scene_walls::{WallLayout, layer_data, render_tiles, wangid};
+use scene_walls::{WallCell, WallLayout, layer_data_where, render_tiles, wangid};
 use serde_json::{Value, json};
 
 const MAX_MAP_CELLS: u64 = 1_000_000;
 
 /// Move an object anchor just inside its cell; see the export loop.
 const ANCHOR_NUDGE: f64 = 0.001;
+
+/// Where the wall layer goes relative to the objects.
+///
+/// Tiled draws whole layers in order, so a tile layer cannot interleave with
+/// the depth-sorted objects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WallOrder {
+    /// One `walls` layer below the objects: a door in a wall gap stays
+    /// whole, but objects are drawn over the near walls too.
+    Behind,
+    /// One `walls` layer above the objects, for rooms without near walls.
+    Front,
+    /// `walls-back` below the objects and `walls-front` above them. A wall
+    /// goes to the front when a floor cell lies right behind it (see
+    /// [`WallCell::front`]), so near walls hide the furniture behind them.
+    #[default]
+    Split,
+}
 
 /// Files written by [`export`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,15 +95,15 @@ pub fn export_with_walls(
     walls: Option<&WallLayout>,
     out_dir: &Path,
 ) -> Result<ExportReport, Diagnostic> {
-    export_with(scene, walls, false, false, out_dir)
+    export_with(scene, walls, false, WallOrder::default(), out_dir)
 }
 
 /// Export a scene with an optional wall layer and object layout choice.
 ///
 /// With `objects_as_tiles` the sprites go into a tile layer named `objects`
 /// (one tile per cell, Tiled tile alignment) instead of an object layer.
-/// With `walls_in_front` the wall layer is placed above the objects; by default
-/// objects are drawn over the walls, so doors in wall gaps stay visible.
+/// `wall_order` decides where the wall layer goes relative to the objects; see
+/// [`WallOrder`].
 ///
 /// # Errors
 ///
@@ -95,7 +113,7 @@ pub fn export_with(
     scene: &SceneGraph,
     walls: Option<&WallLayout>,
     objects_as_tiles: bool,
-    walls_in_front: bool,
+    wall_order: WallOrder,
     out_dir: &Path,
 ) -> Result<ExportReport, Diagnostic> {
     if scene.render != RenderKind::Iso {
@@ -371,8 +389,6 @@ pub fn export_with(
 
     let floor_data = vec![1_u32; (width * height) as usize];
     let wall_first_gid = 2 + sprites.len() as u32;
-    let wall_data =
-        walls.map(|layout| layer_data(layout, width, height, min_x, min_y, wall_first_gid));
     let mut ordered: Vec<&scene_core::Instance> = scene.instances.iter().collect();
     ordered.sort_by(|a, b| {
         let left = a.at[0] + a.object.width + a.at[1] + a.object.depth + a.at[2];
@@ -436,89 +452,64 @@ pub fn export_with(
     }
 
     let mut tilesets = vec![json!({"firstgid": 1, "source": "floor.tsj"})];
-    let mut layers = vec![json!({
-        "type": "tilelayer",
-        "name": "floor",
-        "id": 1,
-        "width": width,
-        "height": height,
-        "x": 0,
-        "y": 0,
-        "opacity": 1,
-        "visible": true,
-        "data": floor_data
-    })];
-    let mut wall_layer = None;
-    let mut next_layer_id = 2_u32;
-    if !walls_in_front {
-        if let (Some(_), Some(data)) = (walls, wall_data.clone()) {
-            let id = next_layer_id;
-            next_layer_id += 1;
-            tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
-            wall_layer = Some(json!({
-                "type": "tilelayer",
-                "name": "walls",
-                "id": id,
-                "width": width,
-                "height": height,
-                "x": 0,
-                "y": 0,
-                "opacity": 1,
-                "visible": true,
-                "data": data
-            }));
-        }
-    }
-    if let Some(walls) = wall_layer.take() {
-        layers.push(walls);
-    }
     if has_objects {
         tilesets.push(json!({"firstgid": 2, "source": "objects.tsj"}));
-        if objects_as_tiles {
-            layers.push(json!({
-                "type": "tilelayer",
-                "name": "objects",
-                "id": next_layer_id,
-                "width": width,
-                "height": height,
-                "x": 0,
-                "y": 0,
-                "opacity": 1,
-                "visible": true,
-                "data": object_tiles
-            }));
+    }
+    if walls.is_some() {
+        tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
+    }
+    let tile_layer = |name: &str, data: Vec<u32>| {
+        json!({
+            "type": "tilelayer",
+            "name": name,
+            "width": width,
+            "height": height,
+            "x": 0,
+            "y": 0,
+            "opacity": 1,
+            "visible": true,
+            "data": data
+        })
+    };
+    let wall_layer = |name: &str, keep: fn(&WallCell) -> bool| {
+        walls.map(|layout| {
+            tile_layer(
+                name,
+                layer_data_where(layout, width, height, min_x, min_y, wall_first_gid, keep),
+            )
+        })
+    };
+    let (below, above) = match wall_order {
+        WallOrder::Behind => (wall_layer("walls", |_| true), None),
+        WallOrder::Front => (None, wall_layer("walls", |_| true)),
+        WallOrder::Split => (
+            wall_layer("walls-back", |cell| !cell.front),
+            wall_layer("walls-front", |cell| cell.front),
+        ),
+    };
+    let mut layers = vec![tile_layer("floor", floor_data)];
+    layers.extend(below);
+    if has_objects {
+        layers.push(if objects_as_tiles {
+            tile_layer("objects", object_tiles)
         } else {
-            layers.push(json!({
+            json!({
                 "type": "objectgroup",
                 "name": "objects",
-                "id": next_layer_id,
                 "x": 0,
                 "y": 0,
                 "opacity": 1,
                 "visible": true,
                 "draworder": "index",
                 "objects": objects
-            }));
-        }
+            })
+        });
     }
-    if walls_in_front {
-        if let (Some(_), Some(data)) = (walls, wall_data) {
-            tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
-            layers.push(json!({
-                "type": "tilelayer",
-                "name": "walls",
-                "id": next_layer_id,
-                "width": width,
-                "height": height,
-                "x": 0,
-                "y": 0,
-                "opacity": 1,
-                "visible": true,
-                "data": data
-            }));
-            next_layer_id += 1;
-        }
+    layers.extend(above);
+    for (id, layer) in (1_u32..).zip(&mut layers) {
+        layer["id"] = json!(id);
     }
+    let next_layer_id = layers.len() + 1;
 
     let map = json!({
         "type": "map",

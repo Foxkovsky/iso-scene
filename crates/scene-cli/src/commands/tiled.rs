@@ -4,6 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use scene_export_tiled::WallOrder;
+
 use crate::common::{Args, Parsed, load_scene, report, usage};
 
 pub(crate) fn tiled_scene(args: Vec<String>) -> ExitCode {
@@ -16,7 +18,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let mut path: Option<String> = None;
     let mut walls_path: Option<String> = None;
     let mut objects_as_tiles = false;
-    let mut walls_in_front = false;
+    let mut wall_order = WallOrder::default();
     let mut base: Option<PathBuf> = None;
     let mut output = PathBuf::from("out/tiled");
     let mut args = Args::new(args).hints(&[
@@ -29,7 +31,8 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
             "--out" | "-o" => output = PathBuf::from(args.value("--out")?),
             "--base" => base = Some(PathBuf::from(args.value("--base")?)),
             "--tile-layer" => objects_as_tiles = true,
-            "--walls-front" => walls_in_front = true,
+            "--walls-front" => wall_order = WallOrder::Front,
+            "--walls-behind" => wall_order = WallOrder::Behind,
             "--walls" => walls_path = Some(args.value("--walls")?),
             _ if path.is_none() => path = Some(argument),
             _ => return Err(usage(format!("unexpected argument `{argument}`"))),
@@ -53,7 +56,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         &loaded.scene,
         walls.as_ref(),
         objects_as_tiles,
-        walls_in_front,
+        wall_order,
         &output,
     )
     .map_err(|diagnostic| loaded.report(&diagnostic))?;

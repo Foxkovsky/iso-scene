@@ -43,6 +43,11 @@ pub struct WallCell {
     pub x: u32,
     pub y: u32,
     pub mask: u8,
+    /// Indoor floor lies right behind the wall, at `x - 1` or `y - 1`: the
+    /// wall faces the viewer and hides what stands in the room. A wall right
+    /// behind a door or window gap (at `x + 1` or `y + 1`) is not in front,
+    /// so the door in that gap is not cut.
+    pub front: bool,
 }
 
 /// Parsed wall layout.
@@ -197,6 +202,7 @@ pub fn parse(source: &str, base_dir: &Path, root: &Path) -> Result<WallLayout, D
 
     let rows = layout_lines.len() as u32;
     let columns = columns as u32;
+    let indoor = indoor_floor(&layout_lines, columns as usize);
     let mut cells = Vec::new();
     for y in 0..rows {
         for x in 0..columns {
@@ -216,7 +222,14 @@ pub fn parse(source: &str, base_dir: &Path, root: &Path) -> Result<WallLayout, D
             if x == 0 || grid_char(&layout_lines, x.saturating_sub(1), y) != '#' {
                 mask |= BIT_LEFT;
             }
-            cells.push(WallCell { x, y, mask });
+            let indoor_at = |x: u32, y: u32| indoor[(y * columns + x) as usize];
+            let gap_at = |x: u32, y: u32| matches!(grid_char(&layout_lines, x, y), 'D' | 'W');
+            // A wall right behind a gap stays at the back, so the door or
+            // window standing in that gap is drawn whole over it.
+            let front = ((x > 0 && indoor_at(x - 1, y)) || (y > 0 && indoor_at(x, y - 1)))
+                && !gap_at(x + 1, y)
+                && !gap_at(x, y + 1);
+            cells.push(WallCell { x, y, mask, front });
         }
     }
 
@@ -288,8 +301,31 @@ pub fn layer_data(
     offset_y: i64,
     first_gid: u32,
 ) -> Vec<u32> {
+    layer_data_where(
+        layout,
+        map_width,
+        map_height,
+        offset_x,
+        offset_y,
+        first_gid,
+        |_| true,
+    )
+}
+
+/// Like [`layer_data`], keeping only the cells `keep` accepts (for example
+/// the walls in [`WallCell::front`] of the floor).
+#[must_use]
+pub fn layer_data_where(
+    layout: &WallLayout,
+    map_width: u32,
+    map_height: u32,
+    offset_x: i64,
+    offset_y: i64,
+    first_gid: u32,
+    keep: impl Fn(&WallCell) -> bool,
+) -> Vec<u32> {
     let mut data = vec![0_u32; (map_width * map_height) as usize];
-    for cell in &layout.cells {
+    for cell in layout.cells.iter().filter(|cell| keep(cell)) {
         let x = i64::from(cell.x) - offset_x;
         let y = i64::from(cell.y) - offset_y;
         if x < 0 || y < 0 || x >= i64::from(map_width) || y >= i64::from(map_height) {
@@ -375,6 +411,49 @@ fn fill(fb: &mut Framebuffer, points: &[[f64; 2]], color: [u8; 3]) {
             color,
         );
     }
+}
+
+/// Floor cells enclosed by walls and gaps, row by row.
+///
+/// Floor reachable from the layout border without crossing a wall or a gap is
+/// outdoors; the rest is indoors. Gaps count as closed (a door in its frame).
+fn indoor_floor(lines: &[(String, Span)], columns: usize) -> Vec<bool> {
+    let rows = lines.len();
+    let floor: Vec<bool> = lines
+        .iter()
+        .flat_map(|(row, _)| row.chars().map(|c| c == '.'))
+        .collect();
+    let mut outdoor = vec![false; floor.len()];
+    let mut stack: Vec<usize> = (0..floor.len())
+        .filter(|&index| {
+            let (x, y) = (index % columns, index / columns);
+            x == 0 || y == 0 || x + 1 == columns || y + 1 == rows
+        })
+        .collect();
+    while let Some(index) = stack.pop() {
+        if !floor[index] || outdoor[index] {
+            continue;
+        }
+        outdoor[index] = true;
+        let (x, y) = (index % columns, index / columns);
+        if x > 0 {
+            stack.push(index - 1);
+        }
+        if x + 1 < columns {
+            stack.push(index + 1);
+        }
+        if y > 0 {
+            stack.push(index - columns);
+        }
+        if y + 1 < rows {
+            stack.push(index + columns);
+        }
+    }
+    floor
+        .iter()
+        .zip(&outdoor)
+        .map(|(&floor, &outdoor)| floor && !outdoor)
+        .collect()
 }
 
 fn grid_char(lines: &[(String, Span)], x: u32, y: u32) -> char {

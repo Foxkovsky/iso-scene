@@ -78,6 +78,8 @@ fn print_help() {
         "                  (repeatable; --durations a,b,.. --once --label <name> per animation)"
     );
     println!("                  --walls <file> adds a 16-way wall tile layer with Wang set");
+    println!("                  (near walls above the objects, the rest below them;");
+    println!("                  --walls-behind puts all walls below, --walls-front above)");
     println!(
         "                  --tile-layer puts objects in a tile layer instead of an object layer"
     );

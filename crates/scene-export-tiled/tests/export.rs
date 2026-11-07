@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use scene_core::compile_scene;
-use scene_export_tiled::{export, export_with, export_with_walls};
+use scene_export_tiled::{WallOrder, export, export_with, export_with_walls};
 use scene_syntax::parse;
 
 fn compile(source: &str) -> scene_core::SceneGraph {
@@ -147,17 +147,28 @@ fn walls_produce_a_separate_tile_layer_and_wang_set() {
 
     let map: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
-    assert_eq!(map["layers"].as_array().expect("layers").len(), 3);
-    // Objects are drawn over the walls by default, so `walls` comes first.
-    assert_eq!(map["layers"][1]["name"], "walls");
-    assert_eq!(map["layers"][2]["name"], "objects");
-    let walls_data = map["layers"][1]["data"].as_array().expect("wall data");
-    assert!(
-        walls_data
-            .iter()
-            .any(|value| value.as_u64().unwrap_or(0) > 0)
-    );
     assert_eq!(map["tilesets"].as_array().expect("tilesets").len(), 3);
+    // By default the near walls go above the objects and the rest below.
+    assert_eq!(
+        layer_names(&map),
+        ["floor", "walls-back", "objects", "walls-front"]
+    );
+    let walls_in = |name: &str| -> usize {
+        map["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .find(|layer| layer["name"] == name)
+            .and_then(|layer| layer["data"].as_array())
+            .expect("wall data")
+            .iter()
+            .filter(|value| value.as_u64().unwrap_or(0) > 0)
+            .count()
+    };
+    // Of the eight walls around the single floor cell, the right one and the
+    // bottom one have that floor right behind them.
+    assert_eq!(walls_in("walls-back"), 6);
+    assert_eq!(walls_in("walls-front"), 2);
 
     let ts: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(report.walls_tileset.as_ref().expect("walls tsj")).expect("read tsj"),
@@ -172,6 +183,53 @@ fn walls_produce_a_separate_tile_layer_and_wang_set() {
         16
     );
     let _ = fs::remove_dir_all(dir);
+}
+
+fn layer_names(map: &serde_json::Value) -> Vec<String> {
+    map["layers"]
+        .as_array()
+        .expect("layers")
+        .iter()
+        .map(|layer| layer["name"].as_str().expect("name").to_owned())
+        .collect()
+}
+
+#[test]
+fn wall_order_puts_the_wall_layer_below_above_or_around_the_objects() {
+    let scene = compile(
+        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 16; place b at (1, 1, 0);",
+    );
+    let walls = scene_walls::parse(
+        "version 1;\nlayout {\n\"###\"\n\"#.#\"\n\"###\"\n}\n",
+        Path::new("."),
+        Path::new("."),
+    )
+    .expect("walls");
+    for (order, names) in [
+        (WallOrder::Behind, &["floor", "walls", "objects"][..]),
+        (WallOrder::Front, &["floor", "objects", "walls"][..]),
+        (
+            WallOrder::Split,
+            &["floor", "walls-back", "objects", "walls-front"][..],
+        ),
+    ] {
+        let dir = temp_dir("wall-order");
+        let report = export_with(&scene, Some(&walls), false, order, &dir).expect("export");
+        let map: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
+        assert_eq!(layer_names(&map), names, "{order:?}");
+        // Layer ids are unique and `nextlayerid` is past the last one.
+        let ids: Vec<u64> = map["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .map(|layer| layer["id"].as_u64().expect("id"))
+            .collect();
+        let expected: Vec<u64> = (1..=names.len() as u64).collect();
+        assert_eq!(ids, expected, "{order:?}");
+        assert_eq!(map["nextlayerid"], names.len() + 1, "{order:?}");
+        let _ = fs::remove_dir_all(dir);
+    }
 }
 
 #[test]
@@ -194,12 +252,13 @@ fn empty_scene_exports_floor_without_an_object_layer() {
     let map: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
     let layers = map["layers"].as_array().expect("layers");
-    assert_eq!(layers.len(), 2);
+    assert_eq!(layers.len(), 3);
     assert_eq!(layers[0]["name"], "floor");
-    assert_eq!(layers[1]["name"], "walls");
+    assert_eq!(layers[1]["name"], "walls-back");
+    assert_eq!(layers[2]["name"], "walls-front");
     assert_eq!(map["tilesets"].as_array().expect("tilesets").len(), 2);
     assert_eq!(layers[1]["id"], 2);
-    assert_eq!(map["nextlayerid"], 3);
+    assert_eq!(map["nextlayerid"], 4);
     assert!(
         layers[1]["data"]
             .as_array()
@@ -328,7 +387,7 @@ fn objects_can_be_exported_as_a_tile_layer() {
         "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 16; place b at (0, 0, 0);",
     );
     let dir = temp_dir("tilelayer");
-    let report = export_with(&scene, None, true, false, &dir).expect("export");
+    let report = export_with(&scene, None, true, WallOrder::default(), &dir).expect("export");
     let map: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
     let layer = &map["layers"][1];

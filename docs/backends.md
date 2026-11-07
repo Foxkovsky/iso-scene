@@ -341,8 +341,10 @@ and each sprite is clipped to its own cell.
 
 ## Walls
 
-A `.walls` layout is exported as a Tiled layer named `walls`, above `floor`
-and below `objects` (unless `--walls-front` is given). The generated tileset has 16 tiles matching the 16
+A `.walls` layout is exported as two Tiled tile layers around `objects`:
+`walls-back` below them and `walls-front` (the near walls of each room)
+above them. `--walls-behind` and `--walls-front` put a single `walls` layer
+below or above the objects instead. The generated tileset has 16 tiles matching the 16
 neighbour masks and an edge Wang set named `wall`. Connected sides have no
 outline, so the wall reads as one continuous surface. See `docs/walls.md`.
 
