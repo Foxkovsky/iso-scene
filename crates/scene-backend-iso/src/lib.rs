@@ -196,8 +196,17 @@ fn add_contact_shadow(
     let radius_x = ((max[0] - min[0]) / 2.0 * 0.92).max(0.5);
     let radius_y = ((max[1] - min[1]) / 2.0 * 0.92).max(0.5);
     let color = [10.0, 12.0, 16.0];
-    for y in 0..image.height {
-        for x in 0..image.width {
+    // Outside `center ± radius` the L1 distance is at least 1 and nothing is
+    // drawn, so only that box (plus a pixel) is visited.
+    let span = |center: f64, radius: f64, size: u32| {
+        let low = (center - radius - 1.0).floor().max(0.0);
+        let high = (center + radius + 1.0).ceil().min(f64::from(size));
+        (low as u32, (high as u32).max(low as u32))
+    };
+    let (left, right) = span(center[0], radius_x, image.width);
+    let (top, bottom) = span(center[1], radius_y, image.height);
+    for y in top..bottom {
+        for x in left..right {
             let dx = (f64::from(x) + 0.5 - center[0]).abs() / radius_x;
             let dy = (f64::from(y) + 0.5 - center[1]).abs() / radius_y;
             // The footprint projects to a diamond, so use an L1 falloff.
