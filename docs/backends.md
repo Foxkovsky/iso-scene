@@ -178,13 +178,23 @@ Rows are objects and columns are views, in the order they were loaded. An
 animation gets its own row at the bottom, one column per frame, so a sheet can
 combine a 4-view turntable with an animated part. Empty cells stay transparent.
 
-All cells share one anchor at the horizontal centre of the cell. For a static view the anchor
-is the footprint's front corner, the point that touches the floor; the object
-is placed so that this point lands on `(cell.width / 2, anchor.y)`. A game
-draws the cell at the object's floor position; Tiled uses the same point
-through `tileoffset`. For an animation frame the anchor is the object's local
-origin instead, because that is the hinge the part turns around: the pivot
-stays put while the leaf swings. `sheet.json` describes the anchor explicitly:
+All cells share one anchor at the horizontal centre of the cell. For a static
+view the anchor is a point of the declared footprint `(width, depth)` at floor
+level, chosen by `--pivot`:
+
+- `front` (default) — the front corner, the point nearest the viewer that
+  touches the floor; Tiled aligns it to the bottom of a tile cell;
+- `back`, `left`, `right` — the other corners;
+- `center` — the middle of the footprint, handy for inventory icons.
+
+The footprint is used rather than the geometry's bounds, so a table top or a
+cornice that overhangs the footprint does not move the anchor. The object is
+placed so that the pivot lands on `(cell.width / 2, anchor.y)`. A game draws
+the cell at the object's floor position; Tiled uses the same point through
+`tileoffset`. For an animation frame the anchor is the object's local origin
+instead (`pivot: "origin"`), because that is the hinge the part turns around:
+the hinge stays put while the leaf swings. Every sprite and frame in
+`sheet.json` names its `pivot`, so a consumer never has to assume one:
 
 ```json
 {
@@ -196,14 +206,14 @@ stays put while the leaf swings. `sheet.json` describes the anchor explicitly:
   "sprites": [
     { "name": "chair", "view": 0, "rotation": 0,
       "x": 0, "y": 0, "w": 128, "h": 160,
-      "anchor": { "x": 64, "y": 132 } }
+      "anchor": { "x": 64, "y": 132 }, "pivot": "front" }
   ],
   "animations": [
     { "name": "door_leaf", "from": 0, "to": 90, "duration": 100,
       "frames": [
         { "index": 0, "angle": 0, "duration": 100,
           "x": 0, "y": 160, "w": 128, "h": 160,
-          "anchor": { "x": 64, "y": 132 } }
+          "anchor": { "x": 64, "y": 132 }, "pivot": "origin" }
       ] }
   ]
 }
@@ -219,7 +229,7 @@ bottom-centre on the cell. `tileoffset.y` shifts the image down by the empty
 bottom margin, so the anchor (not the cell's bottom edge) lands on the tile
 cell. `--tile-width` overrides the tile width used for that offset (by default
 `2 * scale`). The first frame tile carries the `animation` list; every static
-tile carries `name`, `rotation`, `view` and anchor properties.
+tile carries `name`, `rotation`, `view`, `pivot` and anchor properties.
 
 Contact shadows are baked into each sprite, like in the Tiled object atlas, and
 keep their partial alpha: sprites are composited with straight-alpha "over",

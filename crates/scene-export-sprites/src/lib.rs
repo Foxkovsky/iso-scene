@@ -60,6 +60,51 @@ pub struct AnimationSpec {
     pub rotation: u16,
 }
 
+/// Point of the footprint that a static view puts on the cell anchor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pivot {
+    /// Front (bottom) corner, where the object meets the floor nearest the
+    /// viewer; matches a Tiled tile placed on the floor.
+    #[default]
+    Front,
+    /// Back (top) corner.
+    Back,
+    /// Left corner.
+    Left,
+    /// Right corner.
+    Right,
+    /// Centre of the footprint, e.g. for inventory icons.
+    Center,
+}
+
+impl Pivot {
+    /// Name used on the command line and in the manifest.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Front => "front",
+            Self::Back => "back",
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Center => "center",
+        }
+    }
+
+    /// Parse a command-line name.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        [
+            Self::Front,
+            Self::Back,
+            Self::Left,
+            Self::Right,
+            Self::Center,
+        ]
+        .into_iter()
+        .find(|pivot| pivot.name() == name)
+    }
+}
+
 /// What to put on the sheet.
 #[derive(Clone, Debug)]
 pub struct SheetOptions {
@@ -69,6 +114,8 @@ pub struct SheetOptions {
     pub scale: u32,
     /// Quarter turns for the static views, in order.
     pub views: Vec<u16>,
+    /// Footprint point that static views put on the anchor.
+    pub pivot: Pivot,
     /// Optional animation row.
     pub animation: Option<AnimationSpec>,
     /// Tile width used for the Tiled `tileoffset`, when known.
@@ -100,8 +147,8 @@ struct Cell {
     angle: f64,
     duration: Option<u32>,
     sprite: Sprite,
-    /// Pixel that must sit on the cell anchor: the footprint's front corner for
-    /// a static view, the object's local origin for an animation frame.
+    /// Pixel that must sit on the cell anchor: the footprint pivot for a
+    /// static view, the object's local origin for an animation frame.
     reference: [f64; 2],
 }
 
@@ -171,7 +218,13 @@ pub fn export(
         for (column, rotation) in options.views.iter().enumerate() {
             let sprite =
                 render_object_sprite_at(&entry.object, *rotation, 0.0, options.scale, materials)?;
-            let reference = front_corner(&entry.object, *rotation, options.scale, &sprite);
+            let reference = footprint_pivot(
+                &entry.object,
+                *rotation,
+                options.scale,
+                &sprite,
+                options.pivot,
+            );
             cells.push(Cell {
                 row: row as u32,
                 column: column as u32,
@@ -289,16 +342,24 @@ pub fn export(
     })
 }
 
-/// Pixel of the footprint's front corner, where the object meets the floor.
+/// Pixel of the footprint point selected by `pivot`.
 ///
 /// In the 2:1 projection the local origin of a footprint is its far (top)
-/// corner, so a sprite anchored there hangs above the cell. The front corner is
-/// the point a game places on the floor and Tiled aligns to the cell bottom.
+/// corner, so a sprite anchored there hangs above the cell. The default front
+/// corner is the point a game places on the floor and Tiled aligns to the cell
+/// bottom.
 ///
-/// The corner comes from the declared footprint `(width, depth)` at floor
+/// The point comes from the declared footprint `(width, depth)` at floor
 /// level, not from the geometry's bounds: a table top or a cornice that
-/// overhangs the footprint must not lift the anchor into the air.
-fn front_corner(object: &CompiledObject, rotation: u16, scale: u32, sprite: &Sprite) -> [f64; 2] {
+/// overhangs the footprint must not lift the anchor into the air. When two
+/// corners are equally extreme the pivot is the middle of that edge.
+fn footprint_pivot(
+    object: &CompiledObject,
+    rotation: u16,
+    scale: u32,
+    sprite: &Sprite,
+    pivot: Pivot,
+) -> [f64; 2] {
     let scale = f64::from(scale);
     let instance = scene_core::Instance {
         object: std::sync::Arc::new(object.clone()),
@@ -307,7 +368,7 @@ fn front_corner(object: &CompiledObject, rotation: u16, scale: u32, sprite: &Spr
         angle: 0.0,
     };
     let origin = project_point(instance.to_world([0.0, 0.0, 0.0]), scale);
-    let front = [
+    let corners: Vec<[f64; 2]> = [
         [0.0, 0.0],
         [object.width, 0.0],
         [0.0, object.depth],
@@ -315,12 +376,28 @@ fn front_corner(object: &CompiledObject, rotation: u16, scale: u32, sprite: &Spr
     ]
     .into_iter()
     .map(|[x, y]| project_point(instance.to_world([x, y, 0.0]), scale))
-    .fold([0.0, f64::NEG_INFINITY], |best, point| {
-        if point[1] > best[1] { point } else { best }
-    });
+    .collect();
+    // Score to maximise for each pivot; the centre averages every corner.
+    let score = |point: &[f64; 2]| match pivot {
+        Pivot::Front => point[1],
+        Pivot::Back => -point[1],
+        Pivot::Left => -point[0],
+        Pivot::Right => point[0],
+        Pivot::Center => 0.0,
+    };
+    let best = corners.iter().map(score).fold(f64::NEG_INFINITY, f64::max);
+    let chosen: Vec<&[f64; 2]> = corners
+        .iter()
+        .filter(|point| score(point) >= best - 1e-6)
+        .collect();
+    let count = chosen.len().max(1) as f64;
+    let point = [
+        chosen.iter().map(|point| point[0]).sum::<f64>() / count,
+        chosen.iter().map(|point| point[1]).sum::<f64>() / count,
+    ];
     [
-        sprite.anchor[0] + front[0] - origin[0],
-        sprite.anchor[1] + front[1] - origin[1],
+        sprite.anchor[0] + point[0] - origin[0],
+        sprite.anchor[1] + point[1] - origin[1],
     ]
 }
 
@@ -364,7 +441,13 @@ fn manifest_json(
     let sprites: Vec<Value> = cells
         .iter()
         .filter(|cell| cell.duration.is_none())
-        .map(|cell| cell_json(cell, cell_size, anchor))
+        .map(|cell| {
+            let mut sprite = cell_json(cell, cell_size, anchor);
+            if let Some(object) = sprite.as_object_mut() {
+                object.insert("pivot".to_string(), json!(options.pivot.name()));
+            }
+            sprite
+        })
         .collect();
     let animations: Vec<Value> = options
         .animation
@@ -380,6 +463,7 @@ fn manifest_json(
                         object.insert("index".to_string(), json!(cell.column));
                         object.insert("angle".to_string(), json!(cell.angle));
                         object.insert("duration".to_string(), json!(cell.duration));
+                        object.insert("pivot".to_string(), json!("origin"));
                     }
                     frame
                 })
@@ -441,7 +525,7 @@ fn tileset_json(
                     {"name": "name", "type": "string", "value": cell.name},
                     {"name": "view", "type": "int", "value": cell.column},
                     {"name": "rotation", "type": "int", "value": cell.rotation},
-                    {"name": "anchor", "type": "string", "value": "bottom-center"},
+                    {"name": "pivot", "type": "string", "value": options.pivot.name()},
                     {"name": "anchor-x", "type": "float", "value": anchor[0]},
                     {"name": "anchor-y", "type": "float", "value": anchor[1]}
                 ]
@@ -469,7 +553,7 @@ fn tileset_json(
                 "type": animation.object,
                 "properties": [
                     {"name": "name", "type": "string", "value": animation.object},
-                    {"name": "anchor", "type": "string", "value": "bottom-center"},
+                    {"name": "pivot", "type": "string", "value": "origin"},
                     {"name": "anchor-x", "type": "float", "value": anchor[0]},
                     {"name": "anchor-y", "type": "float", "value": anchor[1]}
                 ],
@@ -581,6 +665,7 @@ mod tests {
             name: "sheet".into(),
             scale: 8,
             views: vec![0, 90, 180, 270],
+            pivot: Pivot::Front,
             animation: None,
             tile_width: Some(16),
         };
@@ -621,6 +706,7 @@ mod tests {
             name: "door".into(),
             scale: 8,
             views: vec![0, 180],
+            pivot: Pivot::Front,
             animation: Some(AnimationSpec {
                 object: "door".into(),
                 from: 0.0,
@@ -670,6 +756,7 @@ mod tests {
             name: "one".into(),
             scale: 8,
             views: vec![0],
+            pivot: Pivot::Front,
             animation: None,
             tile_width: None,
         };
@@ -685,6 +772,7 @@ mod tests {
             name: name.into(),
             scale: 8,
             views: vec![0, 90, 180, 270],
+            pivot: Pivot::Front,
             animation: None,
             tile_width: None,
         }
@@ -832,11 +920,30 @@ mod tests {
             let reference = |object: &CompiledObject| {
                 let sprite =
                     render_object_sprite_at(object, rotation, 0.0, 8, &BTreeMap::new()).unwrap();
-                let corner = front_corner(object, rotation, 8, &sprite);
+                let corner = footprint_pivot(object, rotation, 8, &sprite, Pivot::Front);
                 // The anchor relative to the object's origin pixel.
                 [corner[0] - sprite.anchor[0], corner[1] - sprite.anchor[1]]
             };
             assert_eq!(reference(&plain), reference(&overhang), "rot {rotation}");
         }
+    }
+
+    #[test]
+    fn pivots_pick_footprint_corners_and_centre() {
+        let object = box_object("desk", 2.0, 1.0);
+        let sprite = render_object_sprite_at(&object, 0, 0.0, 8, &BTreeMap::new()).unwrap();
+        let at = |pivot| {
+            let point = footprint_pivot(&object, 0, 8, &sprite, pivot);
+            [point[0] - sprite.anchor[0], point[1] - sprite.anchor[1]]
+        };
+        // Screen offsets from the origin corner at scale 8: x = (x - y) * 8,
+        // y = (x + y) / 2 * 8.
+        assert_eq!(at(Pivot::Back), [0.0, 0.0]);
+        assert_eq!(at(Pivot::Front), [8.0, 12.0]);
+        assert_eq!(at(Pivot::Right), [16.0, 8.0]);
+        assert_eq!(at(Pivot::Left), [-8.0, 4.0]);
+        assert_eq!(at(Pivot::Center), [4.0, 6.0]);
+        assert_eq!(Pivot::parse("center"), Some(Pivot::Center));
+        assert_eq!(Pivot::parse("middle"), None);
     }
 }

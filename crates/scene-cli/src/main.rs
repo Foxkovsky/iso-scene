@@ -613,6 +613,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let mut scale: Option<u32> = None;
     let mut tile_width: Option<u32> = None;
     let mut object_filter: Vec<String> = Vec::new();
+    let mut pivot = scene_export_sprites::Pivot::default();
     let mut base_override: Option<PathBuf> = None;
     let mut animation_object: Option<String> = None;
     let mut from = 0.0_f64;
@@ -712,6 +713,16 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 object_filter.push(v);
+            }
+            "--pivot" => {
+                let Some(v) = value("--pivot") else {
+                    return ExitCode::from(2);
+                };
+                let Some(parsed) = scene_export_sprites::Pivot::parse(&v) else {
+                    eprintln!("iso-scene: `--pivot` must be front, back, left, right or center");
+                    return ExitCode::from(2);
+                };
+                pivot = parsed;
             }
             "--animation" => {
                 let Some(v) = value("--animation") else {
@@ -923,6 +934,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         name,
         scale,
         views: views.unwrap_or_else(|| vec![0, 90, 180, 270]),
+        pivot,
         animation,
         tile_width: tile_width.or_else(|| scale.checked_mul(2)),
     };
@@ -1340,6 +1352,7 @@ fn print_help() {
         "  sprites <file>  pack objects from .scene/.model files into a sprite sheet + JSON/TSJ"
     );
     println!("                  --views 1|2|4 or --angles 0,90,180,270; --object filters");
+    println!("                  --pivot front|back|left|right|center anchors static views");
     println!(
         "                  --animation <name> --from --to --frames --duration adds a frame row"
     );
