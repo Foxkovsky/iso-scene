@@ -9,6 +9,7 @@
 
 mod collision;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -16,7 +17,7 @@ use collision::Footprint;
 pub use collision::{Collision, MAX_FOOTPRINT_CELLS};
 
 use rayon::prelude::*;
-use scene_backend_iso::{Sprite, project_point, render_object_sprite};
+use scene_backend_iso::{Sprite, project_point, render_object_sprite_at};
 use scene_core::SceneGraph;
 use scene_render::{Image, write_png};
 use scene_syntax::Diagnostic;
@@ -69,10 +70,27 @@ pub struct ExportReport {
     pub collisions: Vec<Collision>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One sprite of the object atlas: an object at a quarter turn and a `turn`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct SpriteKey {
     name: String,
     rotation: u16,
+    /// `turn` in degrees, as bits so the key is `Ord`; -0 is folded into 0.
+    angle: u64,
+}
+
+impl SpriteKey {
+    fn of(instance: &scene_core::Instance) -> Self {
+        Self {
+            name: instance.object.name.clone(),
+            rotation: instance.rotation,
+            angle: (instance.angle + 0.0).to_bits(),
+        }
+    }
+
+    fn angle(&self) -> f64 {
+        f64::from_bits(self.angle)
+    }
 }
 
 struct SpriteEntry {
@@ -201,14 +219,14 @@ pub fn export_with(
         None
     };
 
+    // Sprite keys in first-use order, with an index for the lookups below.
     let mut keys = Vec::new();
+    let mut key_index = BTreeMap::new();
     for instance in &scene.instances {
-        let key = SpriteKey {
-            name: instance.object.name.clone(),
-            rotation: instance.rotation,
-        };
-        if !keys.contains(&key) {
-            keys.push(key);
+        let key = SpriteKey::of(instance);
+        if !key_index.contains_key(&key) {
+            key_index.insert(key.clone(), keys.len());
+            keys.push((key, instance));
         }
     }
 
@@ -216,15 +234,11 @@ pub fn export_with(
     // let the first failing key (in order) decide the error.
     let rendered: Vec<Result<SpriteEntry, Diagnostic>> = keys
         .into_par_iter()
-        .map(|key| {
-            let Some(instance) = scene.instances.iter().find(|instance| {
-                instance.object.name == key.name && instance.rotation == key.rotation
-            }) else {
-                return Err(error("E0602", "internal sprite lookup failed"));
-            };
-            let sprite = render_object_sprite(
+        .map(|(key, instance)| {
+            let sprite = render_object_sprite_at(
                 instance.object.as_ref(),
                 instance.rotation,
+                key.angle(),
                 scale,
                 &scene.materials,
             )?;
@@ -232,7 +246,7 @@ pub fn export_with(
                 object: instance.object.clone(),
                 at: [0.0, 0.0, 0.0],
                 rotation: instance.rotation,
-                angle: 0.0,
+                angle: key.angle(),
             };
             let bounds = zero.world_bounds();
             let bottom_world = [bounds.max[0], bounds.max[1], bounds.min[2]];
@@ -351,6 +365,7 @@ pub fn export_with(
                     "type": key.key.name,
                     "properties": [
                         {"name": "rotation", "type": "int", "value": key.key.rotation},
+                        {"name": "turn", "type": "float", "value": key.key.angle()},
                         {"name": "walkable", "type": "bool", "value": false},
                         {"name": "collides", "type": "bool", "value": true}
                     ]
@@ -419,11 +434,8 @@ pub fn export_with(
     let mut footprints = Vec::with_capacity(ordered.len());
     let mut tile_cells = Vec::new();
     for (index, instance) in ordered.iter().enumerate() {
-        let sprite_index = sprites
-            .iter()
-            .position(|entry| {
-                entry.key.name == instance.object.name && entry.key.rotation == instance.rotation
-            })
+        let sprite_index = *key_index
+            .get(&SpriteKey::of(instance))
             .ok_or_else(|| error("E0602", "internal sprite index failed"))?;
         let entry = &sprites[sprite_index];
         let footprint = Footprint::of(instance);
@@ -468,6 +480,7 @@ pub fn export_with(
             "visible": true,
             "properties": [
                 {"name": "rotation", "type": "int", "value": instance.rotation},
+                {"name": "turn", "type": "float", "value": instance.angle},
                 {"name": "z", "type": "float", "value": instance.at[2]},
                 // The footprint in cells, relative to the stored position, so
                 // it follows the object when it is moved in Tiled.

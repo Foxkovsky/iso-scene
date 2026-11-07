@@ -591,3 +591,35 @@ fn too_many_objects_in_one_cell_are_rejected_for_tile_layers() {
     assert!(export(&scene, &dir).is_ok());
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_turned_object_gets_its_own_sprite() {
+    let scene = compile(
+        "version 1; object leaf (2, 0.25) { box at (0, 0, 0) size (w, d, 2) material wood; } render iso; scale 16; canvas (6, 6, 3); place leaf at (1, 1, 0); place leaf at (1, 4, 0) turn 45; place leaf at (4, 1, 0);",
+    );
+    let dir = temp_dir("turned");
+    let report = export(&scene, &dir).expect("export");
+    let ts: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(report.objects_tileset.as_ref().expect("objects tsj"))
+            .expect("read tsj"),
+    )
+    .expect("parse tsj");
+    // Two sprites: unturned (shared by two places) and turned by 45°.
+    assert_eq!(ts["tilecount"], 2);
+    let turns: Vec<f64> = ts["tiles"]
+        .as_array()
+        .expect("tiles")
+        .iter()
+        .map(|tile| {
+            tile["properties"]
+                .as_array()
+                .expect("properties")
+                .iter()
+                .find(|property| property["name"] == "turn")
+                .and_then(|property| property["value"].as_f64())
+                .expect("turn")
+        })
+        .collect();
+    assert_eq!(turns, [0.0, 45.0]);
+    let _ = fs::remove_dir_all(dir);
+}
