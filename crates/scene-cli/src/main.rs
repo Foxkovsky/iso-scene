@@ -41,6 +41,7 @@ fn main() -> ExitCode {
         "limits" => commands::limits::limits(args.collect()),
         "help" => commands::help::help(args.collect()),
         "lsp" => serve(scene_server::lsp::run),
+        "mcp" => serve(scene_server::mcp::run),
         other => {
             eprintln!("iso-scene: unknown command `{other}`");
             eprintln!("Try `iso-scene --help`.");
@@ -89,6 +90,7 @@ pub(crate) fn print_help() {
     );
     println!("  help [topic]    one section of the language spec (topics without one)");
     println!("  lsp             run the language server on stdin/stdout");
+    println!("  mcp             run the MCP server for agents on stdin/stdout");
     println!("  limits          list every limit and its error code (--json for agents)");
     println!("  spec-version    print the implemented language version");
     println!();

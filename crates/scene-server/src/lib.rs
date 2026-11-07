@@ -5,4 +5,6 @@ pub mod analysis;
 pub mod help;
 pub mod limits;
 pub mod lsp;
+pub mod mcp;
+pub mod preview;
 pub mod rpc;

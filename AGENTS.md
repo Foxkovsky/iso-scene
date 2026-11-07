@@ -55,6 +55,8 @@ Pixels are the output, so check them, not only the exit code:
 
 Use `iso-scene help <topic>` for one section of the spec and
 `iso-scene limits` for every limit instead of reading all of `docs/spec.md`.
+With MCP (`iso-scene mcp`), the `check`, `render`, `help` and `limits` tools
+do the same and `render` returns the image itself.
 
 ## Performance
 
@@ -91,7 +93,7 @@ asset pipelines. Speed is a feature with the same weight as correctness.
 ## Current state
 
 - Specification: draft v1.
-- Implementation: lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel/Tiled export and walls are complete; LSP/MCP are next.
+- Implementation: lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel/Tiled export, walls, scene animations, a language server (`iso-scene lsp`) and an MCP server (`iso-scene mcp`, see `docs/servers.md`).
 - Tests: lexer, parser, evaluator, iso/ortho projections and renders, examples, CLI. Generated PNGs are not committed.
 
 ## Adding a feature

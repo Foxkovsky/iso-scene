@@ -479,10 +479,12 @@ name = "scene-server"
 version = "0.1.0"
 dependencies = [
  "scene-backend-iso",
+ "scene-backend-ortho",
  "scene-backend-voxel",
  "scene-core",
  "scene-export-sprites",
  "scene-export-tiled",
+ "scene-render",
  "scene-syntax",
  "scene-walls",
  "serde_json",

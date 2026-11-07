@@ -57,3 +57,35 @@ language-servers = ["iso-scene"]
 The extension in `editors/vscode` still has its own hover and completion;
 switching it to `iso-scene lsp` needs the `vscode-languageclient` package and
 is not done yet.
+
+## MCP server: `iso-scene mcp`
+
+An [MCP](https://modelcontextprotocol.io) server for agents, over stdio (one
+JSON-RPC message per line). Tools:
+
+| Tool | Does |
+|---|---|
+| `check` | parse and evaluate a `.scene`, `.model` or `.walls`; `ok` with a summary (instances, bounds, animations) or the first error as `file:line:column: error[CODE]: message` |
+| `render` | render to PNG (`view`: iso, top, front, side) and **return the image**, so the agent looks at what it built |
+| `export` | `tiled` (with optional `walls`), `voxel` or `animate` |
+| `help` | one section of the spec by topic; without one, the topic list |
+| `limits` | every limit and its error code |
+
+The server's working directory is the project root: every path, read or
+written, must stay inside it. Images over 4 000 000 pixels are written but
+not returned inline. The server's `instructions` ask the agent to work in
+the build → look → fix loop.
+
+### Claude Code
+
+From the project directory:
+
+```bash
+claude mcp add iso-scene -- iso-scene mcp
+```
+
+or in `.mcp.json`:
+
+```json
+{ "mcpServers": { "iso-scene": { "command": "iso-scene", "args": ["mcp"] } } }
+```

@@ -11,8 +11,10 @@ workspace = true
 
 [dependencies]
 scene-backend-iso = { path = "../scene-backend-iso" }
+scene-backend-ortho = { path = "../scene-backend-ortho" }
 scene-backend-voxel = { path = "../scene-backend-voxel" }
 scene-core = { path = "../scene-core" }
+scene-render = { path = "../scene-render" }
 scene-export-sprites = { path = "../scene-export-sprites" }
 scene-export-tiled = { path = "../scene-export-tiled" }
 scene-syntax = { path = "../scene-syntax" }
