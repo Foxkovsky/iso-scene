@@ -156,3 +156,18 @@ or a jamb in front of a panel, is ordered from the pixels it actually occupies
 instead of from a mean depth. Faces that genuinely interleave (in front at one
 pixel and behind at another) cannot be ordered by a painter's algorithm; such a
 cycle is broken by mean depth.
+
+### Animated sprite sheets
+
+`iso-scene animate scene.scene --object leaf --from 0 --to 90 --frames 7 --duration 100 -o out/door`
+renders one frame per angle, packs them into a horizontal sheet and writes a
+tileset whose first tile carries a Tiled `animation` block. Open
+`out/door/scene.tmj` in Tiled and the tile animates in the editor and in the
+game. The rotating instance turns around its local origin, so a hinged part
+should be modelled with the hinge at `(0, 0)`.
+
+### Contact shadows
+
+Object sprites written by the Tiled exporter get a baked diamond-shaped contact
+shadow under the footprint. It is part of the sprite, so it costs nothing at
+runtime and follows the object in Tiled.

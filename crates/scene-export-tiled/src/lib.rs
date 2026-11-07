@@ -193,6 +193,7 @@ pub fn export_with(
             object: instance.object.clone(),
             at: [0.0, 0.0, 0.0],
             rotation: instance.rotation,
+            angle: 0.0,
         };
         let bounds = zero.world_bounds();
         let bottom_world = [bounds.max[0], bounds.max[1], bounds.min[2]];

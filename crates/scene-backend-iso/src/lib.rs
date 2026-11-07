@@ -45,6 +45,16 @@ pub fn view_depth(point: [f64; 3]) -> f64 {
     point[0] + point[1] + point[2]
 }
 
+/// Render a scene and also return the pixel origin of the canvas.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`render`].
+pub fn render_with_origin(scene: &SceneGraph) -> Result<(IsoImage, [f64; 2]), Diagnostic> {
+    let rendered = render_internal(scene, MARGIN)?;
+    Ok((rendered.image, rendered.origin))
+}
+
 /// Render a scene with the 2:1 isometric backend.
 ///
 /// # Errors
@@ -90,19 +100,82 @@ pub fn render_object_sprite(
             object: Arc::new(object.clone()),
             at: [0.0, 0.0, 0.0],
             rotation,
+            angle: 0.0,
         }],
         bounds: object.local_bounds(),
     };
     let rendered = render_internal(&graph, MARGIN)?;
     let (x, y) = rotate_xy(0.0, 0.0, object.width, object.depth, rotation);
     let screen = project_point([x, y, 0.0], f64::from(scale));
+    let mut image = rendered.image;
+    add_contact_shadow(&mut image, object, rotation, scale, rendered.origin);
     Ok(Sprite {
-        image: rendered.image,
+        image,
         anchor: [
             screen[0] - rendered.origin[0],
             screen[1] - rendered.origin[1],
         ],
     })
+}
+
+/// Bake a soft contact shadow under the object into its sprite.
+///
+/// Tiled draws the sprite as-is, so the shadow travels with it and costs
+/// nothing at runtime. The shadow is drawn only where the sprite is still
+/// transparent, which keeps the object itself untouched.
+fn add_contact_shadow(
+    image: &mut Image,
+    object: &CompiledObject,
+    rotation: u16,
+    scale: u32,
+    origin: [f64; 2],
+) {
+    let corners = [
+        [0.0, 0.0],
+        [object.width, 0.0],
+        [0.0, object.depth],
+        [object.width, object.depth],
+    ];
+    let mut min = [f64::INFINITY; 2];
+    let mut max = [f64::NEG_INFINITY; 2];
+    for corner in corners {
+        let (x, y) = rotate_xy(corner[0], corner[1], object.width, object.depth, rotation);
+        let point = project_point([x, y, 0.0], f64::from(scale));
+        min[0] = min[0].min(point[0]);
+        min[1] = min[1].min(point[1]);
+        max[0] = max[0].max(point[0]);
+        max[1] = max[1].max(point[1]);
+    }
+    let center = [
+        min[0].midpoint(max[0]) - origin[0],
+        min[1].midpoint(max[1]) - origin[1],
+    ];
+    let radius_x = ((max[0] - min[0]) / 2.0 * 0.92).max(0.5);
+    let radius_y = ((max[1] - min[1]) / 2.0 * 0.92).max(0.5);
+    let color = [10.0, 12.0, 16.0];
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let dx = (f64::from(x) + 0.5 - center[0]).abs() / radius_x;
+            let dy = (f64::from(y) + 0.5 - center[1]).abs() / radius_y;
+            // The footprint projects to a diamond, so use an L1 falloff.
+            let distance = dx + dy;
+            if distance >= 1.0 {
+                continue;
+            }
+            let alpha = 0.36 * (1.0 - distance).powf(1.2);
+            if alpha <= 0.004 {
+                continue;
+            }
+            let index = ((y * image.width + x) * 4) as usize;
+            if image.rgba[index + 3] != 0 {
+                continue;
+            }
+            image.rgba[index] = color[0] as u8;
+            image.rgba[index + 1] = color[1] as u8;
+            image.rgba[index + 2] = color[2] as u8;
+            image.rgba[index + 3] = (alpha * 255.0).round() as u8;
+        }
+    }
 }
 
 fn render_internal(scene: &SceneGraph, margin: f64) -> Result<Rendered, Diagnostic> {
@@ -691,18 +764,7 @@ fn iso_color(normal: &[f64; 3], palette: Palette) -> [u8; 3] {
 }
 
 fn world_point(point: [f64; 3], instance: &Instance) -> [f64; 3] {
-    let (x, y) = rotate_xy(
-        point[0],
-        point[1],
-        instance.object.width,
-        instance.object.depth,
-        instance.rotation,
-    );
-    [
-        x + instance.at[0],
-        y + instance.at[1],
-        point[2] + instance.at[2],
-    ]
+    instance.to_world(point)
 }
 
 fn load_palettes(scene: &SceneGraph) -> Result<BTreeMap<String, Palette>, Diagnostic> {

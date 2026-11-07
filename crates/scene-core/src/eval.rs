@@ -797,12 +797,14 @@ impl Evaluator {
                     object,
                     at,
                     rotation,
+                    angle: 0.0,
                 };
                 if let Some(anchor) = anchor {
                     let zero = Instance {
                         object: instance.object.clone(),
                         at: [0.0, 0.0, 0.0],
                         rotation,
+                        angle: 0.0,
                     };
                     let bounds = zero.world_bounds();
                     let corner = match anchor {

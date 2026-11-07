@@ -395,15 +395,7 @@ fn color_for(
 }
 
 fn to_local(point: [f64; 3], instance: &Instance) -> [f64; 3] {
-    let x = point[0] - instance.at[0];
-    let y = point[1] - instance.at[1];
-    let (x, y) = match instance.rotation {
-        90 => (y, instance.object.depth - x),
-        180 => (instance.object.width - x, instance.object.depth - y),
-        270 => (instance.object.width - y, x),
-        _ => (x, y),
-    };
-    [x, y, point[2] - instance.at[2]]
+    instance.to_local(point)
 }
 
 fn contains(primitive: &Primitive, p: [f64; 3]) -> bool {

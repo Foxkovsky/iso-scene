@@ -35,6 +35,7 @@ fn main() -> ExitCode {
         "render" => render_scene(args.collect()),
         "voxel" => voxel_scene(args.collect()),
         "tiled" => tiled_scene(args.collect()),
+        "animate" => animate_scene(args.collect()),
         other => {
             eprintln!("iso-scene: unknown command `{other}`");
             eprintln!("Try `iso-scene --help`.");
@@ -308,6 +309,7 @@ fn model_preview(model: &scene_core::CompiledModel) -> Result<scene_core::SceneG
             object: object.clone(),
             at: [offset, 0.0, 0.0],
             rotation: 0,
+            angle: 0.0,
         });
         offset += object.width + object.width.mul_add(0.25, 1.0);
     }
@@ -335,6 +337,290 @@ fn model_preview(model: &scene_core::CompiledModel) -> Result<scene_core::SceneG
         instances,
         bounds,
     })
+}
+
+#[allow(
+    clippy::too_many_lines,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn animate_scene(args: Vec<String>) -> ExitCode {
+    let mut path: Option<String> = None;
+    let mut object_name: Option<String> = None;
+    let mut from = 0.0_f64;
+    let mut to = 90.0_f64;
+    let mut frames = 7_u32;
+    let mut duration = 120_u32;
+    let mut output: Option<PathBuf> = None;
+    let mut args = args.into_iter();
+
+    while let Some(argument) = args.next() {
+        let mut value = |name: &str| -> Option<String> {
+            args.next().or_else(|| {
+                eprintln!("iso-scene: `{name}` needs a value");
+                None
+            })
+        };
+        match argument.as_str() {
+            "--out" | "-o" => {
+                let Some(v) = value("--out") else {
+                    return ExitCode::from(2);
+                };
+                output = Some(PathBuf::from(v));
+            }
+            "--object" => {
+                let Some(v) = value("--object") else {
+                    return ExitCode::from(2);
+                };
+                object_name = Some(v);
+            }
+            "--from" => {
+                let Some(v) = value("--from") else {
+                    return ExitCode::from(2);
+                };
+                if let Ok(n) = v.parse() {
+                    from = n;
+                } else {
+                    eprintln!("iso-scene: invalid angle `{v}`");
+                    return ExitCode::from(2);
+                }
+            }
+            "--to" => {
+                let Some(v) = value("--to") else {
+                    return ExitCode::from(2);
+                };
+                if let Ok(n) = v.parse() {
+                    to = n;
+                } else {
+                    eprintln!("iso-scene: invalid angle `{v}`");
+                    return ExitCode::from(2);
+                }
+            }
+            "--frames" => {
+                let Some(v) = value("--frames") else {
+                    return ExitCode::from(2);
+                };
+                match v.parse::<u32>() {
+                    Ok(n) if n >= 1 => frames = n,
+                    _ => {
+                        eprintln!("iso-scene: invalid frame count `{v}`");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            "--duration" => {
+                let Some(v) = value("--duration") else {
+                    return ExitCode::from(2);
+                };
+                match v.parse::<u32>() {
+                    Ok(n) if n >= 1 => duration = n,
+                    _ => {
+                        eprintln!("iso-scene: invalid duration `{v}`");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            other if path.is_none() => path = Some(other.to_string()),
+            other => {
+                eprintln!("iso-scene: unexpected argument `{other}`");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    let Some(path) = path else {
+        eprintln!("iso-scene: `animate` needs a .scene file");
+        return ExitCode::from(2);
+    };
+    let Some(source) = read(&path) else {
+        return ExitCode::from(2);
+    };
+    let program = match scene_syntax::parse(&source) {
+        Ok(program) => program,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    let file = Path::new(&path);
+    let base = file.parent().unwrap_or_else(|| Path::new("."));
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let scene = match scene_core::compile_scene(&program, base, &root) {
+        Ok(scene) => scene,
+        Err(diagnostic) => return report(&path, &source, &diagnostic),
+    };
+    let Some(index) = scene
+        .instances
+        .iter()
+        .position(|instance| Some(&instance.object.name) == object_name.as_ref())
+    else {
+        eprintln!(
+            "iso-scene: scene has no instance of `{}`",
+            object_name.as_deref().unwrap_or("")
+        );
+        return ExitCode::from(2);
+    };
+
+    let angles: Vec<f64> = if frames <= 1 {
+        vec![from]
+    } else {
+        (0..frames)
+            .map(|frame| from + (to - from) * f64::from(frame) / f64::from(frames - 1))
+            .collect()
+    };
+    let mut rendered = Vec::with_capacity(angles.len());
+    for angle in &angles {
+        let mut frame = scene.clone();
+        frame.background = scene_syntax::ast::Background::Transparent;
+        frame.instances[index].angle = *angle;
+        match scene_backend_iso::render_with_origin(&frame) {
+            Ok((image, origin)) => rendered.push((image, origin)),
+            Err(diagnostic) => return report(&path, &source, &diagnostic),
+        }
+    }
+
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    for (image, origin) in &rendered {
+        min_x = min_x.min(origin[0]);
+        min_y = min_y.min(origin[1]);
+        max_x = max_x.max(origin[0] + f64::from(image.width));
+        max_y = max_y.max(origin[1] + f64::from(image.height));
+    }
+    let frame_w = u32::try_from((max_x - min_x).ceil() as isize)
+        .unwrap_or(1)
+        .max(1);
+    let frame_h = u32::try_from((max_y - min_y).ceil() as isize)
+        .unwrap_or(1)
+        .max(1);
+    let sheet_w = frame_w.saturating_mul(rendered.len() as u32);
+    let mut sheet = scene_render::Image {
+        width: sheet_w,
+        height: frame_h,
+        rgba: vec![0; (sheet_w as usize) * (frame_h as usize) * 4],
+    };
+    for (index, (image, origin)) in rendered.iter().enumerate() {
+        let x = (origin[0] - min_x).round() as u32 + index as u32 * frame_w;
+        let y = (origin[1] - min_y).round() as u32;
+        blit(&mut sheet, image, x, y);
+    }
+
+    let output = output.unwrap_or_else(|| {
+        let stem = file
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("animation");
+        PathBuf::from("out").join(stem)
+    });
+    if let Err(error) = fs::create_dir_all(&output) {
+        eprintln!("iso-scene: cannot create `{}`: {error}", output.display());
+        return ExitCode::from(2);
+    }
+    let stem = output
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("animation")
+        .to_string();
+    let png_name = format!("{stem}.png");
+    let png_path = output.join(&png_name);
+    if let Err(message) = scene_render::write_png(&sheet, &png_path) {
+        eprintln!("iso-scene: {message}");
+        return ExitCode::from(2);
+    }
+    let animation: Vec<serde_json::Value> = (0..rendered.len())
+        .map(|frame| serde_json::json!({"tileid": frame, "duration": duration}))
+        .collect();
+    let tileset = serde_json::json!({
+        "type": "tileset",
+        "name": stem,
+        "version": "1.10",
+        "tiledversion": "1.12.2",
+        "tilewidth": frame_w,
+        "tileheight": frame_h,
+        "tilecount": rendered.len(),
+        "columns": rendered.len(),
+        "image": png_name,
+        "imagewidth": sheet_w,
+        "imageheight": frame_h,
+        "margin": 0,
+        "spacing": 0,
+        "tiles": [{"id": 0, "animation": animation}]
+    });
+    let tsj_name = format!("{stem}.tsj");
+    if let Err(error) = fs::write(
+        output.join(&tsj_name),
+        serde_json::to_string_pretty(&tileset).unwrap_or_default() + "\n",
+    ) {
+        eprintln!("iso-scene: cannot write `{}`: {error}", output.display());
+        return ExitCode::from(2);
+    }
+    let map = serde_json::json!({
+        "type": "map",
+        "version": "1.10",
+        "tiledversion": "1.12.2",
+        "orientation": "isometric",
+        "renderorder": "right-down",
+        "width": 1,
+        "height": 1,
+        "tilewidth": frame_w,
+        "tileheight": frame_h,
+        "infinite": false,
+        "nextlayerid": 2,
+        "nextobjectid": 1,
+        "tilesets": [{"firstgid": 1, "source": tsj_name}],
+        "layers": [{
+            "type": "tilelayer",
+            "name": "animation",
+            "id": 1,
+            "width": 1,
+            "height": 1,
+            "x": 0,
+            "y": 0,
+            "opacity": 1,
+            "visible": true,
+            "data": [1]
+        }]
+    });
+    if let Err(error) = fs::write(
+        output.join("scene.tmj"),
+        serde_json::to_string_pretty(&map).unwrap_or_default() + "\n",
+    ) {
+        eprintln!("iso-scene: cannot write scene.tmj: {error}");
+        return ExitCode::from(2);
+    }
+    println!(
+        "wrote {} frames {}x{} ({} ms each); open `{}` in Tiled",
+        rendered.len(),
+        frame_w,
+        frame_h,
+        duration,
+        output.join("scene.tmj").display()
+    );
+    ExitCode::SUCCESS
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn blit(dst: &mut scene_render::Image, src: &scene_render::Image, x: u32, y: u32) {
+    for sy in 0..src.height {
+        for sx in 0..src.width {
+            let di = (((y + sy) * dst.width + (x + sx)) * 4) as usize;
+            let si = ((sy * src.width + sx) * 4) as usize;
+            let alpha = u32::from(src.rgba[si + 3]);
+            if alpha == 0 {
+                continue;
+            }
+            if alpha == 255 {
+                dst.rgba[di..di + 4].copy_from_slice(&src.rgba[si..si + 4]);
+                continue;
+            }
+            let inverse = 255 - alpha;
+            for channel in 0..3 {
+                dst.rgba[di + channel] = ((u32::from(src.rgba[si + channel]) * alpha
+                    + u32::from(dst.rgba[di + channel]) * inverse)
+                    / 255) as u8;
+            }
+            dst.rgba[di + 3] = 255;
+        }
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -637,6 +923,7 @@ fn print_help() {
     println!("  render <file>   render a .scene to PNG (iso or ortho); -o out.svg writes iso SVG");
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
+    println!("  animate <file>  render a rotation animation as a sprite sheet + animated tile");
     println!("                  --walls <file> adds a 16-way wall tile layer with Wang set");
     println!(
         "                  --tile-layer puts objects in a tile layer instead of an object layer"

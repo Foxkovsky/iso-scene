@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use scene_core::{Instance, SceneGraph, rotate_xy};
+use scene_core::{Instance, SceneGraph};
 use scene_render::{Framebuffer, MeshFace, Palette, builtin, primitive_faces};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Background, RenderKind};
@@ -270,18 +270,7 @@ fn view_color(view: View, normal: &[f64; 3], palette: Palette) -> [u8; 3] {
 }
 
 fn world_point(point: [f64; 3], instance: &Instance) -> [f64; 3] {
-    let (x, y) = rotate_xy(
-        point[0],
-        point[1],
-        instance.object.width,
-        instance.object.depth,
-        instance.rotation,
-    );
-    [
-        x + instance.at[0],
-        y + instance.at[1],
-        point[2] + instance.at[2],
-    ]
+    instance.to_world(point)
 }
 
 fn load_palettes(scene: &SceneGraph) -> Result<BTreeMap<String, Palette>, Diagnostic> {

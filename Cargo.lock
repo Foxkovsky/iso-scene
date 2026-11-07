@@ -173,6 +173,7 @@ dependencies = [
  "scene-render",
  "scene-syntax",
  "scene-walls",
+ "serde_json",
 ]
 
 [[package]]

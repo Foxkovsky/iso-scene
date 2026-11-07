@@ -331,9 +331,51 @@ pub struct Instance {
     pub object: Arc<CompiledObject>,
     pub at: [f64; 3],
     pub rotation: u16,
+    /// Extra yaw in degrees, applied around the object's local origin.
+    pub angle: f64,
+}
+
+/// Rotate a point around the origin by an arbitrary angle in degrees.
+#[must_use]
+pub fn rotate_degrees(x: f64, y: f64, degrees: f64) -> (f64, f64) {
+    if degrees == 0.0 {
+        return (x, y);
+    }
+    let radians = degrees.to_radians();
+    let (sin, cos) = radians.sin_cos();
+    (x * cos - y * sin, x * sin + y * cos)
 }
 
 impl Instance {
+    /// Object-local point to world space, including the extra yaw.
+    #[must_use]
+    pub fn to_world(&self, point: [f64; 3]) -> [f64; 3] {
+        let (x, y) = rotate_xy(
+            point[0],
+            point[1],
+            self.object.width,
+            self.object.depth,
+            self.rotation,
+        );
+        let (x, y) = rotate_degrees(x, y, self.angle);
+        [x + self.at[0], y + self.at[1], point[2] + self.at[2]]
+    }
+
+    /// World point back to object-local space.
+    #[must_use]
+    pub fn to_local(&self, point: [f64; 3]) -> [f64; 3] {
+        let x = point[0] - self.at[0];
+        let y = point[1] - self.at[1];
+        let (x, y) = rotate_degrees(x, y, -self.angle);
+        let (x, y) = match self.rotation {
+            90 => (y, self.object.depth - x),
+            180 => (self.object.width - x, self.object.depth - y),
+            270 => (self.object.width - y, x),
+            _ => (x, y),
+        };
+        [x, y, point[2] - self.at[2]]
+    }
+
     /// World-space bounds of the placed object.
     #[must_use]
     pub fn world_bounds(&self) -> Bounds {
@@ -341,14 +383,7 @@ impl Instance {
         for part in &self.object.parts {
             let local = part.primitive.local_bounds();
             for corner in corners(local) {
-                let (x, y) = rotate_xy(
-                    corner[0],
-                    corner[1],
-                    self.object.width,
-                    self.object.depth,
-                    self.rotation,
-                );
-                bounds.include([x + self.at[0], y + self.at[1], corner[2] + self.at[2]]);
+                bounds.include(self.to_world(corner));
             }
         }
         bounds.or_zero()
