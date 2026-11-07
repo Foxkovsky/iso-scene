@@ -83,7 +83,9 @@ depth    = x
 Occupancy sampling of the same `SceneGraph`:
 
 - `step = 1 / density` blocks per voxel;
-- grid size `ceil(extent / step)`, at most 256 per axis and 256³ total;
+- grid size `ceil(extent / step)`; axes over 256 are split into several
+  models joined by a `nTRN`/`nGRP`/`nSHP` scene graph, total at most 256³
+  voxels and 4096 per axis;
 - material `color` is used as the voxel palette colour;
 - output is a `MagicaVoxel` VOX file (SIZE, XYZI, RGBA);
 - overlaps are resolved in instance/part order: later parts win.

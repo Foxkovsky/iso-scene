@@ -136,7 +136,7 @@ function schedule(document) {
     }, config().delay);
 }
 
-function html(nonce, uri) {
+function html(nonce, uri, voxUri) {
     return `<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
@@ -171,6 +171,7 @@ canvas{width:100%;height:70vh;touch-action:none;display:none;background:#202226;
 </div>
 <canvas id="canvas"></canvas>
 <div id="hint"></div>
+<script nonce="${nonce}" src="${voxUri}"></script>
 <script nonce="${nonce}" src="${uri}"></script>
 </body></html>`;
 }
@@ -191,7 +192,8 @@ function start(document) {
             });
         const nonce = crypto.randomBytes(16).toString('hex');
         const uri = panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'media', 'viewer.js')));
-        panel.webview.html = html(nonce, uri);
+        const voxUri = panel.webview.asWebviewUri(vscode.Uri.file(path.join(__dirname, 'media', 'vox.js')));
+        panel.webview.html = html(nonce, uri, voxUri);
         panel.onDidDispose(() => {
             panel = undefined;
             current = undefined;

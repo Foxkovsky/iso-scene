@@ -42,41 +42,7 @@ function switchTab(next) {
 
 buttons.forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 
-function readVox(base64) {
-    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-    const view = new DataView(bytes.buffer);
-    if (String.fromCharCode(...bytes.slice(0, 4)) !== 'VOX ') throw Error('Неверный VOX');
-    let pos = 20;
-    let dims;
-    let values;
-    let palette;
-    while (pos + 12 <= bytes.length) {
-        const tag = String.fromCharCode(...bytes.slice(pos, pos + 4));
-        const n = view.getUint32(pos + 4, true);
-        const base = pos + 12;
-        if (base + n > bytes.length) throw Error('Повреждённый VOX');
-        if (tag === 'SIZE') dims = [view.getInt32(base, true), view.getInt32(base + 4, true), view.getInt32(base + 8, true)];
-        if (tag === 'XYZI') {
-            const count = view.getUint32(base, true);
-            if (count > 500000) throw Error('Слишком много вокселей для интерактивного просмотра (более 500 000).');
-            values = bytes.slice(base + 4, base + 4 + count * 4);
-        }
-        if (tag === 'RGBA') palette = bytes.slice(base, base + n);
-        pos = base + n;
-    }
-    if (!dims || !values || !palette) throw Error('В VOX отсутствуют данные');
-    const voxels = [];
-    const set = new Set();
-    for (let i = 0; i < values.length; i += 4) {
-        const x = values[i];
-        const y = values[i + 1];
-        const z = values[i + 2];
-        const c = values[i + 3];
-        voxels.push([x, y, z, c]);
-        set.add(x + ',' + y + ',' + z);
-    }
-    return { dims, voxels, set, palette };
-}
+const readVox = (base64) => voxReader.readVox(base64);
 
 function draw() {
     if (!model || tab !== 'voxel') return;

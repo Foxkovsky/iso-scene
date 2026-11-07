@@ -15,16 +15,16 @@ use scene_core::{Instance, Primitive, SceneGraph};
 use scene_render::builtin;
 use scene_syntax::Diagnostic;
 
-const MAX_SIDE: u32 = 256;
+const MAX_AXIS: u32 = 4096;
 const MAX_GRID: u32 = 256 * 256 * 256;
 const MAX_COLORS: usize = 255;
 
 /// One occupied voxel and its palette index (1-based).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Voxel {
-    pub x: u8,
-    pub y: u8,
-    pub z: u8,
+    pub x: u16,
+    pub y: u16,
+    pub z: u16,
     pub color: u8,
 }
 
@@ -41,18 +41,14 @@ pub struct VoxelModel {
 
 impl VoxelModel {
     /// Encode the model as a `MagicaVoxel` `.vox` file.
+    ///
+    /// Models larger than 256 voxels on an axis are split into several models
+    /// placed through a scene graph (`nTRN`/`nGRP`/`nSHP`), because `XYZI`
+    /// stores coordinates in a single byte.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn encode(&self) -> Vec<u8> {
-        let mut size_bytes = Vec::with_capacity(12);
-        for value in self.size {
-            size_bytes.extend_from_slice(&i32::try_from(value).unwrap_or(i32::MAX).to_le_bytes());
-        }
-
-        let mut xyzi = Vec::with_capacity(4 + self.voxels.len() * 4);
-        xyzi.extend_from_slice(&(self.voxels.len() as u32).to_le_bytes());
-        for voxel in &self.voxels {
-            xyzi.extend_from_slice(&[voxel.x, voxel.y, voxel.z, voxel.color]);
-        }
+        const CHUNK: u32 = 256;
 
         let mut rgba = vec![0_u8; 256 * 4];
         for (index, color) in self.palette.iter().enumerate() {
@@ -63,20 +59,165 @@ impl VoxelModel {
             rgba[base + 3] = 255;
         }
 
+        let chunked = self.size.iter().any(|&side| side > CHUNK);
+        if !chunked {
+            let mut size_bytes = Vec::with_capacity(12);
+            for value in self.size {
+                size_bytes
+                    .extend_from_slice(&i32::try_from(value).unwrap_or(i32::MAX).to_le_bytes());
+            }
+            let mut xyzi = Vec::with_capacity(4 + self.voxels.len() * 4);
+            xyzi.extend_from_slice(&(self.voxels.len() as u32).to_le_bytes());
+            for voxel in &self.voxels {
+                xyzi.extend_from_slice(&[voxel.x as u8, voxel.y as u8, voxel.z as u8, voxel.color]);
+            }
+            let mut children = Vec::new();
+            children.extend(chunk(*b"SIZE", &size_bytes));
+            children.extend(chunk(*b"XYZI", &xyzi));
+            children.extend(chunk(*b"RGBA", &rgba));
+            return wrapping(children);
+        }
+
+        let counts = [
+            self.size[0].div_ceil(CHUNK),
+            self.size[1].div_ceil(CHUNK),
+            self.size[2].div_ceil(CHUNK),
+        ];
+        let mut models: Vec<(u32, [u32; 3], Vec<Voxel>)> = Vec::new();
+        for cz in 0..counts[2] {
+            for cy in 0..counts[1] {
+                for cx in 0..counts[0] {
+                    let origin = [cx * CHUNK, cy * CHUNK, cz * CHUNK];
+                    let dims = [
+                        CHUNK.min(self.size[0] - origin[0]),
+                        CHUNK.min(self.size[1] - origin[1]),
+                        CHUNK.min(self.size[2] - origin[2]),
+                    ];
+                    let mut voxels = Vec::new();
+                    for voxel in &self.voxels {
+                        let (x, y, z) =
+                            (u32::from(voxel.x), u32::from(voxel.y), u32::from(voxel.z));
+                        if x >= origin[0]
+                            && y >= origin[1]
+                            && z >= origin[2]
+                            && x < origin[0] + dims[0]
+                            && y < origin[1] + dims[1]
+                            && z < origin[2] + dims[2]
+                        {
+                            voxels.push(Voxel {
+                                x: (x - origin[0]) as u16,
+                                y: (y - origin[1]) as u16,
+                                z: (z - origin[2]) as u16,
+                                color: voxel.color,
+                            });
+                        }
+                    }
+                    if voxels.is_empty() {
+                        continue;
+                    }
+                    models.push((models.len() as u32, origin, voxels));
+                }
+            }
+        }
+
         let mut children = Vec::new();
-        children.extend(chunk(*b"SIZE", &size_bytes));
-        children.extend(chunk(*b"XYZI", &xyzi));
+        for (_, origin, voxels) in &models {
+            let dims = chunk_dims(self.size, *origin);
+            let mut size_bytes = Vec::with_capacity(12);
+            for value in dims {
+                size_bytes
+                    .extend_from_slice(&i32::try_from(value).unwrap_or(i32::MAX).to_le_bytes());
+            }
+            let mut xyzi = Vec::with_capacity(4 + voxels.len() * 4);
+            xyzi.extend_from_slice(&(voxels.len() as u32).to_le_bytes());
+            for voxel in voxels {
+                xyzi.extend_from_slice(&[voxel.x as u8, voxel.y as u8, voxel.z as u8, voxel.color]);
+            }
+            children.extend(chunk(*b"SIZE", &size_bytes));
+            children.extend(chunk(*b"XYZI", &xyzi));
+        }
         children.extend(chunk(*b"RGBA", &rgba));
 
-        let mut out = Vec::with_capacity(20 + children.len());
-        out.extend_from_slice(b"VOX ");
-        out.extend_from_slice(&150_u32.to_le_bytes());
-        out.extend_from_slice(b"MAIN");
-        out.extend_from_slice(&0_u32.to_le_bytes());
-        out.extend_from_slice(&(children.len() as u32).to_le_bytes());
-        out.extend(children);
-        out
+        // Scene graph: root transform -> group -> per-model transform -> shape.
+        let count = models.len() as u32;
+        children.extend(chunk(*b"nTRN", &transform_node(0, 1, [0, 0, 0])));
+        children.extend(chunk(
+            *b"nGRP",
+            &group_node(1, &(0..count).map(|i| 2 + i * 2).collect::<Vec<_>>()),
+        ));
+        for (index, (_, origin, _)) in models.iter().enumerate() {
+            let trn_id = 2 + index as u32 * 2;
+            let shp_id = trn_id + 1;
+            children.extend(chunk(*b"nTRN", &transform_node(trn_id, shp_id, *origin)));
+            children.extend(chunk(*b"nSHP", &shape_node(shp_id, index as u32)));
+        }
+
+        wrapping(children)
     }
+}
+
+fn chunk_dims(size: [u32; 3], origin: [u32; 3]) -> [u32; 3] {
+    [
+        256.min(size[0] - origin[0]),
+        256.min(size[1] - origin[1]),
+        256.min(size[2] - origin[2]),
+    ]
+}
+
+fn dict(pairs: &[(&str, &str)]) -> Vec<u8> {
+    let mut out = (pairs.len() as u32).to_le_bytes().to_vec();
+    for (key, value) in pairs {
+        out.extend_from_slice(&(key.len() as u32).to_le_bytes());
+        out.extend_from_slice(key.as_bytes());
+        out.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        out.extend_from_slice(value.as_bytes());
+    }
+    out
+}
+
+fn transform_node(id: u32, child: u32, translation: [u32; 3]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&id.to_le_bytes());
+    out.extend(dict(&[]));
+    out.extend_from_slice(&child.to_le_bytes());
+    out.extend_from_slice(&(-1_i32).to_le_bytes());
+    out.extend_from_slice(&0_i32.to_le_bytes());
+    out.extend_from_slice(&1_u32.to_le_bytes());
+    let text = format!("{} {} {}", translation[0], translation[1], translation[2]);
+    out.extend(dict(&[("_t", &text)]));
+    out
+}
+
+fn group_node(id: u32, children: &[u32]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&id.to_le_bytes());
+    out.extend(dict(&[]));
+    out.extend_from_slice(&(children.len() as u32).to_le_bytes());
+    for child in children {
+        out.extend_from_slice(&child.to_le_bytes());
+    }
+    out
+}
+
+fn shape_node(id: u32, model: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&id.to_le_bytes());
+    out.extend(dict(&[]));
+    out.extend_from_slice(&1_u32.to_le_bytes());
+    out.extend_from_slice(&model.to_le_bytes());
+    out.extend(dict(&[]));
+    out
+}
+
+fn wrapping(children: Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(20 + children.len());
+    out.extend_from_slice(b"VOX ");
+    out.extend_from_slice(&150_u32.to_le_bytes());
+    out.extend_from_slice(b"MAIN");
+    out.extend_from_slice(&0_u32.to_le_bytes());
+    out.extend_from_slice(&(children.len() as u32).to_le_bytes());
+    out.extend(children);
+    out
 }
 
 /// Voxelize a scene at `voxels_per_block` samples per block.
@@ -84,7 +225,8 @@ impl VoxelModel {
 /// # Errors
 ///
 /// Returns `E0601` for material problems, `E0602` for an empty scene or a
-/// grid larger than 256³, and `E0604` for invalid density.
+/// grid larger than 256³ in total or 4096 on one axis, and `E0604` for
+/// invalid density.
 #[allow(clippy::too_many_lines)]
 pub fn voxelize(scene: &SceneGraph, voxels_per_block: f64) -> Result<VoxelModel, Diagnostic> {
     if !voxels_per_block.is_finite() || voxels_per_block <= 0.0 {
@@ -107,20 +249,16 @@ pub fn voxelize(scene: &SceneGraph, voxels_per_block: f64) -> Result<VoxelModel,
         ((extent[2] / step).ceil() as u32).max(1),
     ];
     let total = u64::from(size[0]) * u64::from(size[1]) * u64::from(size[2]);
-    if size.iter().any(|&side| side > MAX_SIDE) || total > u64::from(MAX_GRID) {
-        // XYZI stores each voxel coordinate in one byte, so a single VOX model
-        // cannot be longer than 256 on any axis, whatever its total volume is.
-        let longest = extent.iter().copied().fold(0.0_f64, f64::max);
-        let max_density = (f64::from(MAX_SIDE) / longest).floor();
-        let hint = if max_density >= 1.0 {
-            format!("use --density {}", max_density as u32)
+    if size.iter().any(|&side| side > MAX_AXIS) || total > u64::from(MAX_GRID) {
+        let hint = if size.iter().any(|&side| side > MAX_AXIS) {
+            format!("an axis is longer than {MAX_AXIS} voxels; increase --voxel-size")
         } else {
-            format!("the model is {longest} blocks on one axis; scale it down or split it")
+            format!("the model has {total} voxels; increase --voxel-size")
         };
         return Err(error(
             "E0602",
             format!(
-                "voxel grid {}x{}x{} exceeds 256 per axis (VOX stores coordinates as bytes); {hint}",
+                "voxel grid {}x{}x{} is too large; {hint}",
                 size[0], size[1], size[2]
             ),
         ));
@@ -190,9 +328,9 @@ pub fn voxelize(scene: &SceneGraph, voxels_per_block: f64) -> Result<VoxelModel,
                     + (size[0] as usize) * (size[1] as usize) * (z as usize);
                 if grid[index] != 0 {
                     voxels.push(Voxel {
-                        x: x as u8,
-                        y: y as u8,
-                        z: z as u8,
+                        x: x as u16,
+                        y: y as u16,
+                        z: z as u16,
                         color: grid[index],
                     });
                 }

@@ -410,7 +410,9 @@ iso-scene voxel scene.scene --density 8 -o out/model.vox
 ```
 
 - шаг сетки — `1 / density` блока;
-- размеры — `ceil(extent / step)`, не больше 256 по каждой оси;
+- размеры — `ceil(extent / step)`; больше 256 по оси модель режется на
+  несколько VOX-моделей (scene graph `nTRN`/`nGRP`/`nSHP`), общий предел —
+  256³ вокселей и 4096 по оси;
 - цвет — базовый `color` материала;
 - формат — `MagicaVoxel` VOX;
 - модель и сцена для него не меняются.

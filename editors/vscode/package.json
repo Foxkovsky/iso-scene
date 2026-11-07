@@ -3,7 +3,7 @@
   "displayName": "iso-scene",
   "description": "Живой предпросмотр iso-scene: изометрия, чертёж, воксели",
   "publisher": "local-iso",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "engines": {
     "vscode": "^1.85.0"
   },

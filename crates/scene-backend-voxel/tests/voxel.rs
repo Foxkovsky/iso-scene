@@ -115,32 +115,50 @@ fn too_dense_grid_is_rejected() {
 }
 
 #[test]
-fn an_oversized_grid_suggests_a_density_that_fits() {
-    // 8 blocks tall at density 300 gives 2400 voxels on one axis. XYZI stores
-    // coordinates as bytes, so at most 256 fit; density 32 is the largest one.
-    let scene = compile(
-        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 8) material wood; } render iso; scale 8; place b at (0, 0, 0);",
-    );
-    let error = voxelize(&scene, 300.0).expect_err("grid is too large");
-    assert_eq!(error.code, "E0602");
-    assert!(
-        error.message.contains("--density 32"),
-        "message names the density: {}",
-        error.message
-    );
+fn a_long_axis_is_split_into_several_models() {
+    let model = voxelize(
+        &compile(
+            "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 600) material wood; } render iso; scale 8; place b at (0, 0, 0);",
+        ),
+        1.0,
+    )
+    .expect("voxelize");
+    assert_eq!(model.size[2], 600);
+    let bytes = model.encode();
+    let mut offset = 20;
+    let mut tags = Vec::new();
+    let mut sizes = Vec::new();
+    let mut counts = Vec::new();
+    while offset + 12 <= bytes.len() {
+        let tag = String::from_utf8_lossy(&bytes[offset..offset + 4]).to_string();
+        let length = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        let body = &bytes[offset + 12..offset + 12 + length];
+        if tag == "SIZE" {
+            sizes.push(u32::from_le_bytes(body[8..12].try_into().unwrap()));
+        }
+        if tag == "XYZI" {
+            counts.push(u32::from_le_bytes(body[..4].try_into().unwrap()) as usize);
+        }
+        tags.push(tag);
+        offset += 12 + length;
+    }
+    assert_eq!(sizes, [256, 256, 88], "three chunks along z");
+    assert_eq!(counts.iter().sum::<usize>(), model.voxels.len());
+    assert!(tags.iter().any(|tag| tag == "nTRN"));
+    assert!(tags.iter().any(|tag| tag == "nGRP"));
+    assert!(tags.iter().any(|tag| tag == "nSHP"));
 }
 
 #[test]
-fn a_model_without_a_valid_density_is_reported_as_too_large() {
-    // 320 blocks cannot fit 256 voxels even at one voxel per block.
+fn a_grid_over_the_total_limit_is_rejected() {
     let scene = compile(
-        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 320) material wood; } render iso; scale 8; place b at (0, 0, 0);",
+        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 8; place b at (0, 0, 0);",
     );
-    let error = voxelize(&scene, 1.0).expect_err("grid is too tall");
+    let error = voxelize(&scene, 300.0).expect_err("too many voxels");
     assert_eq!(error.code, "E0602");
     assert!(
-        error.message.contains("scale it down"),
-        "message explains that no density helps: {}",
+        error.message.contains("too large"),
+        "message explains the limit: {}",
         error.message
     );
 }
