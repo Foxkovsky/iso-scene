@@ -147,11 +147,23 @@ fn walls_produce_a_separate_tile_layer_and_wang_set() {
 
     let map: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
-    assert_eq!(map["tilesets"].as_array().expect("tilesets").len(), 3);
+    assert_eq!(map["tilesets"].as_array().expect("tilesets").len(), 4);
+    assert!(dir.join("wall_shadow.png").exists());
+    assert!(dir.join("wall_shadow.tsj").exists());
+    // The floor cell in the middle has walls on all four sides.
+    let shadow_first_gid = map["tilesets"][3]["firstgid"].as_u64().expect("firstgid");
+    assert_eq!(map["tilesets"][3]["source"], "wall_shadow.tsj");
+    assert_eq!(map["layers"][1]["data"][4], shadow_first_gid + 15);
     // By default the near walls go above the objects and the rest below.
     assert_eq!(
         layer_names(&map),
-        ["floor", "walls-back", "objects", "walls-front"]
+        [
+            "floor",
+            "wall-shadow",
+            "walls-back",
+            "objects",
+            "walls-front"
+        ]
     );
     let walls_in = |name: &str| -> usize {
         map["layers"]
@@ -206,11 +218,23 @@ fn wall_order_puts_the_wall_layer_below_above_or_around_the_objects() {
     )
     .expect("walls");
     for (order, names) in [
-        (WallOrder::Behind, &["floor", "walls", "objects"][..]),
-        (WallOrder::Front, &["floor", "objects", "walls"][..]),
+        (
+            WallOrder::Behind,
+            &["floor", "wall-shadow", "walls", "objects"][..],
+        ),
+        (
+            WallOrder::Front,
+            &["floor", "wall-shadow", "objects", "walls"][..],
+        ),
         (
             WallOrder::Split,
-            &["floor", "walls-back", "objects", "walls-front"][..],
+            &[
+                "floor",
+                "wall-shadow",
+                "walls-back",
+                "objects",
+                "walls-front",
+            ][..],
         ),
     ] {
         let dir = temp_dir("wall-order");
@@ -252,13 +276,13 @@ fn empty_scene_exports_floor_without_an_object_layer() {
     let map: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
     let layers = map["layers"].as_array().expect("layers");
-    assert_eq!(layers.len(), 3);
-    assert_eq!(layers[0]["name"], "floor");
-    assert_eq!(layers[1]["name"], "walls-back");
-    assert_eq!(layers[2]["name"], "walls-front");
-    assert_eq!(map["tilesets"].as_array().expect("tilesets").len(), 2);
+    assert_eq!(
+        layer_names(&map),
+        ["floor", "wall-shadow", "walls-back", "walls-front"]
+    );
+    assert_eq!(map["tilesets"].as_array().expect("tilesets").len(), 3);
     assert_eq!(layers[1]["id"], 2);
-    assert_eq!(map["nextlayerid"], 4);
+    assert_eq!(map["nextlayerid"], 5);
     assert!(
         layers[1]["data"]
             .as_array()

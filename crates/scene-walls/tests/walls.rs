@@ -160,3 +160,44 @@ fn a_gap_closes_the_room() {
     let front = front_walls("version 1;\nlayout {\n\"###\"\n\"D.#\"\n\"###\"\n}\n");
     assert_eq!(front, [(2, 1), (1, 2)]);
 }
+
+#[test]
+fn floor_next_to_walls_gets_the_matching_shadow_tile() {
+    let walls = layout("version 1;\nlayout {\n\"###\"\n\"#..\"\n\"#..\"\n}\n");
+    // A 4x4 map one cell larger than the layout on the right and bottom.
+    let data = scene_walls::shadow_layer_data(&walls, 4, 4, 0, 0, 100);
+    let at = |x: usize, y: usize| data[y * 4 + x];
+    assert_eq!(at(0, 0), 0, "walls get no shadow");
+    assert_eq!(at(1, 1), 100 + u32::from(BIT_TOP | BIT_LEFT));
+    assert_eq!(at(2, 1), 100 + u32::from(BIT_TOP));
+    assert_eq!(at(1, 2), 100 + u32::from(BIT_LEFT));
+    assert_eq!(at(2, 2), 0, "no wall around");
+    assert_eq!(at(3, 0), 100 + u32::from(BIT_LEFT), "outside the layout");
+}
+
+#[test]
+fn shadow_tiles_darken_only_the_walled_sides() {
+    let tiles = scene_walls::render_shadow_tiles(16);
+    assert_eq!((tiles.tile_width, tiles.tile_height), (32, 16));
+    assert_eq!(tiles.image.width, 32 * 16);
+    let alpha = |mask: u32, x: u32, y: u32| {
+        tiles.image.rgba[((y * tiles.image.width + mask * 32 + x) * 4 + 3) as usize]
+    };
+    // Points just inside the top-left (left wall) and top-right (top wall)
+    // edges of the diamond, and its centre.
+    let (near_left, near_top, centre) = ((9, 4), (23, 4), (16, 8));
+    assert_eq!(alpha(0, near_left.0, near_left.1), 0);
+    let left = u32::from(BIT_LEFT);
+    assert!(alpha(left, near_left.0, near_left.1) > 60);
+    assert_eq!(alpha(left, near_top.0, near_top.1), 0);
+    assert_eq!(alpha(left, centre.0, centre.1), 0);
+    assert!(alpha(u32::from(BIT_TOP), near_top.0, near_top.1) > 60);
+    // Shadows are plain black, so they suit any floor colour.
+    assert!(
+        tiles
+            .image
+            .rgba
+            .chunks_exact(4)
+            .all(|pixel| pixel[..3] == [0, 0, 0])
+    );
+}

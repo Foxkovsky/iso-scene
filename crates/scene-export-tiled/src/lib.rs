@@ -16,7 +16,10 @@ use scene_core::SceneGraph;
 use scene_render::{Image, write_png};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::RenderKind;
-use scene_walls::{WallCell, WallLayout, layer_data_where, render_tiles, wangid};
+use scene_walls::{
+    WallCell, WallLayout, layer_data_where, render_shadow_tiles, render_tiles, shadow_layer_data,
+    wangid,
+};
 use serde_json::{Value, json};
 
 const MAX_MAP_CELLS: u64 = 1_000_000;
@@ -177,6 +180,7 @@ pub fn export_with(
         });
         let path = out_dir.join("walls.tsj");
         write_json(&path, &tileset)?;
+        write_shadow_tileset(scale, out_dir)?;
         Some(path)
     } else {
         None
@@ -457,6 +461,7 @@ pub fn export_with(
     }
     if walls.is_some() {
         tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
+        tilesets.push(json!({"firstgid": wall_first_gid + 16, "source": "wall_shadow.tsj"}));
     }
     let tile_layer = |name: &str, data: Vec<u32>| {
         json!({
@@ -488,6 +493,13 @@ pub fn export_with(
         ),
     };
     let mut layers = vec![tile_layer("floor", floor_data)];
+    // Contact shadows lie on the floor, under every wall layer and object.
+    layers.extend(walls.map(|layout| {
+        tile_layer(
+            "wall-shadow",
+            shadow_layer_data(layout, width, height, min_x, min_y, wall_first_gid + 16),
+        )
+    }));
     layers.extend(below);
     if has_objects {
         layers.push(if objects_as_tiles {
@@ -548,6 +560,35 @@ pub fn export_with(
         instances: scene.instances.len(),
         cells: [width, height],
     })
+}
+
+/// Write `wall_shadow.png` and `wall_shadow.tsj`: floor-sized tiles that
+/// darken the floor along the walls next to it.
+fn write_shadow_tileset(scale: u32, out_dir: &Path) -> Result<(), Diagnostic> {
+    let tiles = render_shadow_tiles(scale);
+    write_png(&tiles.image, &out_dir.join("wall_shadow.png"))
+        .map_err(|message| error("E0603", message))?;
+    let tileset = json!({
+        "type": "tileset",
+        "name": "wall_shadow",
+        "version": "1.10",
+        "tiledversion": "1.12.2",
+        "tilewidth": tiles.tile_width,
+        "tileheight": tiles.tile_height,
+        "tilecount": 16,
+        "columns": 16,
+        "image": "wall_shadow.png",
+        "imagewidth": tiles.tile_width * 16,
+        "imageheight": tiles.tile_height,
+        "margin": 0,
+        "spacing": 0,
+        "tiles": (1..16_u8).map(|mask| json!({
+            "id": mask,
+            "type": "wall-shadow",
+            "properties": [{"name": "walls", "type": "int", "value": mask}]
+        })).collect::<Vec<_>>()
+    });
+    write_json(&out_dir.join("wall_shadow.tsj"), &tileset)
 }
 
 fn write_json(path: &Path, value: &Value) -> Result<(), Diagnostic> {
