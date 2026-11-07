@@ -208,3 +208,40 @@ fn out_of_range_scale_is_a_usage_error() {
     }
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn exclude_drops_helper_objects() {
+    let dir = scratch("exclude");
+    write(
+        &dir,
+        "chair.model",
+        "version 1;\nobject leg (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; }\n\
+         object chair (1, 1) { box at (0, 0, 0) size (1, 1, 2) material wood; }\n",
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args(["sprites", "chair.model", "--scale", "8", "--views", "1"])
+        .args(["--exclude", "leg", "-o", "out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let manifest = fs::read_to_string(dir.join("out/sheet.json")).unwrap();
+    assert!(manifest.contains("\"name\": \"chair\""), "{manifest}");
+    assert!(!manifest.contains("\"name\": \"leg\""), "{manifest}");
+
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "sprites",
+            "chair.model",
+            "--scale",
+            "8",
+            "--exclude",
+            "nope",
+        ])
+        .args(["-o", "out2"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    let _ = fs::remove_dir_all(dir);
+}

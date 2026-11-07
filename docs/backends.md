@@ -143,8 +143,9 @@ iso-scene sprites door.scene --views 4 \
 
 Input is one or more `.scene` or `.model` files. A scene contributes the
 objects it actually places (each object once, in placement order); a model
-contributes all objects defined in it. Use `--object <name>` (repeatable) to
-keep only some of them. The pixel scale is taken from the first scene; models
+contributes all objects defined in it, including helpers such as a
+`chair_leg` used by `chair`. Use `--object <name>` (repeatable) to keep only
+some of them, or `--exclude <name>` (repeatable) to drop some. The pixel scale is taken from the first scene; models
 and mixed inputs use `--scale` (default 16).
 
 Objects are identified by name. The same object reached from several files

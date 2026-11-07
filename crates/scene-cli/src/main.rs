@@ -613,6 +613,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     let mut scale: Option<u32> = None;
     let mut tile_width: Option<u32> = None;
     let mut object_filter: Vec<String> = Vec::new();
+    let mut object_exclude: Vec<String> = Vec::new();
     let mut pivot = scene_export_sprites::Pivot::default();
     let mut shadow = true;
     let mut padding = 0_u32;
@@ -724,6 +725,12 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 object_filter.push(v);
+            }
+            "--exclude" => {
+                let Some(v) = value("--exclude") else {
+                    return ExitCode::from(2);
+                };
+                object_exclude.push(v);
             }
             "--padding" => {
                 let Some(v) = value("--padding") else {
@@ -972,7 +979,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         }
     }
 
-    for wanted in &object_filter {
+    for wanted in object_filter.iter().chain(&object_exclude) {
         if !objects.iter().any(|entry| entry.name == *wanted) {
             eprintln!("iso-scene: no object named `{wanted}`");
             return ExitCode::from(2);
@@ -980,6 +987,11 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     }
     if !object_filter.is_empty() {
         objects.retain(|entry| object_filter.contains(&entry.name));
+    }
+    objects.retain(|entry| !object_exclude.contains(&entry.name));
+    if objects.is_empty() {
+        eprintln!("iso-scene: every object was filtered out");
+        return ExitCode::from(2);
     }
     for draft in &animations {
         let wanted = draft.object.as_deref().unwrap_or_default();
@@ -1465,7 +1477,8 @@ fn print_help() {
     println!(
         "  sprites <file>  pack objects from .scene/.model files into a sprite sheet + JSON/TSJ"
     );
-    println!("                  --views 1|2|4|8|16 or --angles 0,45,90,...; --object filters");
+    println!("                  --views 1|2|4|8|16 or --angles 0,45,90,...");
+    println!("                  --object <name> keeps, --exclude <name> drops objects");
     println!("                  --pivot front|back|left|right|center anchors static views");
     println!("                  --shadow contact|none bakes or omits the contact shadow");
     println!("                  --padding <px> leaves transparent gaps around cells");
