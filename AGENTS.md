@@ -43,6 +43,19 @@ Before claiming success, run `cargo test --workspace` and `cargo clippy
 --workspace --all-targets -- -D warnings`. For changes that can affect speed,
 also run `make bench` (see "Performance").
 
+## Working on scenes and renders
+
+Pixels are the output, so check them, not only the exit code:
+
+1. **Build** the scene: `iso-scene render scene.scene -o out.png` (or
+   `tiled`, `sprites`, `voxel`).
+2. **Look** at the image before changing anything else. For Tiled maps,
+   rasterize with `tmxrasterizer`; compare with `preview.png`.
+3. **Fix** one thing, then build and look again.
+
+Use `iso-scene help <topic>` for one section of the spec and
+`iso-scene limits` for every limit instead of reading all of `docs/spec.md`.
+
 ## Performance
 
 `iso-scene` must be blazing fast: previews in the VS Code extension rebuild on
