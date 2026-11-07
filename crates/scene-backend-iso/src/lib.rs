@@ -642,11 +642,98 @@ fn collect_faces(
 type VertexKey = (i64, i64, i64);
 type EdgeKey = (VertexKey, VertexKey);
 
+/// Insert vertices of neighbouring group faces into this face's edges.
+///
+/// Without this, a long edge and a shorter collinear edge that shares only its
+/// top part never compare equal, and the seam between them stays visible.
+fn split_group_edges(faces: &mut [Face]) {
+    let mut vertices: BTreeMap<u32, Vec<[f64; 3]>> = BTreeMap::new();
+    for face in faces.iter() {
+        if let Some(group) = face.group {
+            vertices
+                .entry(group)
+                .or_default()
+                .extend_from_slice(&face.points);
+        }
+    }
+    for face in faces.iter_mut() {
+        let Some(group) = face.group else {
+            continue;
+        };
+        let Some(group_vertices) = vertices.get(&group) else {
+            continue;
+        };
+        let mut points: Vec<[f64; 3]> = Vec::with_capacity(face.points.len());
+        let count = face.points.len();
+        for index in 0..count {
+            let a = face.points[index];
+            let b = face.points[(index + 1) % count];
+            points.push(a);
+            let direction = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let length = direction[0] * direction[0]
+                + direction[1] * direction[1]
+                + direction[2] * direction[2];
+            if length < 1e-12 {
+                continue;
+            }
+            let mut hits: Vec<(f64, [f64; 3])> = Vec::new();
+            for vertex in group_vertices {
+                if (vertex[0] - a[0]).abs() < 1e-9
+                    && (vertex[1] - a[1]).abs() < 1e-9
+                    && (vertex[2] - a[2]).abs() < 1e-9
+                {
+                    continue;
+                }
+                if (vertex[0] - b[0]).abs() < 1e-9
+                    && (vertex[1] - b[1]).abs() < 1e-9
+                    && (vertex[2] - b[2]).abs() < 1e-9
+                {
+                    continue;
+                }
+                let offset = [vertex[0] - a[0], vertex[1] - a[1], vertex[2] - a[2]];
+                let t = (offset[0] * direction[0]
+                    + offset[1] * direction[1]
+                    + offset[2] * direction[2])
+                    / length;
+                if t <= 1e-9 || t >= 1.0 - 1e-9 {
+                    continue;
+                }
+                let projected = [
+                    a[0] + direction[0] * t,
+                    a[1] + direction[1] * t,
+                    a[2] + direction[2] * t,
+                ];
+                let dx = vertex[0] - projected[0];
+                let dy = vertex[1] - projected[1];
+                let dz = vertex[2] - projected[2];
+                if dx * dx + dy * dy + dz * dz < 1e-12 {
+                    hits.push((t, *vertex));
+                }
+            }
+            hits.sort_by(|left, right| left.0.total_cmp(&right.0));
+            for (_, vertex) in hits {
+                if points.last().is_some_and(|last| {
+                    (last[0] - vertex[0]).abs() < 1e-9
+                        && (last[1] - vertex[1]).abs() < 1e-9
+                        && (last[2] - vertex[2]).abs() < 1e-9
+                }) {
+                    continue;
+                }
+                points.push(vertex);
+            }
+        }
+        if points.len() > face.points.len() {
+            face.points = points;
+            face.hidden = vec![false; face.points.len()];
+        }
+    }
+}
+
 /// Remove internal faces of a merge group and hide seams between coplanar
 /// neighbours of the same colour.
 #[allow(clippy::too_many_lines)]
 fn weld_groups(faces: &mut Vec<Face>) {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn vertex_key(point: [f64; 3]) -> VertexKey {
         let scale = 1_000_000.0;
@@ -703,6 +790,10 @@ fn weld_groups(faces: &mut Vec<Face>) {
         })
     }
 
+    // Split group edges at vertices of neighbouring faces, so that a long edge
+    // and a short one sharing only part of it become comparable segments.
+    split_group_edges(faces);
+
     // Internal faces: coincident faces in the same group.
     let mut counts: BTreeMap<(u32, Vec<VertexKey>), usize> = BTreeMap::new();
     for face in faces.iter() {
@@ -735,20 +826,31 @@ fn weld_groups(faces: &mut Vec<Face>) {
             edges.entry(key).or_default().push((index, edge));
         }
     }
-    for entries in edges.values() {
+    let mut seam: BTreeSet<EdgeKey> = BTreeSet::new();
+    for (key, entries) in &edges {
+        let mut is_seam = false;
         for first in 0..entries.len() {
             for second in (first + 1)..entries.len() {
-                let (face_a, edge_a) = entries[first];
-                let (face_b, edge_b) = entries[second];
-                if faces[face_a].group != faces[face_b].group
-                    || faces[face_a].color != faces[face_b].color
-                    || !coplanar(&faces[face_a], &faces[face_b])
+                let (face_a, _) = entries[first];
+                let (face_b, _) = entries[second];
+                if faces[face_a].group == faces[face_b].group
+                    && faces[face_a].color == faces[face_b].color
+                    && coplanar(&faces[face_a], &faces[face_b])
                 {
-                    continue;
+                    is_seam = true;
                 }
-                faces[face_a].hidden[edge_a] = true;
-                faces[face_b].hidden[edge_b] = true;
             }
+        }
+        if is_seam {
+            seam.insert(*key);
+        }
+    }
+    for (key, entries) in &edges {
+        if !seam.contains(key) {
+            continue;
+        }
+        for (face, edge) in entries {
+            faces[*face].hidden[*edge] = true;
         }
     }
 }
@@ -827,6 +929,35 @@ mod tests {
             hidden,
             texture: None,
         }
+    }
+
+    #[test]
+    fn a_partial_coplanar_seam_is_hidden_only_where_it_overlaps() {
+        // Jamb front face: whole height, x 0..16 at y = 32.
+        let jamb = face(vec![
+            [0.0, 32.0, 0.0],
+            [16.0, 32.0, 0.0],
+            [16.0, 32.0, 320.0],
+            [0.0, 32.0, 320.0],
+        ]);
+        // Beam front face: same plane, only the top 32 units.
+        let beam = face(vec![
+            [16.0, 32.0, 288.0],
+            [144.0, 32.0, 288.0],
+            [144.0, 32.0, 320.0],
+            [16.0, 32.0, 320.0],
+        ]);
+        let mut faces = vec![jamb, beam];
+        for face in &mut faces {
+            face.group = Some(1);
+        }
+
+        weld_groups(&mut faces);
+
+        // The jamb edge is split at z = 288; only the covered part is hidden.
+        assert_eq!(faces[0].points.len(), 5);
+        assert_eq!(faces[0].hidden.iter().filter(|hidden| **hidden).count(), 1);
+        assert_eq!(faces[1].hidden.iter().filter(|hidden| **hidden).count(), 1);
     }
 
     #[test]
