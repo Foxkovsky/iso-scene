@@ -58,6 +58,7 @@ fn print_help() {
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
     println!("  animate <file>  render a rotation animation as a sprite sheet + animated tile");
+    println!("                  --object <name> --from --to --frames --duration [--base <dir>]");
     println!(
         "  sprites <file>  pack objects from .scene/.model files into a sprite sheet + JSON/TSJ"
     );

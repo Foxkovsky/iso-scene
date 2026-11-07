@@ -1,147 +1,80 @@
 //! `render`: PNG or SVG of a scene or model.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::common::{model_preview, project_root, read, report};
+use scene_syntax::ast::RenderKind;
 
-#[allow(clippy::too_many_lines)]
+use crate::common::{Args, Parsed, create_parent, load_scene, usage};
+
 pub(crate) fn render_scene(args: Vec<String>) -> ExitCode {
+    match run(args) {
+        Ok(code) | Err(code) => code,
+    }
+}
+
+fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let mut path: Option<String> = None;
     let mut output: Option<PathBuf> = None;
     let mut view: Option<String> = None;
-    let mut base_override: Option<PathBuf> = None;
-    let mut args = args.into_iter();
-
+    let mut base: Option<PathBuf> = None;
+    let mut args = Args::new(args).hints(&[
+        ("--out", "a path"),
+        ("--view", "iso, top, front or side"),
+        ("--base", "a directory"),
+    ]);
     while let Some(argument) = args.next() {
-        if argument == "--out" || argument == "-o" {
-            let Some(value) = args.next() else {
-                eprintln!("iso-scene: `--out` needs a path");
-                return ExitCode::from(2);
-            };
-            output = Some(PathBuf::from(value));
-        } else if argument == "--view" {
-            let Some(value) = args.next() else {
-                eprintln!("iso-scene: `--view` needs iso, top, front or side");
-                return ExitCode::from(2);
-            };
-            view = Some(value);
-        } else if argument == "--base" {
-            let Some(value) = args.next() else {
-                eprintln!("iso-scene: `--base` needs a directory");
-                return ExitCode::from(2);
-            };
-            base_override = Some(PathBuf::from(value));
-        } else if path.is_none() {
-            path = Some(argument);
-        } else {
-            eprintln!("iso-scene: unexpected argument `{argument}`");
-            return ExitCode::from(2);
+        match argument.as_str() {
+            "--out" | "-o" => output = Some(PathBuf::from(args.value("--out")?)),
+            "--view" => view = Some(args.value("--view")?),
+            "--base" => base = Some(PathBuf::from(args.value("--base")?)),
+            _ if path.is_none() => path = Some(argument),
+            _ => return Err(usage(format!("unexpected argument `{argument}`"))),
         }
     }
-
-    let Some(path) = path else {
-        eprintln!("iso-scene: `render` needs a .scene file");
-        return ExitCode::from(2);
-    };
-    let Some(source) = read(&path) else {
-        return ExitCode::from(2);
-    };
-    let extension = Path::new(&path)
-        .extension()
-        .and_then(|value| value.to_str());
-    if extension != Some("scene") && extension != Some("model") {
-        eprintln!("iso-scene: `render` expects a .scene or .model file");
-        return ExitCode::from(2);
-    }
-    let program = match scene_syntax::parse(&source) {
-        Ok(program) => program,
-        Err(diagnostic) => return report(&path, &source, &diagnostic),
-    };
-    let file = Path::new(&path);
-    let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
-    let base = base_override.as_deref().unwrap_or(fallback_base);
-    let root = project_root(base_override.as_deref());
-    let mut scene = if extension == Some("model") {
-        let model = match scene_core::compile_model(&program, base) {
-            Ok(model) => model,
-            Err(diagnostic) => return report(&path, &source, &diagnostic),
-        };
-        match model_preview(&model) {
-            Ok(scene) => scene,
-            Err(message) => {
-                eprintln!("iso-scene: {message}");
-                return ExitCode::from(2);
-            }
-        }
-    } else {
-        match scene_core::compile_scene(&program, base, &root) {
-            Ok(scene) => scene,
-            Err(diagnostic) => return report(&path, &source, &diagnostic),
-        }
-    };
+    let path = path.ok_or_else(|| usage("`render` needs a .scene file"))?;
+    let mut loaded = load_scene("render", &path, base.as_deref(), true)?;
     if let Some(view) = view {
-        scene.render = match view.as_str() {
-            "iso" => scene_syntax::ast::RenderKind::Iso,
-            "top" => scene_syntax::ast::RenderKind::Top,
-            "front" => scene_syntax::ast::RenderKind::Front,
-            "side" => scene_syntax::ast::RenderKind::Side,
+        loaded.scene.render = match view.as_str() {
+            "iso" => RenderKind::Iso,
+            "top" => RenderKind::Top,
+            "front" => RenderKind::Front,
+            "side" => RenderKind::Side,
             other => {
-                eprintln!("iso-scene: unknown view `{other}`; expected iso, top, front or side");
-                return ExitCode::from(2);
+                return Err(usage(format!(
+                    "unknown view `{other}`; expected iso, top, front or side"
+                )));
             }
         };
     }
-    let output = output.unwrap_or_else(|| {
-        let stem = file
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("scene");
-        PathBuf::from("out").join(format!("{stem}.png"))
-    });
-    if let Some(parent) = output.parent() {
-        if !parent.as_os_str().is_empty() {
-            if let Err(error) = fs::create_dir_all(parent) {
-                eprintln!("iso-scene: cannot create `{}`: {error}", parent.display());
-                return ExitCode::from(2);
-            }
-        }
-    }
+    let output = output.unwrap_or_else(|| loaded.default_output("png"));
+    create_parent(&output)?;
+    let scene = &loaded.scene;
     let svg = output
         .extension()
         .and_then(std::ffi::OsStr::to_str)
         .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
     if svg {
-        let document = match scene_backend_iso::render_svg(&scene) {
-            Ok(document) => document,
-            Err(diagnostic) => return report(&path, &source, &diagnostic),
-        };
-        if let Err(error) = fs::write(&output, document) {
-            eprintln!("iso-scene: cannot write `{}`: {error}", output.display());
-            return ExitCode::from(2);
-        }
+        let document = scene_backend_iso::render_svg(scene)
+            .map_err(|diagnostic| loaded.report(&diagnostic))?;
+        fs::write(&output, document)
+            .map_err(|error| usage(format!("cannot write `{}`: {error}", output.display())))?;
         println!(
             "wrote {} (SVG, {} instances)",
             output.display(),
             scene.instances.len()
         );
-        return ExitCode::SUCCESS;
+        return Ok(ExitCode::SUCCESS);
     }
     let image = match scene.render {
-        scene_syntax::ast::RenderKind::Iso => scene_backend_iso::render(&scene),
-        scene_syntax::ast::RenderKind::Top
-        | scene_syntax::ast::RenderKind::Front
-        | scene_syntax::ast::RenderKind::Side => scene_backend_ortho::render(&scene),
-    };
-    let image = match image {
-        Ok(image) => image,
-        Err(diagnostic) => return report(&path, &source, &diagnostic),
-    };
-    if let Err(message) = scene_render::write_png(&image, &output) {
-        eprintln!("iso-scene: {message}");
-        return ExitCode::from(2);
+        RenderKind::Iso => scene_backend_iso::render(scene),
+        RenderKind::Top | RenderKind::Front | RenderKind::Side => {
+            scene_backend_ortho::render(scene)
+        }
     }
+    .map_err(|diagnostic| loaded.report(&diagnostic))?;
+    scene_render::write_png(&image, &output).map_err(usage)?;
     println!(
         "wrote {} ({}x{}, {} instances)",
         output.display(),
@@ -149,5 +82,5 @@ pub(crate) fn render_scene(args: Vec<String>) -> ExitCode {
         image.height,
         scene.instances.len()
     );
-    ExitCode::SUCCESS
+    Ok(ExitCode::SUCCESS)
 }

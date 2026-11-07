@@ -1,11 +1,179 @@
-//! Helpers shared by the commands: reading files, reporting diagnostics,
-//! the project root and model previews.
+//! Helpers shared by the commands: argument parsing, reading files,
+//! reporting diagnostics, the project root and model previews.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use scene_syntax::Diagnostic;
+
+/// Result of a command step: `Err` carries the exit code of a failure whose
+/// message has already been printed, so commands can use `?`.
+pub(crate) type Parsed<T> = Result<T, ExitCode>;
+
+/// Print a usage error and return exit code 2.
+pub(crate) fn usage(message: impl std::fmt::Display) -> ExitCode {
+    eprintln!("iso-scene: {message}");
+    ExitCode::from(2)
+}
+
+/// Print an export diagnostic and return exit code 1.
+pub(crate) fn failed(diagnostic: &Diagnostic) -> ExitCode {
+    eprintln!(
+        "iso-scene: error[{}]: {}",
+        diagnostic.code, diagnostic.message
+    );
+    ExitCode::from(1)
+}
+
+/// The arguments of one command, consumed flag by flag.
+pub(crate) struct Args {
+    items: std::vec::IntoIter<String>,
+    /// What a flag's value is, for "`--flag` needs ..." messages.
+    hints: &'static [(&'static str, &'static str)],
+}
+
+impl Iterator for Args {
+    type Item = String;
+
+    fn next(&mut self) -> Option<String> {
+        self.items.next()
+    }
+}
+
+impl Args {
+    pub(crate) fn new(args: Vec<String>) -> Self {
+        Self {
+            items: args.into_iter(),
+            hints: &[],
+        }
+    }
+
+    /// Describe flag values (e.g. `("--out", "a path")`) in usage errors.
+    pub(crate) fn hints(mut self, hints: &'static [(&'static str, &'static str)]) -> Self {
+        self.hints = hints;
+        self
+    }
+
+    /// The value after `flag`.
+    pub(crate) fn value(&mut self, flag: &str) -> Parsed<String> {
+        let hint = self
+            .hints
+            .iter()
+            .find(|(name, _)| *name == flag)
+            .map_or("a value", |(_, hint)| hint);
+        self.items
+            .next()
+            .ok_or_else(|| usage(format!("`{flag}` needs {hint}")))
+    }
+
+    /// The value after `flag`, parsed and accepted by `valid`; otherwise the
+    /// `invalid` message for the raw text.
+    pub(crate) fn parse<T: std::str::FromStr>(
+        &mut self,
+        flag: &str,
+        valid: impl FnOnce(&T) -> bool,
+        invalid: impl FnOnce(&str) -> String,
+    ) -> Parsed<T> {
+        let text = self.value(flag)?;
+        match text.parse::<T>() {
+            Ok(value) if valid(&value) => Ok(value),
+            _ => Err(usage(invalid(&text))),
+        }
+    }
+
+    /// The comma-separated values after `flag`, each parsed and accepted by
+    /// `valid`; otherwise the `invalid` message for the offending item.
+    pub(crate) fn list<T: std::str::FromStr>(
+        &mut self,
+        flag: &str,
+        valid: impl Fn(&T) -> bool,
+        invalid: impl Fn(&str) -> String,
+    ) -> Parsed<Vec<T>> {
+        let text = self.value(flag)?;
+        text.split(',')
+            .map(|part| match part.trim().parse::<T>() {
+                Ok(value) if valid(&value) => Ok(value),
+                _ => Err(usage(invalid(part))),
+            })
+            .collect()
+    }
+}
+
+/// An input file compiled to a scene graph, with its source for diagnostics.
+pub(crate) struct Loaded {
+    pub(crate) path: String,
+    pub(crate) source: String,
+    pub(crate) scene: scene_core::SceneGraph,
+    /// Directory `include` and `material` paths must stay inside.
+    pub(crate) root: PathBuf,
+}
+
+impl Loaded {
+    /// Report a diagnostic against this file.
+    pub(crate) fn report(&self, diagnostic: &Diagnostic) -> ExitCode {
+        report(&self.path, &self.source, diagnostic)
+    }
+
+    /// `out/<stem>.<extension>` next to the working directory.
+    pub(crate) fn default_output(&self, extension: &str) -> PathBuf {
+        let stem = Path::new(&self.path)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("scene");
+        PathBuf::from("out").join(format!("{stem}.{extension}"))
+    }
+}
+
+/// Read and compile `path` for `command`: a `.scene`, or (with `models`) a
+/// `.model` shown as a one-row preview. Relative paths resolve from `base`
+/// (by default the file's directory) inside [`project_root`].
+pub(crate) fn load_scene(
+    command: &str,
+    path: &str,
+    base: Option<&Path>,
+    models: bool,
+) -> Parsed<Loaded> {
+    let file = Path::new(path);
+    let extension = file.extension().and_then(|value| value.to_str());
+    let is_model = extension == Some("model");
+    if extension != Some("scene") && !(models && is_model) {
+        return Err(usage(if models {
+            format!("`{command}` expects a .scene or .model file")
+        } else {
+            format!("`{command}` expects a .scene file")
+        }));
+    }
+    let source = read(path).ok_or(ExitCode::from(2))?;
+    let program =
+        scene_syntax::parse(&source).map_err(|diagnostic| report(path, &source, &diagnostic))?;
+    let fallback = file.parent().unwrap_or_else(|| Path::new("."));
+    let directory = base.unwrap_or(fallback);
+    let root = project_root(base);
+    let scene = if is_model {
+        let model = scene_core::compile_model(&program, directory)
+            .map_err(|diagnostic| report(path, &source, &diagnostic))?;
+        model_preview(&model).map_err(usage)?
+    } else {
+        scene_core::compile_scene(&program, directory, &root)
+            .map_err(|diagnostic| report(path, &source, &diagnostic))?
+    };
+    Ok(Loaded {
+        path: path.to_string(),
+        source,
+        scene,
+        root,
+    })
+}
+
+/// Create the directory that will hold `output`.
+pub(crate) fn create_parent(output: &Path) -> Parsed<()> {
+    match output.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => fs::create_dir_all(parent)
+            .map_err(|error| usage(format!("cannot create `{}`: {error}", parent.display()))),
+        _ => Ok(()),
+    }
+}
 
 /// Directory that `include` and `material` paths must stay inside.
 ///

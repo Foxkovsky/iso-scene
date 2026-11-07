@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use crate::common::{format_bounds, read, report};
+use crate::common::{Args, format_bounds, read, report, usage};
 
 pub(crate) fn check(path: &str) -> ExitCode {
     let Some(source) = read(path) else {
@@ -25,32 +25,26 @@ pub(crate) fn check(path: &str) -> ExitCode {
 pub(crate) fn eval(args: Vec<String>) -> ExitCode {
     let mut path: Option<String> = None;
     let mut fuel = scene_core::DEFAULT_FUEL;
-    let mut args = args.into_iter();
-
+    let mut args = Args::new(args).hints(&[("--fuel", "a number")]);
     while let Some(argument) = args.next() {
         if argument == "--fuel" {
-            let Some(value) = args.next() else {
-                eprintln!("iso-scene: `--fuel` needs a number");
-                return ExitCode::from(2);
+            let value = match args.value("--fuel") {
+                Ok(value) => value,
+                Err(code) => return code,
             };
             match value.parse() {
-                Ok(value) => fuel = value,
-                Err(error) => {
-                    eprintln!("iso-scene: invalid fuel `{value}`: {error}");
-                    return ExitCode::from(2);
-                }
+                Ok(parsed) => fuel = parsed,
+                Err(error) => return usage(format!("invalid fuel `{value}`: {error}")),
             }
         } else if path.is_none() {
             path = Some(argument);
         } else {
-            eprintln!("iso-scene: unexpected argument `{argument}`");
-            return ExitCode::from(2);
+            return usage(format!("unexpected argument `{argument}`"));
         }
     }
 
     let Some(path) = path else {
-        eprintln!("iso-scene: `eval` needs a file");
-        return ExitCode::from(2);
+        return usage("`eval` needs a file");
     };
     let Some(source) = read(&path) else {
         return ExitCode::from(2);
