@@ -28,6 +28,10 @@ use serde_json::{Value, json};
 const MAX_SHEET_SIDE: u32 = 8_192;
 /// Maximum sheet area in pixels.
 const MAX_SHEET_PIXELS: u64 = 16_000_000;
+/// Maximum number of animation frames.
+pub const MAX_FRAMES: u32 = 1_024;
+/// Maximum number of cells (static views plus frames), checked before rendering.
+pub const MAX_CELLS: usize = 4_096;
 
 /// One object that can appear in the sheet.
 #[derive(Clone, Debug)]
@@ -105,8 +109,9 @@ struct Cell {
 ///
 /// # Errors
 ///
-/// Returns `E0602` for an unknown animation object, an empty view list, or a
-/// sheet that exceeds the size limit, and `E0603` for file errors.
+/// Returns `E0602` for an unknown animation object, an empty view list, too
+/// many cells or frames, or a sheet that exceeds the size limit, and `E0603`
+/// for an invalid sheet name or a file error.
 #[allow(clippy::too_many_lines)]
 pub fn export(
     objects: &[SheetObject],
@@ -120,10 +125,20 @@ pub fn export(
     if options.views.is_empty() {
         return Err(error("E0602", "at least one view or angle is required"));
     }
+    validate_name(&options.name).map_err(|message| error("E0603", message))?;
     let animation_frames = match &options.animation {
         Some(animation) => {
             if animation.frames == 0 {
                 return Err(error("E0602", "an animation needs at least one frame"));
+            }
+            if animation.frames > MAX_FRAMES {
+                return Err(error(
+                    "E0602",
+                    format!(
+                        "{} animation frames exceed the limit of {MAX_FRAMES}",
+                        animation.frames
+                    ),
+                ));
             }
             if !objects.iter().any(|entry| entry.name == animation.object) {
                 return Err(error(
@@ -135,6 +150,16 @@ pub fn export(
         }
         None => 0,
     };
+    let cell_count = objects
+        .len()
+        .saturating_mul(options.views.len())
+        .saturating_add(animation_frames);
+    if cell_count > MAX_CELLS {
+        return Err(error(
+            "E0602",
+            format!("{cell_count} sprite cells exceed the limit of {MAX_CELLS}"),
+        ));
+    }
     let columns = options.views.len().max(animation_frames).max(1) as u32;
     let rows = objects.len() as u32 + u32::from(options.animation.is_some());
 
@@ -464,6 +489,34 @@ fn tileset_json(
     })
 }
 
+/// Check that `name` is a bare file stem: `name.png` must land in the output
+/// directory and nowhere else.
+///
+/// # Errors
+///
+/// Returns a message for an empty name, a path separator, `..`, or a name
+/// that already ends in one of the written extensions.
+pub fn validate_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(format!("invalid sheet name `{name}`"));
+    }
+    if name.contains(['/', '\\', '\0']) || name.contains("..") {
+        return Err(format!(
+            "sheet name `{name}` must be a file stem without `/`, `\\` or `..`"
+        ));
+    }
+    let lower = name.to_ascii_lowercase();
+    if [".png", ".json", ".tsj"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+    {
+        return Err(format!(
+            "sheet name `{name}` must not include an extension; `.png`, `.json` and `.tsj` are added"
+        ));
+    }
+    Ok(())
+}
+
 fn write_json(path: &Path, value: &Value) -> Result<(), Diagnostic> {
     let text = serde_json::to_string_pretty(value).map_err(|cause| {
         error(
@@ -685,5 +738,64 @@ mod tests {
         );
         assert_eq!(sheet.pixel(4, 0)[3], 0, "column 4 belongs to the next cell");
         assert_eq!(sheet.pixel(3, 0)[3], 255);
+    }
+
+    #[test]
+    fn frame_and_cell_limits_are_checked_before_rendering() {
+        let objects = vec![SheetObject {
+            name: "door".into(),
+            object: box_object("door", 1.0, 1.0),
+        }];
+        let mut options = chair_options("limits");
+        options.animation = Some(AnimationSpec {
+            object: "door".into(),
+            from: 0.0,
+            to: 90.0,
+            frames: MAX_FRAMES + 1,
+            duration: 100,
+            rotation: 0,
+        });
+        let dir = std::env::temp_dir().join("iso-scene-sprites-limit-test");
+        let error = export(&objects, &BTreeMap::new(), &options, &dir).unwrap_err();
+        assert_eq!(error.code, "E0602");
+        assert!(error.message.contains("frames"), "{}", error.message);
+
+        let many: Vec<SheetObject> = (0..=MAX_CELLS / 4)
+            .map(|index| SheetObject {
+                name: format!("o{index}"),
+                object: objects[0].object.clone(),
+            })
+            .collect();
+        let error = export(&many, &BTreeMap::new(), &chair_options("limits"), &dir).unwrap_err();
+        assert_eq!(error.code, "E0602");
+        assert!(error.message.contains("cells"), "{}", error.message);
+        assert!(!dir.exists(), "nothing is written when a limit fails");
+    }
+
+    #[test]
+    fn sheet_names_are_bare_stems() {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../evil",
+            "a/b",
+            "a\\b",
+            "sheet.png",
+            "x.JSON",
+        ] {
+            assert!(validate_name(bad).is_err(), "`{bad}` should be rejected");
+        }
+        for good in ["sheet", "furniture-4", "door_anim", "v1.2"] {
+            assert!(validate_name(good).is_ok(), "`{good}` should be accepted");
+        }
+        let objects = vec![SheetObject {
+            name: "chair".into(),
+            object: box_object("chair", 1.0, 1.0),
+        }];
+        let dir = std::env::temp_dir().join("iso-scene-sprites-name-test");
+        let error =
+            export(&objects, &BTreeMap::new(), &chair_options("../evil"), &dir).unwrap_err();
+        assert_eq!(error.code, "E0603");
     }
 }

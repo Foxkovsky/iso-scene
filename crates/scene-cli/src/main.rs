@@ -806,6 +806,18 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         eprintln!("iso-scene: `--from/--to/--frames/--duration` need `--animation`");
         return ExitCode::from(2);
     }
+    let name = name.unwrap_or_else(|| "sheet".to_string());
+    if let Err(message) = scene_export_sprites::validate_name(&name) {
+        eprintln!("iso-scene: {message}");
+        return ExitCode::from(2);
+    }
+    if frames > scene_export_sprites::MAX_FRAMES {
+        eprintln!(
+            "iso-scene: `--frames` must be at most {}",
+            scene_export_sprites::MAX_FRAMES
+        );
+        return ExitCode::from(2);
+    }
 
     let mut objects: Vec<scene_export_sprites::SheetObject> = Vec::new();
     let mut materials = std::collections::BTreeMap::new();
@@ -873,6 +885,12 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
     if !object_filter.is_empty() {
         objects.retain(|entry| object_filter.contains(&entry.name));
     }
+    if let Some(wanted) = &animation_object
+        && !objects.iter().any(|entry| entry.name == *wanted)
+    {
+        eprintln!("iso-scene: no object named `{wanted}` to animate");
+        return ExitCode::from(2);
+    }
 
     let scale = scale.or(scene_scale).unwrap_or(16);
     let animation = animation_object.map(|object| scene_export_sprites::AnimationSpec {
@@ -884,7 +902,7 @@ fn sprites_scene(args: Vec<String>) -> ExitCode {
         rotation,
     });
     let options = scene_export_sprites::SheetOptions {
-        name: name.unwrap_or_else(|| "sheet".to_string()),
+        name,
         scale,
         views: views.unwrap_or_else(|| vec![0, 90, 180, 270]),
         animation,
