@@ -29,6 +29,10 @@ use serde_json::{Value, json};
 
 const MAX_MAP_CELLS: u64 = 1_000_000;
 
+/// Most objects in one cell with `--tile-layer`: each needs its own layer
+/// (`docs/spec.md` §9).
+pub const MAX_OBJECT_TILE_LAYERS: usize = 16;
+
 /// Move an object anchor just inside its cell; see the export loop.
 const ANCHOR_NUDGE: f64 = 0.001;
 
@@ -412,7 +416,7 @@ pub fn export_with(
 
     let mut objects = Vec::with_capacity(ordered.len());
     let mut footprints = Vec::with_capacity(ordered.len());
-    let mut object_tiles = vec![0_u32; (width as usize) * (height as usize)];
+    let mut tile_cells = Vec::new();
     for (index, instance) in ordered.iter().enumerate() {
         let sprite_index = sprites
             .iter()
@@ -436,7 +440,7 @@ pub fn export_with(
             if cell_x >= 0 && cell_y >= 0 && cell_x < i64::from(width) && cell_y < i64::from(height)
             {
                 let at = (cell_y as usize) * (width as usize) + cell_x as usize;
-                object_tiles[at] = 2 + sprite_index as u32;
+                tile_cells.push((at, 2 + sprite_index as u32));
             }
         }
         // Tiled stores isometric object positions unprojected: both axes count
@@ -498,6 +502,12 @@ pub fn export_with(
         }));
     }
 
+    let object_tile_layers = if objects_as_tiles {
+        stack_tiles(&tile_cells, (width as usize) * (height as usize))?
+    } else {
+        Vec::new()
+    };
+
     let mut tilesets = vec![json!({"firstgid": 1, "source": "floor.tsj"})];
     if has_objects {
         tilesets.push(json!({"firstgid": 2, "source": "objects.tsj"}));
@@ -544,11 +554,16 @@ pub fn export_with(
         )
     }));
     layers.extend(below);
-    if has_objects {
-        layers.push(if objects_as_tiles {
-            tile_layer("objects", object_tiles)
-        } else {
-            json!({
+    if has_objects && objects_as_tiles {
+        for (index, data) in object_tile_layers.into_iter().enumerate() {
+            let name = match index {
+                0 => "objects".to_owned(),
+                _ => format!("objects-{}", index + 1),
+            };
+            layers.push(tile_layer(&name, data));
+        }
+    } else if has_objects {
+        layers.push(json!({
                 "type": "objectgroup",
                 "name": "objects",
                 "x": 0,
@@ -557,8 +572,7 @@ pub fn export_with(
                 "visible": true,
                 "draworder": "index",
                 "objects": objects
-            })
-        });
+        }));
     }
     layers.extend(above);
     if has_objects {
@@ -618,6 +632,37 @@ pub fn export_with(
         collisions,
         cells: [width, height],
     })
+}
+
+/// Spread object tiles over as many tile layers as the busiest cell needs.
+///
+/// `tiles` holds `(cell, gid)` in depth order; the n-th object in a cell goes
+/// to the n-th layer, so nearer objects are drawn later. The layer count is
+/// checked against [`MAX_OBJECT_TILE_LAYERS`] before any layer is allocated.
+fn stack_tiles(tiles: &[(usize, u32)], cells: usize) -> Result<Vec<Vec<u32>>, Diagnostic> {
+    let mut sorted: Vec<usize> = tiles.iter().map(|&(cell, _)| cell).collect();
+    sorted.sort_unstable();
+    let depth = sorted
+        .chunk_by(|a, b| a == b)
+        .map(<[usize]>::len)
+        .max()
+        .unwrap_or(0);
+    if depth > MAX_OBJECT_TILE_LAYERS {
+        return Err(error(
+            "E0602",
+            format!(
+                "{depth} objects share one cell; a tile layer export allows at most \
+                 {MAX_OBJECT_TILE_LAYERS} (use the object layer instead)"
+            ),
+        ));
+    }
+    let mut layers = vec![vec![0_u32; cells]; depth.max(1)];
+    for &(cell, gid) in tiles {
+        if let Some(layer) = layers.iter_mut().find(|layer| layer[cell] == 0) {
+            layer[cell] = gid;
+        }
+    }
+    Ok(layers)
 }
 
 /// Write `wall_shadow.png` and `wall_shadow.tsj`: floor-sized tiles that

@@ -148,8 +148,12 @@ an object layer: one tile per cell, in depth order. Tiled draws a tile image
 with its bottom-left at the cell's position, so the object tileset gets a
 `tileoffset` of `(tileWidth - atlasWidth) / 2`. With that offset the sprite's
 bottom-center lands on the cell's bottom vertex, and a tile placed by hand in
-Tiled covers the cell it stands on. Cells are limited to one sprite each in
-this mode.
+Tiled covers the cell it stands on. A tile layer holds one sprite per cell,
+so objects sharing a cell (a chair under a table, a box on a shelf) go to
+extra layers `objects-2`, `objects-3`, …, in depth order: the n-th object in
+a cell is on the n-th layer. At most 16 objects may share a cell in this mode
+(`E0602`); the object layer has no such limit. A tile layer has no
+elevation, so a raised object is drawn on the cell under it.
 
 The `floor` layer remains a regular tile layer. Because object order is stored
 in the object layer, the Tiled `draworder` is `index`; do not sort objects in

@@ -3,7 +3,9 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use scene_core::compile_scene;
-use scene_export_tiled::{Collision, WallOrder, export, export_with, export_with_walls};
+use scene_export_tiled::{
+    Collision, MAX_OBJECT_TILE_LAYERS, WallOrder, export, export_with, export_with_walls,
+};
 use scene_syntax::parse;
 
 fn compile(source: &str) -> scene_core::SceneGraph {
@@ -539,5 +541,53 @@ fn too_many_footprint_cells_are_rejected_before_rendering() {
     let error = export(&scene, &dir).expect_err("too many cells");
     assert_eq!(error.code, "E0602");
     assert!(!dir.join("objects.png").exists());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn objects_sharing_a_cell_go_to_extra_tile_layers() {
+    // Two cubes stacked on cell (1, 1) and one alone on (3, 1).
+    let scene = compile(
+        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 16; canvas (4, 3, 3); place b at (1, 1, 0); place b at (1, 1, 1); place b at (3, 1, 0);",
+    );
+    let dir = temp_dir("stacked-tiles");
+    let report = export_with(&scene, None, true, WallOrder::default(), &dir).expect("export");
+    let map: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report.map).expect("read map")).expect("map");
+    assert_eq!(
+        layer_names(&map),
+        ["floor", "objects", "objects-2", "collision"]
+    );
+    let filled = |layer: usize| -> Vec<usize> {
+        map["layers"][layer]["data"]
+            .as_array()
+            .expect("data")
+            .iter()
+            .enumerate()
+            .filter(|(_, gid)| gid.as_u64().unwrap_or(0) > 0)
+            .map(|(cell, _)| cell)
+            .collect()
+    };
+    // A tile layer has no elevation: the raised cube goes to the cell under
+    // it, (1, 1) = index 5, on the next layer.
+    assert_eq!(filled(1), [5, 7]);
+    assert_eq!(filled(2), [5]);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn too_many_objects_in_one_cell_are_rejected_for_tile_layers() {
+    let places = (0..=MAX_OBJECT_TILE_LAYERS)
+        .map(|level| format!("place b at (0, 0, {level});"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let scene = compile(&format!(
+        "version 1; object b (1, 1) {{ box at (0, 0, 0) size (1, 1, 1) material wood; }} render iso; scale 4; {places}"
+    ));
+    let dir = temp_dir("tile-layer-limit");
+    let error = export_with(&scene, None, true, WallOrder::default(), &dir).expect_err("limit");
+    assert_eq!(error.code, "E0602");
+    // The object layer has no such limit.
+    assert!(export(&scene, &dir).is_ok());
     let _ = fs::remove_dir_all(dir);
 }
