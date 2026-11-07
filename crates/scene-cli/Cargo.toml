@@ -18,6 +18,7 @@ scene-backend-iso = { path = "../scene-backend-iso" }
 scene-backend-ortho = { path = "../scene-backend-ortho" }
 scene-backend-voxel = { path = "../scene-backend-voxel" }
 scene-export-tiled = { path = "../scene-export-tiled" }
+scene-export-sprites = { path = "../scene-export-sprites" }
 scene-walls = { path = "../scene-walls" }
 scene-core = { path = "../scene-core" }
 scene-render = { path = "../scene-render" }

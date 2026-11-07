@@ -50,6 +50,8 @@ cargo run -p scene-cli -- render examples/classroom_top.scene -o out/classroom_t
 cargo run -p scene-cli -- voxel examples/classroom.scene --density 7 -o out/classroom.vox
 cargo run -p scene-cli -- tiled examples/classroom.scene -o out/tiled
 # with walls: cargo run -p scene-cli -- tiled room.scene --walls room.walls -o out/tiled
+cargo run -p scene-cli -- sprites examples/classroom.scene --views 4 -o out/sprites
+# animation row: --animation chair --from 0 --to 90 --frames 7 --duration 100
 ```
 
 The lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel export

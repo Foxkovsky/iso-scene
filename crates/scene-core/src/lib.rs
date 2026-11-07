@@ -5,7 +5,8 @@ pub mod geometry;
 
 pub use eval::{compile_model, compile_scene, compile_scene_with_fuel};
 pub use geometry::{
-    Bounds, CompiledModel, CompiledObject, Instance, Part, Primitive, SceneGraph, rotate_xy,
+    Bounds, CompiledModel, CompiledObject, Instance, Part, Primitive, SceneGraph, rotate_degrees,
+    rotate_xy,
 };
 
 /// Axis-aligned extent measured in blocks.

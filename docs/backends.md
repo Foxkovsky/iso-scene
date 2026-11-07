@@ -128,6 +128,84 @@ The `floor` layer remains a regular tile layer. Because object order is stored
 in the object layer, the Tiled `draworder` is `index`; do not sort objects in
 the Tiled UI if you want to preserve the generated depth order.
 
+## Sprite sheets
+
+`iso-scene sprites` packs object renders into a uniform grid, without a map.
+It is the format a game engine consumes directly:
+
+```bash
+iso-scene sprites room.scene --views 4 -o out/sprites
+iso-scene sprites chair.model desk.model --views 4 --scale 8 -o out/furniture
+iso-scene sprites door.scene --views 4 \
+    --animation door_leaf --from 0 --to 90 --frames 7 --duration 100 \
+    -o out/door
+```
+
+Input is one or more `.scene` or `.model` files. A scene contributes the
+objects it actually places (each object once, in placement order); a model
+contributes all objects defined in it. Use `--object <name>` (repeatable) to
+keep only some of them. The pixel scale is taken from the first scene; models
+and mixed inputs use `--scale` (default 16).
+
+`--views 1|2|4` selects the static sides: `0°`, `0°/180°`, or
+`0°/90°/180°/270°`. `--angles 0,90,180,270` picks them explicitly.
+
+The output directory gets three files:
+
+- `sheet.png` — transparent grid, one cell per object/view;
+- `sheet.json` — engine-neutral manifest;
+- `sheet.tsj` — Tiled tileset, including a Tiled `animation` block when a frame
+  row exists.
+
+Rows are objects and columns are views, in the order they were loaded. An
+animation gets its own row at the bottom, one column per frame, so a sheet can
+combine a 4-view turntable with an animated part. Empty cells stay transparent.
+
+Every cell is anchored at its **bottom-centre**. For a static view the anchor
+is the footprint's front corner, the point that touches the floor; the object
+is placed so that this point lands on `(cell.width / 2, anchor.y)`. A game
+draws the cell at the object's floor position; Tiled uses the same point
+through `tileoffset`. For an animation frame the anchor is the object's local
+origin instead, because that is the hinge the part turns around: the pivot
+stays put while the leaf swings. `sheet.json` describes the anchor explicitly:
+
+```json
+{
+  "image": "sheet.png",
+  "cell": { "width": 128, "height": 160 },
+  "anchor": { "x": 64, "y": 132 },
+  "columns": 4,
+  "rows": 2,
+  "sprites": [
+    { "name": "chair", "view": 0, "rotation": 0,
+      "x": 0, "y": 0, "w": 128, "h": 160,
+      "anchor": { "x": 64, "y": 132 } }
+  ],
+  "animations": [
+    { "name": "door_leaf", "from": 0, "to": 90, "duration": 100,
+      "frames": [
+        { "index": 0, "angle": 0, "duration": 100,
+          "x": 0, "y": 160, "w": 128, "h": 160,
+          "anchor": { "x": 64, "y": 132 } }
+      ] }
+  ]
+}
+```
+
+`rotation` is the quarter turn of a static view; `angle` is the extra yaw of an
+animation frame. `index` is the frame's column, so engines can advance frames
+without parsing the coordinates.
+
+The tileset uses the same cell size, `columns` columns, and `tileoffset.x =
+(tileWidth - cellWidth) / 2` so a tile placed in a tile layer keeps the sprite
+bottom-centre on the cell. `tileoffset.y` shifts the image down by the empty
+bottom margin, so the anchor (not the cell's bottom edge) lands on the tile
+cell. `--tile-width` overrides the tile width used for that offset (by default
+`2 * scale`). The first frame tile carries the `animation` list; every static
+tile carries `name`, `rotation`, `view` and anchor properties.
+
+Contact shadows are baked into each sprite, like in the Tiled object atlas.
+
 ## Walls
 
 A `.walls` layout is exported as a Tiled layer named `walls`, above `floor`

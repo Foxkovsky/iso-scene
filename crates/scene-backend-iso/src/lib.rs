@@ -88,6 +88,24 @@ pub fn render_object_sprite(
     scale: u32,
     materials: &BTreeMap<String, PathBuf>,
 ) -> Result<Sprite, Diagnostic> {
+    render_object_sprite_at(object, rotation, 0.0, scale, materials)
+}
+
+/// Render one object at a quarter turn plus an extra yaw around its origin.
+///
+/// The extra yaw is what `animate` uses for a door opening: the hinge stays at
+/// the object's local `(0, 0)` while the leaf turns by `angle` degrees.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`render`].
+pub fn render_object_sprite_at(
+    object: &CompiledObject,
+    rotation: u16,
+    angle: f64,
+    scale: u32,
+    materials: &BTreeMap<String, PathBuf>,
+) -> Result<Sprite, Diagnostic> {
     let graph = SceneGraph {
         render: RenderKind::Iso,
         scale,
@@ -100,15 +118,16 @@ pub fn render_object_sprite(
             object: Arc::new(object.clone()),
             at: [0.0, 0.0, 0.0],
             rotation,
-            angle: 0.0,
+            angle,
         }],
         bounds: object.local_bounds(),
     };
     let rendered = render_internal(&graph, MARGIN)?;
     let (x, y) = rotate_xy(0.0, 0.0, object.width, object.depth, rotation);
+    let (x, y) = scene_core::rotate_degrees(x, y, angle);
     let screen = project_point([x, y, 0.0], f64::from(scale));
     let mut image = rendered.image;
-    add_contact_shadow(&mut image, object, rotation, scale, rendered.origin);
+    add_contact_shadow(&mut image, object, rotation, angle, scale, rendered.origin);
     Ok(Sprite {
         image,
         anchor: [
@@ -127,6 +146,7 @@ fn add_contact_shadow(
     image: &mut Image,
     object: &CompiledObject,
     rotation: u16,
+    angle: f64,
     scale: u32,
     origin: [f64; 2],
 ) {
@@ -140,6 +160,7 @@ fn add_contact_shadow(
     let mut max = [f64::NEG_INFINITY; 2];
     for corner in corners {
         let (x, y) = rotate_xy(corner[0], corner[1], object.width, object.depth, rotation);
+        let (x, y) = scene_core::rotate_degrees(x, y, angle);
         let point = project_point([x, y, 0.0], f64::from(scale));
         min[0] = min[0].min(point[0]);
         min[1] = min[1].min(point[1]);
