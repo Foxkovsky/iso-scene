@@ -10,3 +10,10 @@ publish = false
 workspace = true
 
 [dependencies]
+scene-backend-iso = { path = "../scene-backend-iso" }
+scene-backend-voxel = { path = "../scene-backend-voxel" }
+scene-core = { path = "../scene-core" }
+scene-export-sprites = { path = "../scene-export-sprites" }
+scene-export-tiled = { path = "../scene-export-tiled" }
+scene-syntax = { path = "../scene-syntax" }
+serde_json = "1"

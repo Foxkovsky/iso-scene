@@ -421,6 +421,7 @@ dependencies = [
  "scene-export-sprites",
  "scene-export-tiled",
  "scene-render",
+ "scene-server",
  "scene-syntax",
  "scene-walls",
  "serde_json",
@@ -476,6 +477,15 @@ dependencies = [
 [[package]]
 name = "scene-server"
 version = "0.1.0"
+dependencies = [
+ "scene-backend-iso",
+ "scene-backend-voxel",
+ "scene-core",
+ "scene-export-sprites",
+ "scene-export-tiled",
+ "scene-syntax",
+ "serde_json",
+]
 
 [[package]]
 name = "scene-syntax"

@@ -37,7 +37,7 @@ Backends never parse source and never know about `.model` or `.scene`.
 | `scene-backend-voxel` | occupancy sampling → VOX |
 | `scene-export-tiled` | TMJ + tileset JSON |
 | `scene-cli` | build, preview, export |
-| `scene-server` | JSON-lines protocol for the VS Code extension |
+| `scene-server` | editor and agent services: help topics from the spec, the limits table, JSON-RPC transport, the language server and the MCP server |
 
 ## Model and scene
 
