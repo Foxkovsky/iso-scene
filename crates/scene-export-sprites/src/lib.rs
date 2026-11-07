@@ -1811,4 +1811,157 @@ mod tests {
         assert_eq!(bed["y"], 0);
         let _ = fs::remove_dir_all(dir);
     }
+
+    fn read_png(path: &Path) -> (u32, u32, Vec<u8>) {
+        let decoder = png::Decoder::new(std::io::BufReader::new(fs::File::open(path).unwrap()));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buffer = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buffer).unwrap();
+        (info.width, info.height, buffer)
+    }
+
+    fn opaque(rgba: &[u8]) -> usize {
+        rgba.chunks_exact(4).filter(|pixel| pixel[3] > 0).count()
+    }
+
+    #[test]
+    fn every_sprite_is_packed_whole_without_overlap() {
+        let shapes = [("a", 1.0, 1.0), ("b", 3.0, 1.0), ("c", 1.0, 2.5)];
+        let objects: Vec<SheetObject> = shapes
+            .iter()
+            .map(|(name, width, depth)| SheetObject {
+                name: (*name).into(),
+                object: box_object(name, *width, *depth),
+                source: None,
+            })
+            .collect();
+        let mut options = chair_options("whole");
+        options.views = vec![0.0, 45.0, 90.0, 180.0, 270.0];
+        options.padding = 1;
+        options.animations = vec![AnimationSpec {
+            object: "b".into(),
+            ..door_animation("swing", 4)
+        }];
+        let dir = std::env::temp_dir().join("iso-scene-sprites-whole-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        let (_, _, sheet) = read_png(&report.image);
+
+        // Composited pixels never merge (no overlap) and are never cut (no
+        // clipping), so the sheet holds exactly the sum of all sprites.
+        let mut expected = 0;
+        for entry in &objects {
+            for view in &options.views {
+                let (rotation, angle) = split_view(*view);
+                let sprite = render_object_sprite_with(
+                    &entry.object,
+                    rotation,
+                    angle,
+                    8,
+                    &BTreeMap::new(),
+                    true,
+                )
+                .unwrap();
+                expected += opaque(&sprite.image.rgba);
+            }
+        }
+        for angle in frame_angles(0.0, 90.0, 4) {
+            let sprite =
+                render_object_sprite_with(&objects[1].object, 0, angle, 8, &BTreeMap::new(), true)
+                    .unwrap();
+            expected += opaque(&sprite.image.rgba);
+        }
+        assert_eq!(opaque(&sheet), expected);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn static_views_stand_on_the_anchor_line() {
+        let objects = vec![
+            SheetObject {
+                name: "a".into(),
+                object: box_object("a", 1.0, 1.0),
+                source: None,
+            },
+            SheetObject {
+                name: "b".into(),
+                object: box_object("b", 3.0, 1.0),
+                source: None,
+            },
+        ];
+        let mut options = chair_options("floor");
+        options.shadow = false;
+        let dir = std::env::temp_dir().join("iso-scene-sprites-floor-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        let (width, _, sheet) = read_png(&report.image);
+        let manifest: Value =
+            serde_json::from_str(&fs::read_to_string(&report.manifest).unwrap()).unwrap();
+        for sprite in manifest["sprites"].as_array().unwrap() {
+            let [x, y, w, h] = ["x", "y", "w", "h"].map(|key| sprite[key].as_u64().unwrap());
+            let anchor_y = sprite["anchor"]["y"].as_f64().unwrap();
+            let lowest = (y..y + h)
+                .filter(|row| {
+                    (x..x + w).any(|column| {
+                        sheet[((row * u64::from(width) + column) * 4 + 3) as usize] > 0
+                    })
+                })
+                .max()
+                .unwrap();
+            // A box's front corner is its lowest point: it sits on the anchor
+            // line (allowing for the 1 px outline and rounding).
+            let offset = (lowest - y) as f64 - anchor_y;
+            assert!(
+                offset.abs() <= 2.0,
+                "{}: lowest row {offset} px from the anchor",
+                sprite["name"]
+            );
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn tileset_ids_and_sizes_are_consistent() {
+        let objects = vec![SheetObject {
+            name: "door".into(),
+            object: box_object("door", 1.0, 1.0),
+            source: None,
+        }];
+        let mut options = chair_options("tsj");
+        options.padding = 2;
+        options.animations = vec![door_animation("open", 7), door_animation("shut", 2)];
+        options.max_rows = Some(2);
+        let dir = std::env::temp_dir().join("iso-scene-sprites-tsj-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        for page in 1..=report.pages {
+            let stem = format!("tsj-{page}");
+            let tileset: Value =
+                serde_json::from_str(&fs::read_to_string(dir.join(format!("{stem}.tsj"))).unwrap())
+                    .unwrap();
+            let (width, height, _) = read_png(&dir.join(format!("{stem}.png")));
+            assert_eq!(tileset["imagewidth"], width);
+            assert_eq!(tileset["imageheight"], height);
+            let [count, columns, margin, spacing, tile_w, tile_h] = [
+                "tilecount",
+                "columns",
+                "margin",
+                "spacing",
+                "tilewidth",
+                "tileheight",
+            ]
+            .map(|key| tileset[key].as_u64().unwrap());
+            // Tiled derives the grid from the image the same way.
+            assert_eq!(
+                columns,
+                (u64::from(width) - 2 * margin + spacing) / (tile_w + spacing)
+            );
+            let rows = (u64::from(height) - 2 * margin + spacing) / (tile_h + spacing);
+            assert_eq!(count, columns * rows);
+            for tile in tileset["tiles"].as_array().unwrap() {
+                assert!(tile["id"].as_u64().unwrap() < count);
+                for frame in tile["animation"].as_array().into_iter().flatten() {
+                    assert!(frame["tileid"].as_u64().unwrap() < count);
+                }
+            }
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
 }

@@ -286,3 +286,96 @@ fn animate_rejects_huge_frame_counts_and_non_finite_angles() {
     assert!(output.status.success(), "{}", stderr(&output));
     let _ = fs::remove_dir_all(dir);
 }
+
+const ROOM: &str = "version 1;\ninclude \"a.model\";\ninclude \"b.model\";\nrender iso;\nscale 8;\ncanvas (6, 6, 3);\nplace thing at (0, 0, 0) rot 0;\nplace other at (3, 3, 0) rot 90;\nplace thing at (2, 0, 0) rot 0;\n";
+
+fn room(dir: &Path) {
+    write(dir, "a.model", THING_A);
+    write(
+        dir,
+        "b.model",
+        "version 1;\nobject other (2, 1) { box at (0, 0, 0) size (2, 1, 1) material wood; }\n",
+    );
+    write(dir, "room.scene", ROOM);
+}
+
+fn manifest(dir: &Path, out: &str) -> serde_json::Value {
+    serde_json::from_str(&fs::read_to_string(dir.join(out).join("sheet.json")).unwrap()).unwrap()
+}
+
+#[test]
+fn a_scene_contributes_each_placed_object_once_in_order() {
+    let dir = scratch("scene");
+    room(&dir);
+    let output = binary()
+        .current_dir(&dir)
+        .args(["sprites", "room.scene", "--views", "8", "-o", "out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let sheet = manifest(&dir, "out");
+    assert_eq!(sheet["rows"], 2);
+    assert_eq!(sheet["columns"], 8);
+    assert_eq!(sheet["scale"], 8);
+    assert_eq!(sheet["sprites"][0]["name"], "thing");
+    assert_eq!(sheet["sprites"][8]["name"], "other");
+    assert_eq!(sheet["sprites"][1]["rotation"], 45);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn angles_and_object_select_columns_and_rows() {
+    let dir = scratch("select");
+    room(&dir);
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "sprites",
+            "room.scene",
+            "--angles",
+            "0,90",
+            "--object",
+            "other",
+        ])
+        .args(["-o", "out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let sheet = manifest(&dir, "out");
+    assert_eq!(sheet["rows"], 1);
+    assert_eq!(sheet["views"], serde_json::json!([0, 90]));
+    assert_eq!(sheet["sprites"][0]["name"], "other");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn bad_flag_values_are_usage_errors() {
+    let dir = scratch("flags");
+    room(&dir);
+    for args in [
+        &["--views", "3"][..],
+        &["--angles", "0,x"],
+        &["--pivot", "middle"],
+        &["--shadow", "soft"],
+        &["--padding", "-1"],
+        &["--max-rows", "0"],
+        &["--object", "missing"],
+        &["--durations", "10"],
+    ] {
+        let output = binary()
+            .current_dir(&dir)
+            .args(["sprites", "room.scene"])
+            .args(args)
+            .args(["-o", "out"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{args:?}: {}",
+            stderr(&output)
+        );
+    }
+    assert!(!dir.join("out").exists());
+    let _ = fs::remove_dir_all(dir);
+}
