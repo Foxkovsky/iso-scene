@@ -1338,14 +1338,15 @@ impl Evaluator {
                 span,
             )
         })?;
-        let program = parse(&source)?;
+        let program =
+            parse(&source).map_err(|error| relocate(&error, &source, &include.path, span))?;
 
         let model_dir = path
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
         self.include_stack.push(path);
-        let result = self.included_model(&program, span, &model_dir);
+        let result = self.included_model(&program, span, &model_dir, &source, &include.path);
         self.include_stack.pop();
         result
     }
@@ -1355,16 +1356,21 @@ impl Evaluator {
         program: &Program,
         span: Span,
         base_dir: &Path,
+        source: &str,
+        name: &str,
     ) -> Result<(), Diagnostic> {
+        // Spans of these errors point into the included file.
+        let here = |error: Diagnostic| relocate(&error, source, name, span);
         for item in &program.items {
             if let ItemKind::Material(material) = &item.kind {
-                self.add_material(material, item.span, base_dir)?;
+                self.add_material(material, item.span, base_dir)
+                    .map_err(here)?;
             }
         }
         for item in &program.items {
             match &item.kind {
                 ItemKind::Material(_) => {}
-                ItemKind::Object(object) => self.add_object(object, item.span)?,
+                ItemKind::Object(object) => self.add_object(object, item.span).map_err(here)?,
                 _ => {
                     return Err(diag(
                         "E0503",
@@ -1491,4 +1497,25 @@ fn resolve_include(
         ));
     }
     Ok(resolved)
+}
+
+/// Move a diagnostic whose span points into the included file `name` (with
+/// text `source`) onto the `include` statement at `span`, naming the file and
+/// the 1-based line and column in the message.
+fn relocate(error: &Diagnostic, source: &str, name: &str, span: Span) -> Diagnostic {
+    let offset = usize::try_from(error.span.start)
+        .unwrap_or(usize::MAX)
+        .min(source.len());
+    let before = source.get(..offset).unwrap_or(source);
+    let line = before.matches('\n').count() + 1;
+    let column = before
+        .rsplit('\n')
+        .next()
+        .map_or(0, |text| text.chars().count())
+        + 1;
+    Diagnostic::new(
+        error.code,
+        format!("in `{name}` at {line}:{column}: {}", error.message),
+        span,
+    )
 }

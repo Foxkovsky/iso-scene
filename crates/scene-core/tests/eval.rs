@@ -574,3 +574,39 @@ fn a_single_frame_animation_is_at_zero() {
         0.0
     );
 }
+
+#[test]
+fn errors_in_an_included_file_point_at_the_include_and_name_the_file() {
+    let temp = TempDir::new();
+    let scene = "version 1;\ninclude \"a.model\";\nrender iso; scale 8; place a at (0, 0, 0);";
+    let compile = |model: &str| {
+        fs::write(temp.path().join("a.model"), model).expect("write model");
+        let program = parse_ok(scene);
+        compile_scene(&program, temp.path(), temp.path()).expect_err("model error")
+    };
+    let include = u32::try_from(scene.find("include").expect("include")).expect("small");
+    // An evaluation error and a parse error, both on line 3 of the model.
+    for (model, code, at) in [
+        (
+            "version 1;\nobject a (1, 1) {\n    box at (0, 0, 0) size (0, 1, 1) material wood;\n}\n",
+            "E0307",
+            "3:5",
+        ),
+        (
+            "version 1;\nobject a (1, 1) {\n    box at (0, 0, 0) size (1, 1 1) material wood;\n}\n",
+            "E0201",
+            "3:33",
+        ),
+    ] {
+        let error = compile(model);
+        assert_eq!(error.code, code);
+        assert_eq!(error.span.start, include, "{}", error.message);
+        assert!(
+            error
+                .message
+                .starts_with(&format!("in `a.model` at {at}: ")),
+            "{}",
+            error.message
+        );
+    }
+}
