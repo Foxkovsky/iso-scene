@@ -38,6 +38,7 @@ fn main() -> ExitCode {
         "tiled" => commands::tiled::tiled_scene(args.collect()),
         "animate" => commands::animate::animate_scene(args.collect()),
         "sprites" => commands::sprites::sprites_scene(args.collect()),
+        "limits" => commands::limits::limits(args.collect()),
         other => {
             eprintln!("iso-scene: unknown command `{other}`");
             eprintln!("Try `iso-scene --help`.");
@@ -83,6 +84,7 @@ fn print_help() {
     println!(
         "                  --tile-layer puts objects in a tile layer instead of an object layer"
     );
+    println!("  limits          list every limit and its error code (--json for agents)");
     println!("  spec-version    print the implemented language version");
     println!();
     println!("Options:");

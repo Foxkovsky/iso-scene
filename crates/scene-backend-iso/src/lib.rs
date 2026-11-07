@@ -27,8 +27,10 @@ use scene_syntax::ast::{Background, RenderKind};
 pub type IsoImage = scene_render::Image;
 use scene_render::Image;
 
-const MAX_OUTPUT_SIDE: usize = 8_192;
-const MAX_OUTPUT_PIXELS: usize = 16_000_000;
+/// Longest side of a rendered image, in pixels (`docs/spec.md` §9).
+pub const MAX_OUTPUT_SIDE: usize = 8_192;
+/// Most pixels in a rendered image (`docs/spec.md` §9).
+pub const MAX_OUTPUT_PIXELS: usize = 16_000_000;
 const MARGIN: f64 = 2.0;
 
 /// Project a world point to isometric screen coordinates.

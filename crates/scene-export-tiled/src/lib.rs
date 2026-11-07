@@ -27,7 +27,8 @@ use scene_walls::{
 };
 use serde_json::{Value, json};
 
-const MAX_MAP_CELLS: u64 = 1_000_000;
+/// Most cells in a Tiled map (`docs/spec.md` §9).
+pub const MAX_MAP_CELLS: u64 = 1_000_000;
 
 /// Most objects in one cell with `--tile-layer`: each needs its own layer
 /// (`docs/spec.md` §9).

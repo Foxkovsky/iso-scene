@@ -15,9 +15,12 @@ use scene_core::{Instance, Primitive, SceneGraph};
 use scene_render::builtin;
 use scene_syntax::Diagnostic;
 
-const MAX_AXIS: u32 = 4096;
-const MAX_GRID: u32 = 256 * 256 * 256;
-const MAX_COLORS: usize = 255;
+/// Most voxels along one axis (`docs/spec.md` §9).
+pub const MAX_AXIS: u32 = 4096;
+/// Most voxels in the whole grid (`docs/spec.md` §9).
+pub const MAX_GRID: u32 = 256 * 256 * 256;
+/// Most distinct colours; a VOX palette has 255 entries (`docs/spec.md` §9).
+pub const MAX_COLORS: usize = 255;
 
 /// One occupied voxel and its palette index (1-based).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

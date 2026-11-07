@@ -2,6 +2,7 @@
 
 pub(crate) mod animate;
 pub(crate) mod inspect;
+pub(crate) mod limits;
 pub(crate) mod render;
 pub(crate) mod sprites;
 pub(crate) mod tiled;
