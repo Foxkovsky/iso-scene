@@ -245,3 +245,44 @@ fn exclude_drops_helper_objects() {
     assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn animate_rejects_huge_frame_counts_and_non_finite_angles() {
+    let dir = scratch("animate");
+    write(&dir, "frame.model", THING_A);
+    write(
+        &dir,
+        "door.scene",
+        "version 1;\ninclude \"frame.model\";\nrender iso;\nscale 8;\ncanvas (2, 2, 2);\nplace thing at (0, 0, 0) rot 0;\n",
+    );
+    for args in [["--frames", "100000"], ["--from", "nan"], ["--to", "inf"]] {
+        let output = binary()
+            .current_dir(&dir)
+            .args(["animate", "door.scene", "--object", "thing"])
+            .args(args)
+            .args(["-o", "out"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{args:?}: {}",
+            stderr(&output)
+        );
+    }
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "animate",
+            "door.scene",
+            "--object",
+            "thing",
+            "--frames",
+            "3",
+        ])
+        .args(["-o", "out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let _ = fs::remove_dir_all(dir);
+}

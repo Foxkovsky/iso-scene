@@ -379,22 +379,24 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
                 let Some(v) = value("--from") else {
                     return ExitCode::from(2);
                 };
-                if let Ok(n) = v.parse() {
-                    from = n;
-                } else {
-                    eprintln!("iso-scene: invalid angle `{v}`");
-                    return ExitCode::from(2);
+                match v.parse::<f64>() {
+                    Ok(n) if n.is_finite() => from = n,
+                    _ => {
+                        eprintln!("iso-scene: invalid angle `{v}`");
+                        return ExitCode::from(2);
+                    }
                 }
             }
             "--to" => {
                 let Some(v) = value("--to") else {
                     return ExitCode::from(2);
                 };
-                if let Ok(n) = v.parse() {
-                    to = n;
-                } else {
-                    eprintln!("iso-scene: invalid angle `{v}`");
-                    return ExitCode::from(2);
+                match v.parse::<f64>() {
+                    Ok(n) if n.is_finite() => to = n,
+                    _ => {
+                        eprintln!("iso-scene: invalid angle `{v}`");
+                        return ExitCode::from(2);
+                    }
                 }
             }
             "--frames" => {
@@ -402,9 +404,12 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
                     return ExitCode::from(2);
                 };
                 match v.parse::<u32>() {
-                    Ok(n) if n >= 1 => frames = n,
+                    Ok(n) if (1..=scene_export_sprites::MAX_FRAMES).contains(&n) => frames = n,
                     _ => {
-                        eprintln!("iso-scene: invalid frame count `{v}`");
+                        eprintln!(
+                            "iso-scene: invalid frame count `{v}`; use 1..={}",
+                            scene_export_sprites::MAX_FRAMES
+                        );
                         return ExitCode::from(2);
                     }
                 }
@@ -459,13 +464,7 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    let angles: Vec<f64> = if frames <= 1 {
-        vec![from]
-    } else {
-        (0..frames)
-            .map(|frame| from + (to - from) * f64::from(frame) / f64::from(frames - 1))
-            .collect()
-    };
+    let angles = scene_export_sprites::frame_angles(from, to, frames);
     let mut rendered = Vec::with_capacity(angles.len());
     for angle in &angles {
         let mut frame = scene.clone();
@@ -494,6 +493,15 @@ fn animate_scene(args: Vec<String>) -> ExitCode {
         .unwrap_or(1)
         .max(1);
     let sheet_w = frame_w.saturating_mul(rendered.len() as u32);
+    if sheet_w > scene_export_sprites::MAX_SHEET_SIDE
+        || frame_h > scene_export_sprites::MAX_SHEET_SIDE
+        || u64::from(sheet_w) * u64::from(frame_h) > scene_export_sprites::MAX_SHEET_PIXELS
+    {
+        eprintln!(
+            "iso-scene: error[E0602]: animation sheet {sheet_w}x{frame_h} exceeds the limit; use fewer frames"
+        );
+        return ExitCode::from(1);
+    }
     let mut sheet = scene_render::Image {
         width: sheet_w,
         height: frame_h,

@@ -33,9 +33,9 @@ pub const MANIFEST_FORMAT: &str = "iso-scene-sprites";
 pub const MANIFEST_VERSION: u32 = 1;
 
 /// Maximum sheet width or height in pixels.
-const MAX_SHEET_SIDE: u32 = 8_192;
+pub const MAX_SHEET_SIDE: u32 = 8_192;
 /// Maximum sheet area in pixels.
-const MAX_SHEET_PIXELS: u64 = 16_000_000;
+pub const MAX_SHEET_PIXELS: u64 = 16_000_000;
 /// Maximum number of animation frames.
 pub const MAX_FRAMES: u32 = 1_024;
 /// Maximum number of cells (static views plus frames), checked before rendering.
@@ -608,7 +608,10 @@ fn cell_metrics(cells: &[Cell]) -> ([u32; 2], [f64; 2]) {
     ([width, height], [f64::from(width) / 2.0, top.ceil()])
 }
 
-fn frame_angles(from: f64, to: f64, frames: u32) -> Vec<f64> {
+/// Evenly spaced angles from `from` to `to`, both included; one frame shows
+/// `from`.
+#[must_use]
+pub fn frame_angles(from: f64, to: f64, frames: u32) -> Vec<f64> {
     if frames <= 1 {
         return vec![from];
     }
