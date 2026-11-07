@@ -39,6 +39,7 @@ fn main() -> ExitCode {
         "animate" => commands::animate::animate_scene(args.collect()),
         "sprites" => commands::sprites::sprites_scene(args.collect()),
         "limits" => commands::limits::limits(args.collect()),
+        "help" => commands::help::help(args.collect()),
         other => {
             eprintln!("iso-scene: unknown command `{other}`");
             eprintln!("Try `iso-scene --help`.");
@@ -47,7 +48,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn print_help() {
+pub(crate) fn print_help() {
     println!("iso-scene {}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Usage: iso-scene <command> [options]");
@@ -84,6 +85,7 @@ fn print_help() {
     println!(
         "                  --tile-layer puts objects in a tile layer instead of an object layer"
     );
+    println!("  help [topic]    one section of the language spec (topics without one)");
     println!("  limits          list every limit and its error code (--json for agents)");
     println!("  spec-version    print the implemented language version");
     println!();
