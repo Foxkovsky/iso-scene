@@ -1,0 +1,8 @@
+//! One module per subcommand.
+
+pub(crate) mod animate;
+pub(crate) mod inspect;
+pub(crate) mod render;
+pub(crate) mod sprites;
+pub(crate) mod tiled;
+pub(crate) mod voxel;
