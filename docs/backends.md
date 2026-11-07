@@ -269,6 +269,29 @@ between cells, so linear filtering, mipmaps or scaling cannot bleed one sprite
 into its neighbour. The manifest coordinates include it; the tileset writes it
 as `margin` and `spacing`.
 
+`--atlas` also writes `sheet.atlas.json` in the TexturePacker "JSON Hash"
+format, which Phaser 3 (`this.load.atlas`) and PixiJS (`Spritesheet`) read
+directly. Frame keys are `object/view` for static views and `animation#frame`
+for animation frames; each frame has a `pivot` (the anchor as a fraction of the
+frame), animation frames have a `duration`, and `animations` lists the frame
+keys of every animation in order:
+
+```json
+{
+  "frames": {
+    "chair/0": { "frame": { "x": 0, "y": 0, "w": 128, "h": 160 },
+                 "rotated": false, "trimmed": false,
+                 "spriteSourceSize": { "x": 0, "y": 0, "w": 128, "h": 160 },
+                 "sourceSize": { "w": 128, "h": 160 },
+                 "pivot": { "x": 0.5, "y": 0.825 } },
+    "open#0": { "...": "...", "duration": 100 }
+  },
+  "animations": { "open": ["open#0", "open#1"] },
+  "meta": { "app": "iso-scene", "image": "sheet.png", "format": "RGBA8888",
+            "size": { "w": 512, "h": 320 }, "scale": "1" }
+}
+```
+
 `--debug-grid` also writes `sheet.debug.png`: the sheet on a light background
 with each cell outlined, the anchor marked with a cross and a `name/view`
 (`name#frame` for animation frames) label, to check at a glance that nothing is

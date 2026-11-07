@@ -141,6 +141,9 @@ pub struct SheetOptions {
     pub padding: u32,
     /// Also write `name.debug.png`: cell borders, anchors and labels.
     pub debug_grid: bool,
+    /// Also write `name.atlas.json` in the `TexturePacker` "JSON Hash" format
+    /// read by Phaser and `PixiJS`.
+    pub atlas: bool,
     /// Animation rows, one per entry, below the static views.
     pub animations: Vec<AnimationSpec>,
     /// Tile width used for the Tiled `tileoffset`, when known.
@@ -155,6 +158,8 @@ pub struct SheetReport {
     pub tileset: PathBuf,
     /// `name.debug.png`, when requested.
     pub debug: Option<PathBuf>,
+    /// `name.atlas.json`, when requested.
+    pub atlas: Option<PathBuf>,
     pub cells: [u32; 2],
     pub columns: u32,
     pub rows: u32,
@@ -422,6 +427,21 @@ pub fn export(
         rows,
         &image_name,
     );
+    let atlas = if options.atlas {
+        let path = out_dir.join(format!("{}.atlas.json", options.name));
+        let value = atlas_json(
+            options,
+            cells.as_slice(),
+            cell_size,
+            anchor,
+            [width, height],
+        );
+        write_json(&path, &value)?;
+        Some(path)
+    } else {
+        None
+    };
+
     let tileset_name = format!("{}.tsj", options.name);
     let tileset_path = out_dir.join(&tileset_name);
     write_json(&tileset_path, &tileset)?;
@@ -431,6 +451,7 @@ pub fn export(
         manifest: manifest_path,
         tileset: tileset_path,
         debug,
+        atlas,
         cells: cell_size,
         columns,
         rows,
@@ -765,6 +786,71 @@ fn glyph(character: char) -> [u8; 5] {
     }
 }
 
+/// Key of a cell in the atlas: `object/view` for a static view and
+/// `animation#frame` for an animation frame.
+fn atlas_key(options: &SheetOptions, cell: &Cell) -> String {
+    match cell
+        .animation
+        .and_then(|index| options.animations.get(index))
+    {
+        Some(animation) => format!("{}#{}", animation.name, cell.column),
+        None => format!("{}/{}", cell.name, cell.column),
+    }
+}
+
+/// `TexturePacker` "JSON Hash" atlas, as loaded by Phaser (`load.atlas`) and
+/// `PixiJS` (`Spritesheet`). `pivot` is the anchor as a fraction of the frame,
+/// `animations` lists frame keys in order (`PixiJS`), and each frame carries
+/// its `duration` like an Aseprite export.
+fn atlas_json(
+    options: &SheetOptions,
+    cells: &[Cell],
+    cell_size: [u32; 2],
+    anchor: [f64; 2],
+    image_size: [u32; 2],
+) -> Value {
+    let mut frames = serde_json::Map::new();
+    for cell in cells {
+        let [x, y] = cell_origin(cell, cell_size, options.padding);
+        let mut frame = json!({
+            "frame": {"x": x, "y": y, "w": cell_size[0], "h": cell_size[1]},
+            "rotated": false,
+            "trimmed": false,
+            "spriteSourceSize": {"x": 0, "y": 0, "w": cell_size[0], "h": cell_size[1]},
+            "sourceSize": {"w": cell_size[0], "h": cell_size[1]},
+            "pivot": {
+                "x": anchor[0] / f64::from(cell_size[0]),
+                "y": anchor[1] / f64::from(cell_size[1])
+            }
+        });
+        if let (Some(duration), Some(object)) = (cell.duration, frame.as_object_mut()) {
+            object.insert("duration".to_string(), json!(duration));
+        }
+        frames.insert(atlas_key(options, cell), frame);
+    }
+    let mut animations = serde_json::Map::new();
+    for (index, animation) in options.animations.iter().enumerate() {
+        let keys: Vec<String> = cells
+            .iter()
+            .filter(|cell| cell.animation == Some(index))
+            .map(|cell| atlas_key(options, cell))
+            .collect();
+        animations.insert(animation.name.clone(), json!(keys));
+    }
+    json!({
+        "frames": frames,
+        "animations": animations,
+        "meta": {
+            "app": "iso-scene",
+            "version": env!("CARGO_PKG_VERSION"),
+            "image": format!("{}.png", options.name),
+            "format": "RGBA8888",
+            "size": {"w": image_size[0], "h": image_size[1]},
+            "scale": "1"
+        }
+    })
+}
+
 /// Top-left pixel of a cell in the sheet.
 fn cell_origin(cell: &Cell, cell_size: [u32; 2], padding: u32) -> [u32; 2] {
     [
@@ -978,6 +1064,7 @@ mod tests {
             shadow: true,
             padding: 0,
             debug_grid: false,
+            atlas: false,
             animations: Vec::new(),
             tile_width: Some(16),
         };
@@ -1023,6 +1110,7 @@ mod tests {
             shadow: true,
             padding: 0,
             debug_grid: false,
+            atlas: false,
             animations: vec![AnimationSpec {
                 name: "door".into(),
                 object: "door".into(),
@@ -1080,6 +1168,7 @@ mod tests {
             shadow: true,
             padding: 0,
             debug_grid: false,
+            atlas: false,
             animations: Vec::new(),
             tile_width: None,
         };
@@ -1099,6 +1188,7 @@ mod tests {
             shadow: true,
             padding: 0,
             debug_grid: false,
+            atlas: false,
             animations: Vec::new(),
             tile_width: None,
         }
@@ -1586,6 +1676,37 @@ mod tests {
         assert!(buffer.chunks_exact(4).all(|pixel| pixel[3] == 255));
         // The top-left pixel is a cell border.
         assert_eq!(&buffer[..4], &[220, 40, 160, 255]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn atlas_lists_frames_pivots_and_animations() {
+        let objects = vec![SheetObject {
+            name: "door".into(),
+            object: box_object("door", 1.0, 1.0),
+            source: None,
+        }];
+        let mut options = chair_options("atlas");
+        options.views = vec![0.0, 90.0];
+        options.padding = 2;
+        options.atlas = true;
+        options.animations = vec![door_animation("open", 3)];
+        let dir = std::env::temp_dir().join("iso-scene-sprites-atlas-test");
+        let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+        let atlas: Value =
+            serde_json::from_str(&fs::read_to_string(report.atlas.unwrap()).unwrap()).unwrap();
+        let [w, h] = report.cells;
+        assert_eq!(atlas["frames"].as_object().unwrap().len(), 5);
+        assert_eq!(atlas["frames"]["door/1"]["frame"]["x"], 2 + w + 2);
+        assert_eq!(atlas["frames"]["open#2"]["frame"]["y"], 2 + h + 2);
+        assert_eq!(atlas["frames"]["open#2"]["duration"], 100);
+        let pivot = atlas["frames"]["door/0"]["pivot"]["x"].as_f64().unwrap();
+        assert!((pivot - 0.5).abs() < 1e-9);
+        assert_eq!(
+            atlas["animations"]["open"],
+            json!(["open#0", "open#1", "open#2"])
+        );
+        assert_eq!(atlas["meta"]["image"], "atlas.png");
         let _ = fs::remove_dir_all(dir);
     }
 }
