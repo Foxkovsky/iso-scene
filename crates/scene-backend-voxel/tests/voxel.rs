@@ -189,3 +189,23 @@ fn slanted_shapes_are_voxelized() {
     assert_ne!(model.voxels.len(), 0);
     assert!(model.voxels.len() > 1_000);
 }
+
+#[test]
+fn an_oversized_grid_suggests_the_smallest_voxel_size_that_fits() {
+    let scene = compile(
+        // Two small boxes in opposite corners: 10-block bounds, few voxels.
+        "version 1; object b (10, 10) { box at (0, 0, 0) size (0.5, 0.5, 0.5) material wood; box at (9.5, 9.5, 9.5) size (0.5, 0.5, 0.5) material wood; } render iso; scale 16; place b at (0, 0, 0);",
+    );
+    let error = voxelize(&scene, 100.0).expect_err("1000^3 is too large");
+    let suggested: f64 = error
+        .message
+        .split("--voxel-size ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| panic!("no suggestion in `{}`", error.message));
+    // 10 blocks fit 256 voxels per axis at 10 / 256 = 0.0390625 blocks.
+    assert!((suggested - 0.0391).abs() < 1e-9, "{suggested}");
+    assert!(voxelize(&scene, 1.0 / suggested).is_ok());
+    assert!(voxelize(&scene, 1.0 / (suggested - 0.0001)).is_err());
+}

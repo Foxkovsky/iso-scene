@@ -21,6 +21,7 @@ item            = include
                 | sun
                 | ambient
                 | background
+                | animation
                 | statement ;
 
 (* ---------------------------------------------------------------- directives *)
@@ -33,6 +34,9 @@ canvas          = "canvas", tuple3, ";" ;
 sun             = "sun", pair, ";" ;
 ambient         = "ambient", expr, ";" ;
 background      = "background", ( color | "transparent" ), ";" ;
+(* `animation`, `frames`, `duration` and `once` are contextual words. *)
+animation       = "animation", ident, "(", ident, ")",
+                  "frames", integer, "duration", integer, [ "once" ], ";" ;
 
 (* ---------------------------------------------------------------- objects *)
 
@@ -63,7 +67,8 @@ for_stmt        = "for", ident, "in", expr, "..", expr, block ;
 if_stmt         = "if", "(", expr, ")", block,
                   [ "else", ( if_stmt | block ) ] ;
 
-place           = "place", ident, "at", tuple3, [ "rot", expr ], [ "anchor", anchor ], ";" ;
+place           = "place", ident, "at", tuple3, [ "rot", expr ], [ "turn", expr ],
+                  [ "anchor", anchor ], ";" ;  (* `turn` is a contextual word *)
 anchor          = "back" | "center" | "front" | "left" | "right" | "cell" ;
 
 use_stmt        = "use", ident, [ "at", tuple3 ], [ "rot", expr ], ";" ;
@@ -138,4 +143,6 @@ digit           = "0" | "1" | "2" | "3" | "4"
   * `object` bodies may not contain `place`, `include`, `render` or `scale`.
   * Loop bounds are evaluated once and must be integral.
   * `rot` must normalize to 0, 90, 180 or 270.
+  * `animation` is allowed only in .scene files; `frames` is 1..1024 and
+    `duration` at least 1.
 *)

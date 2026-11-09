@@ -43,6 +43,21 @@ Before claiming success, run `cargo test --workspace` and `cargo clippy
 --workspace --all-targets -- -D warnings`. For changes that can affect speed,
 also run `make bench` (see "Performance").
 
+## Working on scenes and renders
+
+Pixels are the output, so check them, not only the exit code:
+
+1. **Build** the scene: `iso-scene render scene.scene -o out.png` (or
+   `tiled`, `sprites`, `voxel`).
+2. **Look** at the image before changing anything else. For Tiled maps,
+   rasterize with `tmxrasterizer`; compare with `preview.png`.
+3. **Fix** one thing, then build and look again.
+
+Use `iso-scene help <topic>` for one section of the spec and
+`iso-scene limits` for every limit instead of reading all of `docs/spec.md`.
+With MCP (`iso-scene mcp`), the `check`, `render`, `help` and `limits` tools
+do the same and `render` returns the image itself.
+
 ## Performance
 
 `iso-scene` must be blazing fast: previews in the VS Code extension rebuild on
@@ -78,7 +93,7 @@ asset pipelines. Speed is a feature with the same weight as correctness.
 ## Current state
 
 - Specification: draft v1.
-- Implementation: lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel/Tiled export and walls are complete; LSP/MCP are next.
+- Implementation: lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel/Tiled export, walls, scene animations, a language server (`iso-scene lsp`) and an MCP server (`iso-scene mcp`, see `docs/servers.md`).
 - Tests: lexer, parser, evaluator, iso/ortho projections and renders, examples, CLI. Generated PNGs are not committed.
 
 ## Adding a feature

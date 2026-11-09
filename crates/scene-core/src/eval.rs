@@ -9,18 +9,18 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use scene_syntax::ast::{
-    Ambient, Anchor, AssignOp, Axis, Background, BinaryOp, Block, ElseBranch, Expr, ExprKind,
-    Include, ItemKind, Material, Object, Origin, Program, Shape, Statement, StatementKind, Sun,
-    UnaryOp,
+    Ambient, Anchor, Animation, AssignOp, Axis, Background, BinaryOp, Block, ElseBranch, Expr,
+    ExprKind, Include, ItemKind, Material, Object, Origin, Program, Shape, Statement,
+    StatementKind, Sun, UnaryOp,
 };
 use scene_syntax::{Diagnostic, Span, parse};
 
 use crate::geometry::{
-    Bounds, CompiledModel, CompiledObject, Instance, Part, Primitive, SceneGraph,
+    Bounds, CompiledModel, CompiledObject, Instance, Part, Primitive, SceneAnimation, SceneGraph,
 };
 use crate::{
-    DEFAULT_FUEL, MAX_CANVAS_BLOCKS, MAX_COORD, MAX_INCLUDE_DEPTH, MAX_INCLUDED_BYTES,
-    MAX_INSTANCES, MAX_LOOP_BOUND, MAX_OBJECTS, MAX_SCALE, MAX_SHAPES,
+    DEFAULT_FUEL, MAX_ANIMATION_FRAMES, MAX_CANVAS_BLOCKS, MAX_COORD, MAX_INCLUDE_DEPTH,
+    MAX_INCLUDED_BYTES, MAX_INSTANCES, MAX_LOOP_BOUND, MAX_OBJECTS, MAX_SCALE, MAX_SHAPES,
 };
 
 const BUILTIN_MATERIALS: [&str; 7] = ["wood", "metal", "light", "glass", "dark", "red", "white"];
@@ -62,6 +62,44 @@ pub fn compile_scene_with_fuel(
     fuel: u64,
 ) -> Result<SceneGraph, Diagnostic> {
     Evaluator::new(fuel).scene(program, base_dir, root)
+}
+
+/// Compile frame `frame` of the animation `animation`: the scene is evaluated
+/// with that animation's progress variable at `frame / (frames - 1)` and every
+/// other animation's at 0.
+///
+/// # Errors
+///
+/// Returns the diagnostics of [`compile_scene`], `E0301` for an animation the
+/// scene does not declare and `E0304` for a frame past its last one.
+pub fn compile_scene_frame(
+    program: &Program,
+    base_dir: &Path,
+    root: &Path,
+    animation: &str,
+    frame: u32,
+) -> Result<SceneGraph, Diagnostic> {
+    let mut evaluator = Evaluator::new(DEFAULT_FUEL);
+    evaluator.frame = Some((animation.to_owned(), frame));
+    let scene = evaluator.scene(program, base_dir, root)?;
+    let Some(declared) = scene.animations.iter().find(|a| a.name == animation) else {
+        return Err(diag(
+            "E0301",
+            format!("unknown animation `{animation}`"),
+            program.span,
+        ));
+    };
+    if frame >= declared.frames {
+        return Err(diag(
+            "E0304",
+            format!(
+                "animation `{animation}` has {} frames; frame {frame} does not exist",
+                declared.frames
+            ),
+            program.span,
+        ));
+    }
+    Ok(scene)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -163,6 +201,8 @@ struct Evaluator {
     materials: BTreeMap<String, PathBuf>,
     include_stack: Vec<PathBuf>,
     included_bytes: usize,
+    /// The animation and frame being compiled, if any.
+    frame: Option<(String, u32)>,
 }
 
 impl Evaluator {
@@ -176,6 +216,7 @@ impl Evaluator {
             materials: BTreeMap::new(),
             include_stack: Vec::new(),
             included_bytes: 0,
+            frame: None,
         }
     }
 
@@ -244,6 +285,7 @@ impl Evaluator {
         let mut sun = [135.0, 45.0];
         let mut ambient = 0.35;
         let mut background = Background::Transparent;
+        let mut animations: Vec<SceneAnimation> = Vec::new();
 
         for item in &program.items {
             match &item.kind {
@@ -287,6 +329,20 @@ impl Evaluator {
                     ambient = self.ambient(value, item.span)?;
                 }
                 ItemKind::Background(value) => background = *value,
+                ItemKind::Animation(animation) => {
+                    let declared = Self::animation(animation, &animations)?;
+                    let progress = match &self.frame {
+                        Some((name, frame)) if *name == declared.name => declared.progress(*frame),
+                        _ => 0.0,
+                    };
+                    scopes.declare(
+                        &animation.variable,
+                        Value::Number(progress),
+                        false,
+                        animation.variable_span,
+                    )?;
+                    animations.push(declared);
+                }
                 ItemKind::Statement(statement) => {
                     self.scene_statement(statement, &mut scopes, &mut instances)?;
                 }
@@ -317,6 +373,40 @@ impl Evaluator {
             materials: self.materials.clone(),
             instances,
             bounds,
+            animations,
+        })
+    }
+
+    fn animation(
+        animation: &Animation,
+        declared: &[SceneAnimation],
+    ) -> Result<SceneAnimation, Diagnostic> {
+        if declared.iter().any(|other| other.name == animation.name) {
+            return Err(diag(
+                "E0303",
+                format!("animation `{}` is declared twice", animation.name),
+                animation.name_span,
+            ));
+        }
+        if !(1..=MAX_ANIMATION_FRAMES).contains(&animation.frames) {
+            return Err(diag(
+                "E0304",
+                format!("frames must be in 1..={MAX_ANIMATION_FRAMES}"),
+                animation.frames_span,
+            ));
+        }
+        if animation.duration == 0 {
+            return Err(diag(
+                "E0304",
+                "frame duration must be at least 1 ms",
+                animation.duration_span,
+            ));
+        }
+        Ok(SceneAnimation {
+            name: animation.name.clone(),
+            frames: animation.frames,
+            duration: animation.duration,
+            looped: animation.looped,
         })
     }
 
@@ -769,6 +859,7 @@ impl Evaluator {
                 object,
                 at,
                 rotation,
+                turn,
                 anchor,
             } => {
                 let object = self.objects.get(object).cloned().ok_or_else(|| {
@@ -785,6 +876,10 @@ impl Evaluator {
                     }
                     None => 0,
                 };
+                let angle = match turn {
+                    Some(expr) => self.number(expr, scopes, "turn")?,
+                    None => 0.0,
+                };
                 if self.instances >= MAX_INSTANCES {
                     return Err(diag(
                         "E0402",
@@ -797,7 +892,7 @@ impl Evaluator {
                     object,
                     at,
                     rotation,
-                    angle: 0.0,
+                    angle,
                 };
                 if let Some(anchor) = anchor {
                     let zero = Instance {
@@ -1243,14 +1338,15 @@ impl Evaluator {
                 span,
             )
         })?;
-        let program = parse(&source)?;
+        let program =
+            parse(&source).map_err(|error| relocate(&error, &source, &include.path, span))?;
 
         let model_dir = path
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
         self.include_stack.push(path);
-        let result = self.included_model(&program, span, &model_dir);
+        let result = self.included_model(&program, span, &model_dir, &source, &include.path);
         self.include_stack.pop();
         result
     }
@@ -1260,16 +1356,21 @@ impl Evaluator {
         program: &Program,
         span: Span,
         base_dir: &Path,
+        source: &str,
+        name: &str,
     ) -> Result<(), Diagnostic> {
+        // Spans of these errors point into the included file.
+        let here = |error: Diagnostic| relocate(&error, source, name, span);
         for item in &program.items {
             if let ItemKind::Material(material) = &item.kind {
-                self.add_material(material, item.span, base_dir)?;
+                self.add_material(material, item.span, base_dir)
+                    .map_err(here)?;
             }
         }
         for item in &program.items {
             match &item.kind {
                 ItemKind::Material(_) => {}
-                ItemKind::Object(object) => self.add_object(object, item.span)?,
+                ItemKind::Object(object) => self.add_object(object, item.span).map_err(here)?,
                 _ => {
                     return Err(diag(
                         "E0503",
@@ -1396,4 +1497,25 @@ fn resolve_include(
         ));
     }
     Ok(resolved)
+}
+
+/// Move a diagnostic whose span points into the included file `name` (with
+/// text `source`) onto the `include` statement at `span`, naming the file and
+/// the 1-based line and column in the message.
+fn relocate(error: &Diagnostic, source: &str, name: &str, span: Span) -> Diagnostic {
+    let offset = usize::try_from(error.span.start)
+        .unwrap_or(usize::MAX)
+        .min(source.len());
+    let before = source.get(..offset).unwrap_or(source);
+    let line = before.matches('\n').count() + 1;
+    let column = before
+        .rsplit('\n')
+        .next()
+        .map_or(0, |text| text.chars().count())
+        + 1;
+    Diagnostic::new(
+        error.code,
+        format!("in `{name}` at {line}:{column}: {}", error.message),
+        span,
+    )
 }

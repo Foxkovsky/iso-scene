@@ -4,6 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
 use scene_core::SceneGraph;
 use scene_render::{Image, composite_over, write_png};
 use scene_syntax::Diagnostic;
@@ -84,7 +85,14 @@ pub fn export_animation(
     let image = out_dir.join(&png_name);
     write_png(&sheet, &image).map_err(|message| error("E0603", message))?;
 
-    let (tileset, map) = write_tiled(options, out_dir, rendered.len(), [frame_w, frame_h])?;
+    let (tileset, map) = write_tiled(
+        &options.name,
+        options.duration,
+        true,
+        out_dir,
+        rendered.len(),
+        [frame_w, frame_h],
+    )?;
     Ok(AnimateReport {
         image,
         tileset,
@@ -94,14 +102,86 @@ pub fn export_animation(
     })
 }
 
+/// Render frames of a scene `animation` (one compiled scene per frame) and
+/// write `<name>.png`, `<name>.tsj` and `scene.tmj`.
+///
+/// Frames are aligned on the scene's projected origin, so whatever does not
+/// move stays put. They render in parallel batches; after each batch the
+/// strip that holds every frame so far is checked against the limits, so an
+/// oversized animation stops early instead of rendering every frame first.
+///
+/// # Errors
+///
+/// Returns `E0606` for an invalid name or frame count, `E0602` for a strip
+/// beyond the size limit, `E0603` for file errors and the render
+/// diagnostics of the scene's backend.
+pub fn export_scene_animation(
+    frames: &[SceneGraph],
+    name: &str,
+    duration: u32,
+    looped: bool,
+    out_dir: &Path,
+) -> Result<AnimateReport, Diagnostic> {
+    validate_name(name).map_err(|message| error("E0606", message))?;
+    if frames.is_empty() || frames.len() > MAX_FRAMES as usize {
+        return Err(error(
+            "E0606",
+            format!("an animation needs 1..={MAX_FRAMES} frames"),
+        ));
+    }
+    let render = |frame: &SceneGraph| match frame.render {
+        scene_syntax::ast::RenderKind::Iso => scene_backend_iso::render_with_origin(frame),
+        _ => scene_backend_ortho::render_with_origin(frame),
+    };
+    let batch = rayon::current_num_threads().max(1);
+    let mut rendered: Vec<(Image, [f64; 2])> = Vec::with_capacity(frames.len());
+    let mut layout: Vec<([f64; 2], [u32; 2])> = Vec::with_capacity(frames.len());
+    for chunk in frames.chunks(batch) {
+        let images: Vec<Result<(Image, [f64; 2]), Diagnostic>> =
+            chunk.par_iter().map(render).collect();
+        for image in images {
+            let (image, origin) = image?;
+            layout.push((origin, [image.width, image.height]));
+            rendered.push((image, origin));
+        }
+        // The union of the frames so far, times every frame of the strip.
+        strip_size(&layout, frames.len())?;
+    }
+    let size = frame_size(&layout)?;
+    let sheet = pack(&rendered, &layout, size);
+    fs::create_dir_all(out_dir).map_err(|cause| {
+        error(
+            "E0603",
+            format!("cannot create `{}`: {cause}", out_dir.display()),
+        )
+    })?;
+    let image = out_dir.join(format!("{name}.png"));
+    write_png(&sheet, &image).map_err(|message| error("E0603", message))?;
+    let (tileset, map) = write_tiled(name, duration, looped, out_dir, rendered.len(), size)?;
+    Ok(AnimateReport {
+        image,
+        tileset,
+        map,
+        frames: rendered.len(),
+        frame_size: size,
+    })
+}
+
 /// Size of a frame that holds every frame aligned on one origin, checked
-/// against the strip limits before anything is rasterized.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss
-)]
+/// against the strip limits before anything is packed.
 fn frame_size(layout: &[([f64; 2], [u32; 2])]) -> Result<[u32; 2], Diagnostic> {
+    let size = union_size(layout);
+    check_strip(size, layout.len())?;
+    Ok(size)
+}
+
+/// Check that `frames` frames as large as the union of `layout` fit a strip.
+fn strip_size(layout: &[([f64; 2], [u32; 2])], frames: usize) -> Result<(), Diagnostic> {
+    check_strip(union_size(layout), frames)
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn union_size(layout: &[([f64; 2], [u32; 2])]) -> [u32; 2] {
     let mut min_x = f64::INFINITY;
     let mut min_y = f64::INFINITY;
     let mut max_x = f64::NEG_INFINITY;
@@ -112,13 +192,12 @@ fn frame_size(layout: &[([f64; 2], [u32; 2])]) -> Result<[u32; 2], Diagnostic> {
         max_x = max_x.max(origin[0] + f64::from(size[0]));
         max_y = max_y.max(origin[1] + f64::from(size[1]));
     }
-    let frame_w = u32::try_from((max_x - min_x).ceil() as isize)
-        .unwrap_or(1)
-        .max(1);
-    let frame_h = u32::try_from((max_y - min_y).ceil() as isize)
-        .unwrap_or(1)
-        .max(1);
-    let sheet_w = u64::from(frame_w) * layout.len() as u64;
+    let side = |extent: f64| u32::try_from(extent.ceil() as isize).unwrap_or(1).max(1);
+    [side(max_x - min_x), side(max_y - min_y)]
+}
+
+fn check_strip([frame_w, frame_h]: [u32; 2], frames: usize) -> Result<(), Diagnostic> {
+    let sheet_w = u64::from(frame_w) * frames as u64;
     if sheet_w > u64::from(MAX_SHEET_SIDE)
         || frame_h > MAX_SHEET_SIDE
         || sheet_w * u64::from(frame_h) > MAX_SHEET_PIXELS
@@ -128,7 +207,7 @@ fn frame_size(layout: &[([f64; 2], [u32; 2])]) -> Result<[u32; 2], Diagnostic> {
             format!("animation sheet {sheet_w}x{frame_h} exceeds the limit; use fewer frames"),
         ));
     }
-    Ok([frame_w, frame_h])
+    Ok(())
 }
 
 /// Lay the frames out left to right, aligned on their common origin.
@@ -165,22 +244,24 @@ fn pack(
 /// Write the tileset (its first tile plays every frame) and a one-tile map.
 #[allow(clippy::cast_possible_truncation)]
 fn write_tiled(
-    options: &AnimateOptions,
+    name: &str,
+    duration: u32,
+    looped: bool,
     out_dir: &Path,
     frames: usize,
     [frame_w, frame_h]: [u32; 2],
 ) -> Result<(PathBuf, PathBuf), Diagnostic> {
-    let png_name = format!("{}.png", options.name);
+    let png_name = format!("{name}.png");
     let animation: Vec<_> = (0..frames)
-        .map(|frame| json!({"tileid": frame, "duration": options.duration}))
+        .map(|frame| json!({"tileid": frame, "duration": duration}))
         .collect();
-    let tsj_name = format!("{}.tsj", options.name);
+    let tsj_name = format!("{name}.tsj");
     let tileset = out_dir.join(&tsj_name);
     write_json(
         &tileset,
         &json!({
             "type": "tileset",
-            "name": options.name,
+            "name": name,
             "version": "1.10",
             "tiledversion": "1.12.2",
             "tilewidth": frame_w,
@@ -192,7 +273,12 @@ fn write_tiled(
             "imageheight": frame_h,
             "margin": 0,
             "spacing": 0,
-            "tiles": [{"id": 0, "animation": animation}]
+            // Tiled always loops; `loop` tells a game whether to stop.
+            "tiles": [{
+                "id": 0,
+                "animation": animation,
+                "properties": [{"name": "loop", "type": "bool", "value": looped}]
+            }]
         }),
     )?;
     let map = out_dir.join("scene.tmj");

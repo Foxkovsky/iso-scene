@@ -57,16 +57,41 @@ form a continuous surface.
 iso-scene tiled room.scene --walls room.walls -o out/tiled
 ```
 
-The exported map has three layers, bottom to top:
+The exported map has these layers, bottom to top:
 
 1. `floor` — tile layer;
-2. `walls` — the generated 16-tile wall layer with the `wall` Wang set;
-3. `objects` — furniture, doors and windows (a depth-sorted object layer, or a
-   tile layer with `--tile-layer`).
+2. `wall-shadow` — a soft contact shadow on the floor along the base of the
+   walls, so wall caps do not merge with the floor;
+3. `walls-back` — walls that stand behind the furniture;
+4. `objects` — furniture, doors and windows (a depth-sorted object layer, or a
+   tile layer with `--tile-layer`);
+5. `walls-front` — the near walls of each room, drawn over the furniture
+   behind them.
 
-Walls are placed behind the objects by default, so a door standing in a wall
-gap is not cut by the wall tiles. Pass `--walls-front` to put the wall layer
-above the objects instead; that suits cut-away rooms without near walls.
+Both wall layers use the same 16-tile wall tileset and `wall` Wang set.
+
+The shadow tileset (`wall_shadow.tsj`) has 16 floor-sized tiles indexed by
+the walls next to a cell, with the same bit order as wall masks but a set bit
+meaning a wall **is** on that side. Shadows are black with alpha, so they suit
+any floor; hide the layer if a game draws its own.
+
+Tiled draws whole layers in order, so a tile layer cannot interleave with the
+depth-sorted objects; the split picks, for every wall, the side of the
+objects it belongs on:
+
+- a wall is in front when **indoor** floor lies right behind it, at `x - 1`
+  or `y - 1`. Floor is indoor when it cannot be reached from the edge of the
+  layout without crossing a wall or a gap, so open ground around a building
+  does not pull its far walls to the front;
+- a wall right behind a `D`/`W` gap (the gap at `x + 1` or `y + 1`) stays at
+  the back, so the door standing in that gap is drawn whole.
+
+Two modes keep a single `walls` layer instead:
+
+- `--walls-behind` — all walls below the objects (objects are drawn over the
+  near walls too);
+- `--walls-front` — all walls above the objects, for cut-away rooms without
+  near walls.
 
 ## Current limitations
 

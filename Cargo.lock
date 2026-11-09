@@ -421,6 +421,7 @@ dependencies = [
  "scene-export-sprites",
  "scene-export-tiled",
  "scene-render",
+ "scene-server",
  "scene-syntax",
  "scene-walls",
  "serde_json",
@@ -452,6 +453,8 @@ dependencies = [
 name = "scene-export-tiled"
 version = "0.1.0"
 dependencies = [
+ "criterion",
+ "png",
  "rayon",
  "scene-backend-iso",
  "scene-core",
@@ -474,6 +477,18 @@ dependencies = [
 [[package]]
 name = "scene-server"
 version = "0.1.0"
+dependencies = [
+ "scene-backend-iso",
+ "scene-backend-ortho",
+ "scene-backend-voxel",
+ "scene-core",
+ "scene-export-sprites",
+ "scene-export-tiled",
+ "scene-render",
+ "scene-syntax",
+ "scene-walls",
+ "serde_json",
+]
 
 [[package]]
 name = "scene-syntax"

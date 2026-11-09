@@ -37,7 +37,7 @@ Backends never parse source and never know about `.model` or `.scene`.
 | `scene-backend-voxel` | occupancy sampling → VOX |
 | `scene-export-tiled` | TMJ + tileset JSON |
 | `scene-cli` | build, preview, export |
-| `scene-server` | JSON-lines protocol for the VS Code extension |
+| `scene-server` | editor and agent services: help topics from the spec, the limits table, JSON-RPC transport, the language server and the MCP server |
 
 ## Model and scene
 
@@ -93,6 +93,14 @@ limits (file size, token count, nesting).
 
 The invariant is simple and testable: **fuel strictly decreases**. Therefore
 evaluation terminates for every input, including adversarial ones.
+
+The parser and evaluator are recursive, so their depth is bounded in the
+parser, before any recursion can run away: 128 nested blocks, parentheses and
+unary operators, and expressions 256 levels deep, where every operator in a
+chain like `a + b + c` is a level. At these limits a release build needs under
+512 KiB of stack (a Windows main thread has 1 MiB, Linux and macOS 8 MiB); a
+debug build needs up to 4 MiB. `programs_at_the_nesting_limits_fit_a_small_stack`
+keeps that true.
 
 ## Safety
 

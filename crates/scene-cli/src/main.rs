@@ -38,6 +38,10 @@ fn main() -> ExitCode {
         "tiled" => commands::tiled::tiled_scene(args.collect()),
         "animate" => commands::animate::animate_scene(args.collect()),
         "sprites" => commands::sprites::sprites_scene(args.collect()),
+        "limits" => commands::limits::limits(args.collect()),
+        "help" => commands::help::help(args.collect()),
+        "lsp" => serve(scene_server::lsp::run),
+        "mcp" => serve(scene_server::mcp::run),
         other => {
             eprintln!("iso-scene: unknown command `{other}`");
             eprintln!("Try `iso-scene --help`.");
@@ -46,7 +50,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn print_help() {
+pub(crate) fn print_help() {
     println!("iso-scene {}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Usage: iso-scene <command> [options]");
@@ -57,7 +61,8 @@ fn print_help() {
     println!("  render <file>   render a .scene to PNG (iso or ortho); -o out.svg writes iso SVG");
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
-    println!("  animate <file>  render a rotation animation as a sprite sheet + animated tile");
+    println!("  animate <file>  render the scene's `animation`s as sprite sheets + animated tiles");
+    println!("                  (--animation <name> for one); or turn one object:");
     println!("                  --object <name> --from --to --frames --duration [--base <dir>]");
     println!(
         "  sprites <file>  pack objects from .scene/.model files into a sprite sheet + JSON/TSJ"
@@ -78,9 +83,15 @@ fn print_help() {
         "                  (repeatable; --durations a,b,.. --once --label <name> per animation)"
     );
     println!("                  --walls <file> adds a 16-way wall tile layer with Wang set");
+    println!("                  (near walls above the objects, the rest below them;");
+    println!("                  --walls-behind puts all walls below, --walls-front above)");
     println!(
         "                  --tile-layer puts objects in a tile layer instead of an object layer"
     );
+    println!("  help [topic]    one section of the language spec (topics without one)");
+    println!("  lsp             run the language server on stdin/stdout");
+    println!("  mcp             run the MCP server for agents on stdin/stdout");
+    println!("  limits          list every limit and its error code (--json for agents)");
     println!("  spec-version    print the implemented language version");
     println!();
     println!("Options:");
@@ -92,6 +103,19 @@ fn print_help() {
         "  --fuel <n>      evaluation budget for `eval` (default {})",
         scene_core::DEFAULT_FUEL
     );
+}
+
+/// Run a server on stdin and stdout until its client says exit.
+fn serve(
+    server: fn(std::io::StdinLock<'static>, std::io::StdoutLock<'static>) -> std::io::Result<()>,
+) -> ExitCode {
+    match server(std::io::stdin().lock(), std::io::stdout().lock()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("iso-scene: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 #[cfg(test)]

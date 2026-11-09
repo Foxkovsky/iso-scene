@@ -43,6 +43,11 @@ pub struct WallCell {
     pub x: u32,
     pub y: u32,
     pub mask: u8,
+    /// Indoor floor lies right behind the wall, at `x - 1` or `y - 1`: the
+    /// wall faces the viewer and hides what stands in the room. A wall right
+    /// behind a door or window gap (at `x + 1` or `y + 1`) is not in front,
+    /// so the door in that gap is not cut.
+    pub front: bool,
 }
 
 /// Parsed wall layout.
@@ -197,6 +202,7 @@ pub fn parse(source: &str, base_dir: &Path, root: &Path) -> Result<WallLayout, D
 
     let rows = layout_lines.len() as u32;
     let columns = columns as u32;
+    let indoor = indoor_floor(&layout_lines, columns as usize);
     let mut cells = Vec::new();
     for y in 0..rows {
         for x in 0..columns {
@@ -216,7 +222,14 @@ pub fn parse(source: &str, base_dir: &Path, root: &Path) -> Result<WallLayout, D
             if x == 0 || grid_char(&layout_lines, x.saturating_sub(1), y) != '#' {
                 mask |= BIT_LEFT;
             }
-            cells.push(WallCell { x, y, mask });
+            let indoor_at = |x: u32, y: u32| indoor[(y * columns + x) as usize];
+            let gap_at = |x: u32, y: u32| matches!(grid_char(&layout_lines, x, y), 'D' | 'W');
+            // A wall right behind a gap stays at the back, so the door or
+            // window standing in that gap is drawn whole over it.
+            let front = ((x > 0 && indoor_at(x - 1, y)) || (y > 0 && indoor_at(x, y - 1)))
+                && !gap_at(x + 1, y)
+                && !gap_at(x, y + 1);
+            cells.push(WallCell { x, y, mask, front });
         }
     }
 
@@ -262,6 +275,114 @@ pub fn render_tiles(layout: &WallLayout, scale: u32) -> WallTiles {
     }
 }
 
+/// How far the contact shadow at a wall's base reaches into the floor cell.
+const SHADOW_REACH: f64 = 0.4;
+/// Opacity of the contact shadow right at the wall.
+const SHADOW_ALPHA: f64 = 0.42;
+
+/// Build the 16-tile strip of floor shadows cast by neighbouring walls.
+///
+/// Tile `mask` darkens the floor diamond along the sides whose bit is set
+/// (`top = 1`, `right = 2`, `bottom = 4`, `left = 8`, as for walls, but a set
+/// bit means a wall **is** there). The shadow is black with an alpha that
+/// fades from the wall into the cell, so it works on any floor.
+#[must_use]
+pub fn render_shadow_tiles(scale: u32) -> WallTiles {
+    let s = f64::from(scale.max(1));
+    let tile_width = 2 * scale.max(1);
+    let tile_height = scale.max(1);
+    let width = (tile_width * 16) as usize;
+    let mut strip = Image {
+        width: tile_width * 16,
+        height: tile_height,
+        rgba: vec![0; width * tile_height as usize * 4],
+    };
+    for y in 0..tile_height {
+        for x in 0..tile_width {
+            // Pixel centre in cell space: `u` runs along x, `v` along y, both
+            // 0..1 inside the diamond whose top vertex is at (s, 0).
+            let px = (f64::from(x) + 0.5 - s) / s;
+            let py = 2.0 * (f64::from(y) + 0.5) / s;
+            let u = f64::midpoint(py, px);
+            let v = f64::midpoint(py, -px);
+            if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+                continue;
+            }
+            let sides = [
+                (BIT_TOP, v),
+                (BIT_RIGHT, 1.0 - u),
+                (BIT_BOTTOM, 1.0 - v),
+                (BIT_LEFT, u),
+            ];
+            for mask in 1..16_u8 {
+                let shade = sides
+                    .iter()
+                    .filter(|(bit, _)| mask & bit != 0)
+                    .map(|&(_, distance)| (1.0 - distance / SHADOW_REACH).max(0.0).powi(2))
+                    .fold(0.0_f64, f64::max);
+                if shade <= 0.0 {
+                    continue;
+                }
+                let alpha = (shade * SHADOW_ALPHA * 255.0).round() as u8;
+                let at = (y as usize * width + (u32::from(mask) * tile_width + x) as usize) * 4;
+                strip.rgba[at..at + 4].copy_from_slice(&[0, 0, 0, alpha]);
+            }
+        }
+    }
+    WallTiles {
+        image: strip,
+        tile_width,
+        tile_height,
+    }
+}
+
+/// Build the Tiled layer of wall contact shadows for a map.
+///
+/// Every cell that is not a wall gets the shadow tile for the walls around
+/// it (see [`render_shadow_tiles`]); cells without neighbouring walls stay
+/// empty.
+#[must_use]
+pub fn shadow_layer_data(
+    layout: &WallLayout,
+    map_width: u32,
+    map_height: u32,
+    offset_x: i64,
+    offset_y: i64,
+    first_gid: u32,
+) -> Vec<u32> {
+    let columns = i64::from(layout.columns);
+    let rows = i64::from(layout.rows);
+    let mut wall = vec![false; (layout.columns as usize) * (layout.rows as usize)];
+    for cell in &layout.cells {
+        wall[(cell.y * layout.columns + cell.x) as usize] = true;
+    }
+    let wall_at = |x: i64, y: i64| {
+        x >= 0 && y >= 0 && x < columns && y < rows && wall[(y * columns + x) as usize]
+    };
+    let mut data = vec![0_u32; (map_width as usize) * (map_height as usize)];
+    for map_y in 0..i64::from(map_height) {
+        for map_x in 0..i64::from(map_width) {
+            let (x, y) = (map_x + offset_x, map_y + offset_y);
+            if wall_at(x, y) {
+                continue;
+            }
+            let mask = [
+                (BIT_TOP, x, y - 1),
+                (BIT_RIGHT, x + 1, y),
+                (BIT_BOTTOM, x, y + 1),
+                (BIT_LEFT, x - 1, y),
+            ]
+            .iter()
+            .filter(|&&(_, x, y)| wall_at(x, y))
+            .fold(0_u8, |mask, &(bit, _, _)| mask | bit);
+            if mask != 0 {
+                data[(map_y * i64::from(map_width) + map_x) as usize] = first_gid + u32::from(mask);
+            }
+        }
+    }
+    data
+}
+
 /// Tiled edge `wangid` for a wall mask.
 #[must_use]
 pub fn wangid(mask: u8) -> [i32; 8] {
@@ -288,8 +409,31 @@ pub fn layer_data(
     offset_y: i64,
     first_gid: u32,
 ) -> Vec<u32> {
+    layer_data_where(
+        layout,
+        map_width,
+        map_height,
+        offset_x,
+        offset_y,
+        first_gid,
+        |_| true,
+    )
+}
+
+/// Like [`layer_data`], keeping only the cells `keep` accepts (for example
+/// the walls in [`WallCell::front`] of the floor).
+#[must_use]
+pub fn layer_data_where(
+    layout: &WallLayout,
+    map_width: u32,
+    map_height: u32,
+    offset_x: i64,
+    offset_y: i64,
+    first_gid: u32,
+    keep: impl Fn(&WallCell) -> bool,
+) -> Vec<u32> {
     let mut data = vec![0_u32; (map_width * map_height) as usize];
-    for cell in &layout.cells {
+    for cell in layout.cells.iter().filter(|cell| keep(cell)) {
         let x = i64::from(cell.x) - offset_x;
         let y = i64::from(cell.y) - offset_y;
         if x < 0 || y < 0 || x >= i64::from(map_width) || y >= i64::from(map_height) {
@@ -375,6 +519,49 @@ fn fill(fb: &mut Framebuffer, points: &[[f64; 2]], color: [u8; 3]) {
             color,
         );
     }
+}
+
+/// Floor cells enclosed by walls and gaps, row by row.
+///
+/// Floor reachable from the layout border without crossing a wall or a gap is
+/// outdoors; the rest is indoors. Gaps count as closed (a door in its frame).
+fn indoor_floor(lines: &[(String, Span)], columns: usize) -> Vec<bool> {
+    let rows = lines.len();
+    let floor: Vec<bool> = lines
+        .iter()
+        .flat_map(|(row, _)| row.chars().map(|c| c == '.'))
+        .collect();
+    let mut outdoor = vec![false; floor.len()];
+    let mut stack: Vec<usize> = (0..floor.len())
+        .filter(|&index| {
+            let (x, y) = (index % columns, index / columns);
+            x == 0 || y == 0 || x + 1 == columns || y + 1 == rows
+        })
+        .collect();
+    while let Some(index) = stack.pop() {
+        if !floor[index] || outdoor[index] {
+            continue;
+        }
+        outdoor[index] = true;
+        let (x, y) = (index % columns, index / columns);
+        if x > 0 {
+            stack.push(index - 1);
+        }
+        if x + 1 < columns {
+            stack.push(index + 1);
+        }
+        if y > 0 {
+            stack.push(index - columns);
+        }
+        if y + 1 < rows {
+            stack.push(index + columns);
+        }
+    }
+    floor
+        .iter()
+        .zip(&outdoor)
+        .map(|(&floor, &outdoor)| floor && !outdoor)
+        .collect()
 }
 
 fn grid_char(lines: &[(String, Span)], x: u32, y: u32) -> char {

@@ -94,9 +94,12 @@ Occupancy sampling of the same `SceneGraph`:
 
 `iso-scene tiled` writes:
 
-- `scene.tmj` — isometric map, layers `floor` and `objects`;
+- `scene.tmj` — isometric map, layers `floor`, `objects` and a hidden
+  `collision` layer (plus the wall layers with `--walls`, see "Walls");
 - `floor.tsj` + `floor_tile.png` — one diamond floor tile;
 - `objects.tsj` + `objects.png` — atlas of unique object/rotation sprites;
+- `walls.tsj`/`walls.png` and `wall_shadow.tsj`/`wall_shadow.png` with
+  `--walls`;
 - `preview.png` — the normal iso render.
 
 If the map looks semi-transparent when opened in Tiled, that is the editor,
@@ -109,10 +112,34 @@ depth (`x + width + y + depth + z`, far to near). This allows several objects
 in one cell and objects above the floor. The tileset has no `tileoffset`; each
 object is positioned by its sprite anchor and the map's isometric origin.
 
-Tiled's isometric screen space shifts maps right by `height * tileWidth / 2`;
-object coordinates carry that shift. A 0.001 px nudge into the cell keeps
-Tiled's own cell lookup (`pixelToTileCoords`) on that cell instead of rounding
-to the next one at the shared corner.
+Tiled stores isometric object positions **unprojected**: both axes count
+`tileheight` pixels per cell, and Tiled projects them itself
+(`IsometricRenderer::pixelToScreenCoords`). An object's position is the
+footprint corner nearest the viewer (its sprite's bottom-center), times
+`tileheight`; an elevation of `z` blocks is `z` cells back along both axes.
+A 0.001 px nudge into the cell keeps Tiled's own cell lookup on that cell
+instead of rounding to the next one at the shared corner. The placement is
+checked with `tmxrasterizer` against the iso render of the same scene.
+
+### Footprints and collisions
+
+Every object carries its declared footprint (the `w × d` of `object`, turned
+by `rot`): `footprint_x/y` (cells, relative to the object's own position, so
+the footprint follows the object when it is moved in Tiled), `footprint_w/h`,
+and the height range `bottom`/`top`. The hidden `collision` layer has the same
+footprints as rectangles, which Tiled draws as the diamonds the objects stand
+on; switch it on to see what each object occupies.
+
+The exporter warns (on stderr; the map is still written) about objects whose
+footprints and height ranges overlap, and about objects on wall cells. Objects
+side by side or stacked are fine. The check buckets objects by cell, and the
+footprints may cover at most 4 000 000 cells in total (`E0602`).
+
+`editors/tiled/iso-scene.js` is a Tiled extension with the same check:
+**Map → Check iso-scene Collisions** selects the colliding objects, lists them
+in the Console and redraws the `collision` layer from the current positions.
+`tiled --evaluate editors/tiled/iso-scene.js map.tmj` runs it without the
+editor.
 
 ### Objects as tiles
 
@@ -121,8 +148,12 @@ an object layer: one tile per cell, in depth order. Tiled draws a tile image
 with its bottom-left at the cell's position, so the object tileset gets a
 `tileoffset` of `(tileWidth - atlasWidth) / 2`. With that offset the sprite's
 bottom-center lands on the cell's bottom vertex, and a tile placed by hand in
-Tiled covers the cell it stands on. Cells are limited to one sprite each in
-this mode.
+Tiled covers the cell it stands on. A tile layer holds one sprite per cell,
+so objects sharing a cell (a chair under a table, a box on a shelf) go to
+extra layers `objects-2`, `objects-3`, …, in depth order: the n-th object in
+a cell is on the n-th layer. At most 16 objects may share a cell in this mode
+(`E0602`); the object layer has no such limit. A tile layer has no
+elevation, so a raised object is drawn on the cell under it.
 
 The `floor` layer remains a regular tile layer. Because object order is stored
 in the object layer, the Tiled `draworder` is `index`; do not sort objects in
@@ -341,8 +372,10 @@ and each sprite is clipped to its own cell.
 
 ## Walls
 
-A `.walls` layout is exported as a Tiled layer named `walls`, above `floor`
-and below `objects` (unless `--walls-front` is given). The generated tileset has 16 tiles matching the 16
+A `.walls` layout is exported as two Tiled tile layers around `objects`:
+`walls-back` below them and `walls-front` (the near walls of each room)
+above them. `--walls-behind` and `--walls-front` put a single `walls` layer
+below or above the objects instead. The generated tileset has 16 tiles matching the 16
 neighbour masks and an edge Wang set named `wall`. Connected sides have no
 outline, so the wall reads as one continuous surface. See `docs/walls.md`.
 
@@ -369,6 +402,15 @@ pixel and behind at another) cannot be ordered by a painter's algorithm; such a
 cycle is broken by mean depth.
 
 ### Animated sprite sheets
+
+`iso-scene animate scene.scene -o out/room` renders every `animation`
+directive of the scene (`--animation open` for one) into `out/room/<name>/`:
+the scene is evaluated once per frame with that animation's progress
+variable, and all frames are rendered with the bounds of all frames
+together, so they share one size and origin. `<name>.png` is the strip,
+`<name>.tsj` a tileset whose first tile plays it (with a `loop` property:
+`false` for `once`), and `scene.tmj` a one-tile map. Frames render in
+parallel after the first one has sized the strip against the limits.
 
 `iso-scene animate scene.scene --object leaf --from 0 --to 90 --frames 7 --duration 100 -o out/door`
 renders one frame per angle, packs them into a horizontal sheet and writes a

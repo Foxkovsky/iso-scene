@@ -4,11 +4,18 @@
 //! AST in [`crate::ast`]. It reports the first error and never panics.
 
 use crate::ast::{
-    Ambient, Anchor, AssignOp, Axis, Background, BinaryOp, Block, Canvas, ElseBranch, Expr,
-    ExprKind, Include, Item, ItemKind, Material, Object, Origin, Program, Render, RenderKind,
+    Ambient, Anchor, Animation, AssignOp, Axis, Background, BinaryOp, Block, Canvas, ElseBranch,
+    Expr, ExprKind, Include, Item, ItemKind, Material, Object, Origin, Program, Render, RenderKind,
     Scale, Shape, Statement, StatementKind, Sun, UnaryOp,
 };
 use crate::{Diagnostic, Span, Token, TokenKind, lex};
+
+/// Deepest nesting of blocks, parentheses and unary operators
+/// (`docs/spec.md` §9).
+pub const MAX_NESTING: usize = 128;
+/// Deepest expression tree, operator chains included (`docs/spec.md` §9).
+/// Bounding it here keeps the recursive evaluator off the end of the stack.
+pub const MAX_EXPR_DEPTH: usize = 256;
 
 /// Parse a complete source file.
 ///
@@ -23,12 +30,47 @@ pub fn parse(source: &str) -> Result<Program, Diagnostic> {
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// Blocks, parentheses and unary operators currently open.
+    nesting: usize,
+    /// Expression levels currently open, operator chains included.
+    depth: usize,
 }
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
         debug_assert!(!tokens.is_empty(), "the lexer always emits EOF");
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            nesting: 0,
+            depth: 0,
+        }
+    }
+
+    /// Open a block, parenthesis or unary operator.
+    fn nest(&mut self) -> Result<(), Diagnostic> {
+        if self.nesting >= MAX_NESTING {
+            return Err(Diagnostic::new(
+                "E0402",
+                format!("nesting is deeper than {MAX_NESTING} levels"),
+                self.current().span,
+            ));
+        }
+        self.nesting += 1;
+        Ok(())
+    }
+
+    /// Open one level of an expression tree.
+    fn deepen(&mut self) -> Result<(), Diagnostic> {
+        if self.depth >= MAX_EXPR_DEPTH {
+            return Err(Diagnostic::new(
+                "E0402",
+                format!("expression is deeper than {MAX_EXPR_DEPTH} levels"),
+                self.current().span,
+            ));
+        }
+        self.depth += 1;
+        Ok(())
     }
 
     fn current(&self) -> &Token {
@@ -38,6 +80,30 @@ impl Parser {
 
     fn current_kind(&self) -> &TokenKind {
         &self.current().kind
+    }
+
+    /// The kind of the token `offset` places ahead (EOF past the end).
+    fn peek_kind(&self, offset: usize) -> &TokenKind {
+        let index = (self.pos + offset).min(self.tokens.len().saturating_sub(1));
+        &self.tokens[index].kind
+    }
+
+    /// Consume the contextual word `word` if it is next.
+    fn eat_word(&mut self, word: &str) -> bool {
+        if matches!(self.current_kind(), TokenKind::Ident(name) if name == word) {
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_word(&mut self, word: &str) -> Result<(), Diagnostic> {
+        if self.eat_word(word) {
+            Ok(())
+        } else {
+            Err(self.expected(&format!("`{word}`")))
+        }
     }
 
     fn previous_span(&self) -> Span {
@@ -157,6 +223,15 @@ impl Parser {
             TokenKind::Sun => ItemKind::Sun(self.parse_sun()?),
             TokenKind::Ambient => ItemKind::Ambient(self.parse_ambient()?),
             TokenKind::Background => ItemKind::Background(self.parse_background()?),
+            // `animation` is contextual: `animation name (` starts the
+            // directive, anything else is an ordinary statement.
+            TokenKind::Ident(word)
+                if word == "animation"
+                    && matches!(self.peek_kind(1), TokenKind::Ident(_))
+                    && matches!(self.peek_kind(2), TokenKind::LParen) =>
+            {
+                ItemKind::Animation(self.parse_animation()?)
+            }
             _ => ItemKind::Statement(Box::new(self.parse_statement()?)),
         };
         let end = self.previous_span();
@@ -200,6 +275,31 @@ impl Parser {
         };
         self.expect(&TokenKind::Semicolon, "`;`")?;
         Ok(Render { kind })
+    }
+
+    fn parse_animation(&mut self) -> Result<Animation, Diagnostic> {
+        self.expect_word("animation")?;
+        let (name, name_span) = self.expect_ident("animation name")?;
+        self.expect(&TokenKind::LParen, "`(`")?;
+        let (variable, variable_span) = self.expect_ident("progress variable")?;
+        self.expect(&TokenKind::RParen, "`)`")?;
+        self.expect_word("frames")?;
+        let (frames, frames_span) = self.expect_integer("frame count")?;
+        self.expect_word("duration")?;
+        let (duration, duration_span) = self.expect_integer("frame duration")?;
+        let looped = !self.eat_word("once");
+        self.expect(&TokenKind::Semicolon, "`;`")?;
+        Ok(Animation {
+            name,
+            name_span,
+            variable,
+            variable_span,
+            frames,
+            frames_span,
+            duration,
+            duration_span,
+            looped,
+        })
     }
 
     fn parse_scale(&mut self) -> Result<Scale, Diagnostic> {
@@ -288,6 +388,7 @@ impl Parser {
     }
 
     fn parse_block(&mut self) -> Result<Block, Diagnostic> {
+        self.nest()?;
         let start = self.expect(&TokenKind::LBrace, "`{`")?;
         let mut statements = Vec::new();
         while !self.at(&TokenKind::RBrace) {
@@ -297,6 +398,7 @@ impl Parser {
             statements.push(self.parse_statement()?);
         }
         let end = self.expect(&TokenKind::RBrace, "`}`")?;
+        self.nesting -= 1;
         Ok(Block {
             statements,
             span: Span::new(start.start, end.end),
@@ -411,6 +513,11 @@ impl Parser {
         } else {
             None
         };
+        let turn = if self.eat_word("turn") {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
         let anchor = if self.eat(&TokenKind::Anchor) {
             let (name, span) =
                 self.expect_ident("`back`, `center`, `front`, `left`, `right` or `cell`")?;
@@ -439,6 +546,7 @@ impl Parser {
             object,
             at,
             rotation,
+            turn,
             anchor,
         })
     }
@@ -637,22 +745,29 @@ impl Parser {
     }
 
     fn parse_or(&mut self) -> Result<Expr, Diagnostic> {
+        let depth = self.depth;
         let mut left = self.parse_and()?;
         while self.at(&TokenKind::OrOr) {
+            // Each operator in a chain nests the chain so far one level down.
+            self.deepen()?;
             self.bump();
             let right = self.parse_and()?;
             left = binary(BinaryOp::Or, left, right);
         }
+        self.depth = depth;
         Ok(left)
     }
 
     fn parse_and(&mut self) -> Result<Expr, Diagnostic> {
+        let depth = self.depth;
         let mut left = self.parse_comparison()?;
         while self.at(&TokenKind::AndAnd) {
+            self.deepen()?;
             self.bump();
             let right = self.parse_comparison()?;
             left = binary(BinaryOp::And, left, right);
         }
+        self.depth = depth;
         Ok(left)
     }
 
@@ -667,19 +782,26 @@ impl Parser {
             TokenKind::Ge => BinaryOp::Ge,
             _ => return Ok(left),
         };
+        self.deepen()?;
         self.bump();
         let right = self.parse_additive()?;
+        self.depth -= 1;
         Ok(binary(op, left, right))
     }
 
     fn parse_additive(&mut self) -> Result<Expr, Diagnostic> {
+        let depth = self.depth;
         let mut left = self.parse_multiplicative()?;
         loop {
             let op = match self.current_kind() {
                 TokenKind::Plus => BinaryOp::Add,
                 TokenKind::Minus => BinaryOp::Sub,
-                _ => return Ok(left),
+                _ => {
+                    self.depth = depth;
+                    return Ok(left);
+                }
             };
+            self.deepen()?;
             self.bump();
             let right = self.parse_multiplicative()?;
             left = binary(op, left, right);
@@ -687,14 +809,19 @@ impl Parser {
     }
 
     fn parse_multiplicative(&mut self) -> Result<Expr, Diagnostic> {
+        let depth = self.depth;
         let mut left = self.parse_unary()?;
         loop {
             let op = match self.current_kind() {
                 TokenKind::Star => BinaryOp::Mul,
                 TokenKind::Slash => BinaryOp::Div,
                 TokenKind::Percent => BinaryOp::Rem,
-                _ => return Ok(left),
+                _ => {
+                    self.depth = depth;
+                    return Ok(left);
+                }
             };
+            self.deepen()?;
             self.bump();
             let right = self.parse_unary()?;
             left = binary(op, left, right);
@@ -708,8 +835,12 @@ impl Parser {
             _ => None,
         };
         if let Some(op) = op {
+            self.nest()?;
+            self.deepen()?;
             let start = self.bump().span;
             let operand = self.parse_unary()?;
+            self.nesting -= 1;
+            self.depth -= 1;
             let end = operand.span;
             return Ok(Expr {
                 kind: ExprKind::Unary {
@@ -754,9 +885,13 @@ impl Parser {
                 })
             }
             TokenKind::LParen => {
+                self.nest()?;
+                self.deepen()?;
                 self.bump();
                 let expr = self.parse_expr()?;
                 let end = self.expect(&TokenKind::RParen, "`)`")?;
+                self.nesting -= 1;
+                self.depth -= 1;
                 Ok(Expr {
                     kind: expr.kind,
                     span: Span::new(token.span.start, end.end),
@@ -856,7 +991,7 @@ fn describe(kind: &TokenKind) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{MAX_EXPR_DEPTH, MAX_NESTING, parse};
     use crate::Diagnostic;
     use crate::ast::{
         Anchor, AssignOp, Background, BinaryOp, ElseBranch, ExprKind, ItemKind, Origin, RenderKind,
@@ -869,6 +1004,107 @@ mod tests {
 
     fn parse_err(source: &str) -> Diagnostic {
         parse(source).expect_err("expected a parse error")
+    }
+
+    fn nested(open: &str, inner: &str, close: &str, depth: usize) -> String {
+        format!("{}{inner}{}", open.repeat(depth), close.repeat(depth))
+    }
+
+    /// Run `test` on an 8 MiB stack, as a Linux main thread has: debug frames
+    /// of deeply nested blocks outgrow the 2 MiB of a test thread (a release
+    /// build needs under 512 KiB at the limits).
+    fn on_main_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .expect("spawn")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    }
+
+    #[test]
+    fn nesting_is_limited_before_the_stack_runs_out() {
+        on_main_stack(nesting_limits);
+    }
+
+    fn nesting_limits() {
+        let scene = |expr: &str| format!("version 1; render iso; scale 8; let x = {expr};");
+        // Parentheses and unary operators: 128 levels parse, 129 do not, and
+        // a hundred thousand give a diagnostic instead of a stack overflow.
+        for (open, close) in [("(", ")"), ("-", ""), ("!", "")] {
+            assert!(parse(&scene(&nested(open, "1", close, MAX_NESTING))).is_ok());
+            for depth in [MAX_NESTING + 1, 100_000] {
+                let error = parse_err(&scene(&nested(open, "1", close, depth)));
+                assert_eq!(error.code, "E0402", "{open} x {depth}");
+            }
+        }
+        // Blocks count too; the object body is the first one.
+        let object = |depth: usize| {
+            let body = nested("if (true) { ", "", "} ", depth);
+            format!("version 1; object o (1, 1) {{ {body} }}")
+        };
+        parse_ok(&object(MAX_NESTING - 1));
+        assert_eq!(parse_err(&object(MAX_NESTING)).code, "E0402");
+    }
+
+    #[test]
+    fn operator_chains_count_towards_the_expression_depth() {
+        let scene = |expr: &str| format!("version 1; render iso; scale 8; let x = {expr};");
+        let chain = |op: &str, terms: usize| vec!["1"; terms].join(op);
+        for op in [" + ", " * ", " && ", " || "] {
+            parse_ok(&scene(&chain(op, MAX_EXPR_DEPTH + 1)));
+            let error = parse_err(&scene(&chain(op, MAX_EXPR_DEPTH + 2)));
+            assert_eq!(error.code, "E0402", "{op}");
+        }
+        let error = parse_err(&scene(&chain(" + ", 200_000)));
+        assert_eq!(error.code, "E0402");
+    }
+
+    #[test]
+    fn long_strings_are_rejected() {
+        let include = |bytes: usize| format!("version 1; include \"{}\";", "a".repeat(bytes));
+        parse_ok(&include(crate::lexer::MAX_STRING_BYTES));
+        assert_eq!(
+            parse_err(&include(crate::lexer::MAX_STRING_BYTES + 1)).code,
+            "E0402"
+        );
+    }
+
+    #[test]
+    fn animation_directive_and_turn_parse() {
+        let program = parse_ok(
+            "version 1; animation open (t) frames 7 duration 120 once; animation spin (s) frames 4 duration 50; place door at (0, 0, 0) rot 90 turn 90 * t anchor back;",
+        );
+        let crate::ast::ItemKind::Animation(open) = &program.items[0].kind else {
+            panic!("not an animation: {:?}", program.items[0].kind);
+        };
+        assert_eq!((open.name.as_str(), open.variable.as_str()), ("open", "t"));
+        assert_eq!((open.frames, open.duration, open.looped), (7, 120, false));
+        let crate::ast::ItemKind::Animation(spin) = &program.items[1].kind else {
+            panic!("not an animation");
+        };
+        assert!(spin.looped);
+        let crate::ast::ItemKind::Statement(statement) = &program.items[2].kind else {
+            panic!("not a statement");
+        };
+        let StatementKind::Place { turn, anchor, .. } = &statement.kind else {
+            panic!("not a place");
+        };
+        assert!(turn.is_some());
+        assert!(anchor.is_some());
+    }
+
+    #[test]
+    fn contextual_words_stay_ordinary_names() {
+        // Old scenes may use these names; outside their directive they are
+        // plain identifiers.
+        parse_ok(
+            "version 1; var animation = 1; animation = 2; let frames = 3; let duration = 4; let once = 5; let turn = 6; place b at (turn, frames, 0) rot turn;",
+        );
+        assert_eq!(
+            parse_err("version 1; animation open (t) frames 7;").code,
+            "E0201"
+        );
     }
 
     #[test]

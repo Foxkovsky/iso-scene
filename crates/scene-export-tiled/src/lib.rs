@@ -7,22 +7,54 @@
     clippy::cast_precision_loss
 )]
 
+mod collision;
+
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use collision::Footprint;
+pub use collision::{Collision, MAX_FOOTPRINT_CELLS};
+
 use rayon::prelude::*;
-use scene_backend_iso::{Sprite, project_point, render_object_sprite};
+use scene_backend_iso::{Sprite, project_point, render_object_sprite_at};
 use scene_core::SceneGraph;
 use scene_render::{Image, write_png};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::RenderKind;
-use scene_walls::{WallLayout, layer_data, render_tiles, wangid};
+use scene_walls::{
+    WallCell, WallLayout, layer_data_where, render_shadow_tiles, render_tiles, shadow_layer_data,
+    wangid,
+};
 use serde_json::{Value, json};
 
-const MAX_MAP_CELLS: u64 = 1_000_000;
+/// Most cells in a Tiled map (`docs/spec.md` §9).
+pub const MAX_MAP_CELLS: u64 = 1_000_000;
+
+/// Most objects in one cell with `--tile-layer`: each needs its own layer
+/// (`docs/spec.md` §9).
+pub const MAX_OBJECT_TILE_LAYERS: usize = 16;
 
 /// Move an object anchor just inside its cell; see the export loop.
 const ANCHOR_NUDGE: f64 = 0.001;
+
+/// Where the wall layer goes relative to the objects.
+///
+/// Tiled draws whole layers in order, so a tile layer cannot interleave with
+/// the depth-sorted objects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WallOrder {
+    /// One `walls` layer below the objects: a door in a wall gap stays
+    /// whole, but objects are drawn over the near walls too.
+    Behind,
+    /// One `walls` layer above the objects, for rooms without near walls.
+    Front,
+    /// `walls-back` below the objects and `walls-front` above them. A wall
+    /// goes to the front when a floor cell lies right behind it (see
+    /// [`WallCell::front`]), so near walls hide the furniture behind them.
+    #[default]
+    Split,
+}
 
 /// Files written by [`export`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,12 +66,31 @@ pub struct ExportReport {
     pub preview: Option<PathBuf>,
     pub instances: usize,
     pub cells: [u32; 2],
+    /// Overlapping objects and objects on wall cells, sorted.
+    pub collisions: Vec<Collision>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One sprite of the object atlas: an object at a quarter turn and a `turn`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct SpriteKey {
     name: String,
     rotation: u16,
+    /// `turn` in degrees, as bits so the key is `Ord`; -0 is folded into 0.
+    angle: u64,
+}
+
+impl SpriteKey {
+    fn of(instance: &scene_core::Instance) -> Self {
+        Self {
+            name: instance.object.name.clone(),
+            rotation: instance.rotation,
+            angle: (instance.angle + 0.0).to_bits(),
+        }
+    }
+
+    fn angle(&self) -> f64 {
+        f64::from_bits(self.angle)
+    }
 }
 
 struct SpriteEntry {
@@ -58,9 +109,10 @@ struct SpriteEntry {
 ///
 /// # Errors
 ///
-/// Returns `E0604` for a non-iso scene, `E0602` for a map that is too large,
-/// objects above the ground, two objects in one cell, or object placement
-/// outside the map, and `E0603` for file errors.
+/// Returns `E0604` for a non-iso scene, `E0602` for a map that is too large
+/// or footprints covering more than [`MAX_FOOTPRINT_CELLS`] cells, and
+/// `E0603` for file errors. Collisions are not errors; they are listed in
+/// [`ExportReport::collisions`].
 #[allow(clippy::too_many_lines)]
 pub fn export(scene: &SceneGraph, out_dir: &Path) -> Result<ExportReport, Diagnostic> {
     export_with_walls(scene, None, out_dir)
@@ -77,15 +129,15 @@ pub fn export_with_walls(
     walls: Option<&WallLayout>,
     out_dir: &Path,
 ) -> Result<ExportReport, Diagnostic> {
-    export_with(scene, walls, false, false, out_dir)
+    export_with(scene, walls, false, WallOrder::default(), out_dir)
 }
 
 /// Export a scene with an optional wall layer and object layout choice.
 ///
 /// With `objects_as_tiles` the sprites go into a tile layer named `objects`
 /// (one tile per cell, Tiled tile alignment) instead of an object layer.
-/// With `walls_in_front` the wall layer is placed above the objects; by default
-/// objects are drawn over the walls, so doors in wall gaps stay visible.
+/// `wall_order` decides where the wall layer goes relative to the objects; see
+/// [`WallOrder`].
 ///
 /// # Errors
 ///
@@ -95,7 +147,7 @@ pub fn export_with(
     scene: &SceneGraph,
     walls: Option<&WallLayout>,
     objects_as_tiles: bool,
-    walls_in_front: bool,
+    wall_order: WallOrder,
     out_dir: &Path,
 ) -> Result<ExportReport, Diagnostic> {
     if scene.render != RenderKind::Iso {
@@ -104,6 +156,8 @@ pub fn export_with(
             format!("Tiled export needs an iso scene, got {:?}", scene.render),
         ));
     }
+    // Cheap and bounded: check it before rendering any sprite.
+    let collisions = collision::find(&scene.instances, walls)?;
     fs::create_dir_all(out_dir).map_err(|cause| {
         error(
             "E0603",
@@ -159,19 +213,20 @@ pub fn export_with(
         });
         let path = out_dir.join("walls.tsj");
         write_json(&path, &tileset)?;
+        write_shadow_tileset(scale, out_dir)?;
         Some(path)
     } else {
         None
     };
 
+    // Sprite keys in first-use order, with an index for the lookups below.
     let mut keys = Vec::new();
+    let mut key_index = BTreeMap::new();
     for instance in &scene.instances {
-        let key = SpriteKey {
-            name: instance.object.name.clone(),
-            rotation: instance.rotation,
-        };
-        if !keys.contains(&key) {
-            keys.push(key);
+        let key = SpriteKey::of(instance);
+        if !key_index.contains_key(&key) {
+            key_index.insert(key.clone(), keys.len());
+            keys.push((key, instance));
         }
     }
 
@@ -179,15 +234,11 @@ pub fn export_with(
     // let the first failing key (in order) decide the error.
     let rendered: Vec<Result<SpriteEntry, Diagnostic>> = keys
         .into_par_iter()
-        .map(|key| {
-            let Some(instance) = scene.instances.iter().find(|instance| {
-                instance.object.name == key.name && instance.rotation == key.rotation
-            }) else {
-                return Err(error("E0602", "internal sprite lookup failed"));
-            };
-            let sprite = render_object_sprite(
+        .map(|(key, instance)| {
+            let sprite = render_object_sprite_at(
                 instance.object.as_ref(),
                 instance.rotation,
+                key.angle(),
                 scale,
                 &scene.materials,
             )?;
@@ -195,11 +246,21 @@ pub fn export_with(
                 object: instance.object.clone(),
                 at: [0.0, 0.0, 0.0],
                 rotation: instance.rotation,
-                angle: 0.0,
+                angle: key.angle(),
             };
             let bounds = zero.world_bounds();
             let bottom_world = [bounds.max[0], bounds.max[1], bounds.min[2]];
-            let projected = project_point(bottom_world, f64::from(scale));
+            // The sprite anchor is the pixel of the object's local origin,
+            // which a quarter turn moves to another corner of the footprint.
+            let origin = zero.to_world([0.0, 0.0, 0.0]);
+            let projected = project_point(
+                [
+                    bottom_world[0] - origin[0],
+                    bottom_world[1] - origin[1],
+                    bottom_world[2],
+                ],
+                f64::from(scale),
+            );
             let bottom_px = [
                 sprite.anchor[0] + projected[0],
                 sprite.anchor[1] + projected[1],
@@ -304,6 +365,7 @@ pub fn export_with(
                     "type": key.key.name,
                     "properties": [
                         {"name": "rotation", "type": "int", "value": key.key.rotation},
+                        {"name": "turn", "type": "float", "value": key.key.angle()},
                         {"name": "walkable", "type": "bool", "value": false},
                         {"name": "collides", "type": "bool", "value": true}
                     ]
@@ -361,8 +423,6 @@ pub fn export_with(
 
     let floor_data = vec![1_u32; (width * height) as usize];
     let wall_first_gid = 2 + sprites.len() as u32;
-    let wall_data =
-        walls.map(|layout| layer_data(layout, width, height, min_x, min_y, wall_first_gid));
     let mut ordered: Vec<&scene_core::Instance> = scene.instances.iter().collect();
     ordered.sort_by(|a, b| {
         let left = a.at[0] + a.object.width + a.at[1] + a.object.depth + a.at[2];
@@ -371,15 +431,15 @@ pub fn export_with(
     });
 
     let mut objects = Vec::with_capacity(ordered.len());
-    let mut object_tiles = vec![0_u32; (width as usize) * (height as usize)];
+    let mut footprints = Vec::with_capacity(ordered.len());
+    let mut tile_cells = Vec::new();
     for (index, instance) in ordered.iter().enumerate() {
-        let sprite_index = sprites
-            .iter()
-            .position(|entry| {
-                entry.key.name == instance.object.name && entry.key.rotation == instance.rotation
-            })
+        let sprite_index = *key_index
+            .get(&SpriteKey::of(instance))
             .ok_or_else(|| error("E0602", "internal sprite index failed"))?;
         let entry = &sprites[sprite_index];
+        let footprint = Footprint::of(instance);
+        let [x0, y0, x1, y1] = footprint.area;
         let bottom_world = [
             instance.at[0] + entry.bottom_world[0],
             instance.at[1] + entry.bottom_world[1],
@@ -393,22 +453,21 @@ pub fn export_with(
             if cell_x >= 0 && cell_y >= 0 && cell_x < i64::from(width) && cell_y < i64::from(height)
             {
                 let at = (cell_y as usize) * (width as usize) + cell_x as usize;
-                object_tiles[at] = 2 + sprite_index as u32;
+                tile_cells.push((at, 2 + sprite_index as u32));
             }
         }
-        let local_x = bottom_world[0] - min_x as f64;
-        let local_y = bottom_world[1] - min_y as f64;
-        let screen = project_point([local_x, local_y, bottom_world[2]], f64::from(scale));
-        // Tiled shifts isometric maps right by `height * tileWidth / 2` so that
-        // tile (0, 0) starts at the top of the diamond. Object coordinates are
-        // absolute pixels and have to carry the same shift.
-        let origin_x = f64::from(height) * f64::from(tile_w) / 2.0;
-        // Tiled derives an object's cell from its pixel position. A footprint
-        // corner lies exactly on a cell border, where Tiled rounds to the next
-        // cell and highlights the wrong diamond. Nudging the anchor a thousandth
-        // of a pixel up moves it inside the cell the object stands on.
-        let object_x = screen[0] + origin_x;
-        let object_y = screen[1] - ANCHOR_NUDGE;
+        // Tiled stores isometric object positions unprojected: both axes count
+        // `tileheight` pixels per cell, and Tiled projects them itself. An
+        // elevation of `z` blocks lifts the sprite by `z * tileheight` screen
+        // pixels, which is `z` cells back along both axes.
+        let cell_x = bottom_world[0] - min_x as f64 - bottom_world[2];
+        let cell_y = bottom_world[1] - min_y as f64 - bottom_world[2];
+        // Tiled derives an object's cell from its position. A footprint corner
+        // lies exactly on a cell border, where Tiled rounds to the next cell
+        // and highlights the wrong diamond. Nudging the anchor a thousandth of
+        // a pixel back moves it inside the cell the object stands on.
+        let object_x = cell_x * f64::from(tile_h) - ANCHOR_NUDGE;
+        let object_y = cell_y * f64::from(tile_h) - ANCHOR_NUDGE;
         objects.push(json!({
             "id": index + 1,
             "gid": 2 + sprite_index as u32,
@@ -421,95 +480,133 @@ pub fn export_with(
             "visible": true,
             "properties": [
                 {"name": "rotation", "type": "int", "value": instance.rotation},
-                {"name": "z", "type": "float", "value": instance.at[2]}
+                {"name": "turn", "type": "float", "value": instance.angle},
+                {"name": "z", "type": "float", "value": instance.at[2]},
+                // The footprint in cells, relative to the stored position, so
+                // it follows the object when it is moved in Tiled.
+                {"name": "footprint_x", "type": "float",
+                 "value": x0 - min_x as f64 - object_x / f64::from(tile_h)},
+                {"name": "footprint_y", "type": "float",
+                 "value": y0 - min_y as f64 - object_y / f64::from(tile_h)},
+                {"name": "footprint_w", "type": "float", "value": x1 - x0},
+                {"name": "footprint_h", "type": "float", "value": y1 - y0},
+                {"name": "bottom", "type": "float", "value": footprint.height[0]},
+                {"name": "top", "type": "float", "value": footprint.height[1]}
             ]
+        }));
+        // The footprint as an isometric rectangle: Tiled draws it as the
+        // diamond the object stands on.
+        let mut properties = vec![
+            json!({"name": "bottom", "type": "float", "value": footprint.height[0]}),
+            json!({"name": "top", "type": "float", "value": footprint.height[1]}),
+        ];
+        if !objects_as_tiles {
+            properties.push(json!({"name": "object", "type": "object", "value": index + 1}));
+        }
+        footprints.push(json!({
+            "id": ordered.len() + index + 1,
+            "name": instance.object.name,
+            "type": "footprint",
+            "x": (x0 - min_x as f64) * f64::from(tile_h),
+            "y": (y0 - min_y as f64) * f64::from(tile_h),
+            "width": (x1 - x0) * f64::from(tile_h),
+            "height": (y1 - y0) * f64::from(tile_h),
+            "visible": true,
+            "properties": properties
         }));
     }
 
+    let object_tile_layers = if objects_as_tiles {
+        stack_tiles(&tile_cells, (width as usize) * (height as usize))?
+    } else {
+        Vec::new()
+    };
+
     let mut tilesets = vec![json!({"firstgid": 1, "source": "floor.tsj"})];
-    let mut layers = vec![json!({
-        "type": "tilelayer",
-        "name": "floor",
-        "id": 1,
-        "width": width,
-        "height": height,
-        "x": 0,
-        "y": 0,
-        "opacity": 1,
-        "visible": true,
-        "data": floor_data
-    })];
-    let mut wall_layer = None;
-    let mut next_layer_id = 2_u32;
-    if !walls_in_front {
-        if let (Some(_), Some(data)) = (walls, wall_data.clone()) {
-            let id = next_layer_id;
-            next_layer_id += 1;
-            tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
-            wall_layer = Some(json!({
-                "type": "tilelayer",
-                "name": "walls",
-                "id": id,
-                "width": width,
-                "height": height,
-                "x": 0,
-                "y": 0,
-                "opacity": 1,
-                "visible": true,
-                "data": data
-            }));
-        }
-    }
-    if let Some(walls) = wall_layer.take() {
-        layers.push(walls);
-    }
     if has_objects {
         tilesets.push(json!({"firstgid": 2, "source": "objects.tsj"}));
-        if objects_as_tiles {
-            layers.push(json!({
-                "type": "tilelayer",
-                "name": "objects",
-                "id": next_layer_id,
-                "width": width,
-                "height": height,
-                "x": 0,
-                "y": 0,
-                "opacity": 1,
-                "visible": true,
-                "data": object_tiles
-            }));
-        } else {
-            layers.push(json!({
+    }
+    if walls.is_some() {
+        tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
+        tilesets.push(json!({"firstgid": wall_first_gid + 16, "source": "wall_shadow.tsj"}));
+    }
+    let tile_layer = |name: &str, data: Vec<u32>| {
+        json!({
+            "type": "tilelayer",
+            "name": name,
+            "width": width,
+            "height": height,
+            "x": 0,
+            "y": 0,
+            "opacity": 1,
+            "visible": true,
+            "data": data
+        })
+    };
+    let wall_layer = |name: &str, keep: fn(&WallCell) -> bool| {
+        walls.map(|layout| {
+            tile_layer(
+                name,
+                layer_data_where(layout, width, height, min_x, min_y, wall_first_gid, keep),
+            )
+        })
+    };
+    let (below, above) = match wall_order {
+        WallOrder::Behind => (wall_layer("walls", |_| true), None),
+        WallOrder::Front => (None, wall_layer("walls", |_| true)),
+        WallOrder::Split => (
+            wall_layer("walls-back", |cell| !cell.front),
+            wall_layer("walls-front", |cell| cell.front),
+        ),
+    };
+    let mut layers = vec![tile_layer("floor", floor_data)];
+    // Contact shadows lie on the floor, under every wall layer and object.
+    layers.extend(walls.map(|layout| {
+        tile_layer(
+            "wall-shadow",
+            shadow_layer_data(layout, width, height, min_x, min_y, wall_first_gid + 16),
+        )
+    }));
+    layers.extend(below);
+    if has_objects && objects_as_tiles {
+        for (index, data) in object_tile_layers.into_iter().enumerate() {
+            let name = match index {
+                0 => "objects".to_owned(),
+                _ => format!("objects-{}", index + 1),
+            };
+            layers.push(tile_layer(&name, data));
+        }
+    } else if has_objects {
+        layers.push(json!({
                 "type": "objectgroup",
                 "name": "objects",
-                "id": next_layer_id,
                 "x": 0,
                 "y": 0,
                 "opacity": 1,
                 "visible": true,
                 "draworder": "index",
                 "objects": objects
-            }));
-        }
+        }));
     }
-    if walls_in_front {
-        if let (Some(_), Some(data)) = (walls, wall_data) {
-            tilesets.push(json!({"firstgid": wall_first_gid, "source": "walls.tsj"}));
-            layers.push(json!({
-                "type": "tilelayer",
-                "name": "walls",
-                "id": next_layer_id,
-                "width": width,
-                "height": height,
-                "x": 0,
-                "y": 0,
-                "opacity": 1,
-                "visible": true,
-                "data": data
-            }));
-            next_layer_id += 1;
-        }
+    layers.extend(above);
+    if has_objects {
+        // Hidden by default: switch it on in Tiled to see what each object
+        // occupies; games read it as collision shapes.
+        layers.push(json!({
+            "type": "objectgroup",
+            "name": "collision",
+            "x": 0,
+            "y": 0,
+            "opacity": 0.5,
+            "visible": false,
+            "draworder": "index",
+            "objects": footprints
+        }));
     }
+    for (id, layer) in (1_u32..).zip(&mut layers) {
+        layer["id"] = json!(id);
+    }
+    let next_layer_id = layers.len() + 1;
 
     let map = json!({
         "type": "map",
@@ -523,7 +620,7 @@ pub fn export_with(
         "tileheight": tile_h,
         "infinite": false,
         "nextlayerid": next_layer_id,
-        "nextobjectid": objects.len() + 1,
+        "nextobjectid": 2 * ordered.len() + 1,
         "tilesets": tilesets,
         "layers": layers
     });
@@ -546,8 +643,69 @@ pub fn export_with(
         walls_tileset: wall_tileset_path,
         preview: preview_path,
         instances: scene.instances.len(),
+        collisions,
         cells: [width, height],
     })
+}
+
+/// Spread object tiles over as many tile layers as the busiest cell needs.
+///
+/// `tiles` holds `(cell, gid)` in depth order; the n-th object in a cell goes
+/// to the n-th layer, so nearer objects are drawn later. The layer count is
+/// checked against [`MAX_OBJECT_TILE_LAYERS`] before any layer is allocated.
+fn stack_tiles(tiles: &[(usize, u32)], cells: usize) -> Result<Vec<Vec<u32>>, Diagnostic> {
+    let mut sorted: Vec<usize> = tiles.iter().map(|&(cell, _)| cell).collect();
+    sorted.sort_unstable();
+    let depth = sorted
+        .chunk_by(|a, b| a == b)
+        .map(<[usize]>::len)
+        .max()
+        .unwrap_or(0);
+    if depth > MAX_OBJECT_TILE_LAYERS {
+        return Err(error(
+            "E0602",
+            format!(
+                "{depth} objects share one cell; a tile layer export allows at most \
+                 {MAX_OBJECT_TILE_LAYERS} (use the object layer instead)"
+            ),
+        ));
+    }
+    let mut layers = vec![vec![0_u32; cells]; depth.max(1)];
+    for &(cell, gid) in tiles {
+        if let Some(layer) = layers.iter_mut().find(|layer| layer[cell] == 0) {
+            layer[cell] = gid;
+        }
+    }
+    Ok(layers)
+}
+
+/// Write `wall_shadow.png` and `wall_shadow.tsj`: floor-sized tiles that
+/// darken the floor along the walls next to it.
+fn write_shadow_tileset(scale: u32, out_dir: &Path) -> Result<(), Diagnostic> {
+    let tiles = render_shadow_tiles(scale);
+    write_png(&tiles.image, &out_dir.join("wall_shadow.png"))
+        .map_err(|message| error("E0603", message))?;
+    let tileset = json!({
+        "type": "tileset",
+        "name": "wall_shadow",
+        "version": "1.10",
+        "tiledversion": "1.12.2",
+        "tilewidth": tiles.tile_width,
+        "tileheight": tiles.tile_height,
+        "tilecount": 16,
+        "columns": 16,
+        "image": "wall_shadow.png",
+        "imagewidth": tiles.tile_width * 16,
+        "imageheight": tiles.tile_height,
+        "margin": 0,
+        "spacing": 0,
+        "tiles": (1..16_u8).map(|mask| json!({
+            "id": mask,
+            "type": "wall-shadow",
+            "properties": [{"name": "walls", "type": "int", "value": mask}]
+        })).collect::<Vec<_>>()
+    });
+    write_json(&out_dir.join("wall_shadow.tsj"), &tileset)
 }
 
 fn write_json(path: &Path, value: &Value) -> Result<(), Diagnostic> {

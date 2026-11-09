@@ -1,114 +1,259 @@
 # iso-scene
 
-**A 3D model and scene compiler for pixel-art graphics.**
+[![CI](https://github.com/Foxkovsky/iso-scene/actions/workflows/ci.yml/badge.svg)](https://github.com/Foxkovsky/iso-scene/actions/workflows/ci.yml)
+![Rust 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange)
+![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 
-Describe an object once with simple solids, then render it as 2:1 isometric
-pixel art, an orthographic top or side view, a voxel model, or a Tiled level.
+**A compiler from a small C-like language to pixel-art game assets.**
 
-> Status: **pre-alpha**. The language specification is being frozen; the Rust
-> implementation is next. Nothing is stable yet.
-
-## Why
-
-Hand-drawing every view of every object does not scale. A 3D model gives you
-all views for free:
+Describe an object once with simple solids. iso-scene renders it as 2:1
+isometric pixel art, orthographic top/front/side views, SVG, a MagicaVoxel
+model, sprite sheets with animations, or a ready-to-edit Tiled level.
 
 ```
-.model  ──▶  geometry + materials + loops
-                  │
-                  ├── iso 2:1     ──▶ PNG / SVG
-                  ├── top / side  ──▶ PNG / SVG
-                  ├── voxel       ──▶ VOX
-                  └── Tiled       ──▶ TMJ + tilesets
-.scene  ──▶  placements, light, scale, exports
+.model ─┐                       ┌─▶ PNG / SVG        iso 2:1, top, front, side
+        ├─▶ parse ─▶ evaluate ─▶├─▶ VOX              MagicaVoxel, chunked
+.scene ─┘   (bounded, fuel)     ├─▶ sprite sheets    JSON + Tiled tileset + Phaser/PixiJS atlas
+.walls ─────────────────────────┴─▶ Tiled map        floor, walls, shadows, objects, collisions
 ```
 
-## Design principles
+> **Status: pre-1.0.** The language is specified (draft v1) and fully
+> implemented; syntax may still change before 1.0, with a converter for any
+> breaking change.
 
-- **One unit: the block.** A block is the grid cell of the map. Physical size
-  (10 cm, 25 cm, 1 m) is a project convention, not a language feature.
-- **Resolution-independent models.** `scale` (pixels per block) belongs to the
-  scene or render command, never to the model.
-- **C-like syntax.** `;`, `{}`, `//` and `/* */`; whitespace and newlines are
-  not significant.
-- **Bounded evaluation.** Loops are allowed, but every evaluation step spends
-  fuel. A malformed scene fails with a diagnostic instead of hanging the
-  editor.
-- **Models and scenes are separate.** `.model` files define reusable objects;
-  `.scene` files place them, set light and projection, and export.
+## Contents
 
-## Quick start
+- [Features](#features)
+- [Install](#install)
+- [A first scene](#a-first-scene)
+- [The language at a glance](#the-language-at-a-glance)
+- [Outputs](#outputs)
+- [Editors and agents](#editors-and-agents)
+- [Guarantees](#guarantees)
+- [Documentation](#documentation)
+- [Development](#development)
+- [Repository layout](#repository-layout)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+## Features
+
+- **One model, every view.** Iso, top, front and side renders from the same
+  geometry; per-pixel depth, sun and ambient light, TOML materials with
+  procedural textures.
+- **Game-ready exports.** Sprite sheets (1–16 directions, animation rows,
+  pivots, padding, multi-page), a `sheet.json` with a JSON Schema, Tiled
+  tilesets, Phaser/PixiJS atlases, MagicaVoxel models.
+- **Tiled levels.** Floor, 16-way autotiled walls with a Wang set, contact
+  shadows, depth-sorted objects that land exactly where Tiled draws them,
+  object footprints and collision warnings, and a Tiled extension that checks
+  collisions as you edit.
+- **Animation in the language.** `animation open (t) frames 7 duration 100;`
+  and any expression of `t`: doors swing (`turn 90 * t`), drawers slide.
+- **Fast.** Parallel, band-split rasterizer; incremental animation frames;
+  criterion benchmarks guard every hot path. A classroom of 40 objects
+  renders in about 25 ms.
+- **Safe on any input.** No `unsafe`, no panics on user input, every limit
+  checked before allocation, evaluation bounded by fuel, includes sandboxed
+  to the project.
+- **Editor and agent support.** A language server, an MCP server that hands
+  agents the rendered image, and a VS Code extension with live preview.
+
+## Install
 
 ```bash
-cargo run -p scene-cli -- --version
-cargo run -p scene-cli -- check examples/chair.model
-cargo run -p scene-cli -- eval examples/chair.model
-cargo run -p scene-cli -- eval examples/classroom.scene
-cargo run -p scene-cli -- render examples/classroom.scene -o out/classroom.png
-# vector export (iso only): -o out/classroom.svg
-cargo run -p scene-cli -- render examples/classroom_top.scene -o out/classroom_top.png
-cargo run -p scene-cli -- voxel examples/classroom.scene --density 7 -o out/classroom.vox
-cargo run -p scene-cli -- tiled examples/classroom.scene -o out/tiled
-# with walls: cargo run -p scene-cli -- tiled room.scene --walls room.walls -o out/tiled
-cargo run -p scene-cli -- sprites examples/classroom.scene --views 4 -o out/sprites
-# animation row: --animation chair --from 0 --to 90 --frames 7 --duration 100
-# 8 directions, centred pivot, Phaser/PixiJS atlas and a debug preview:
-cargo run -p scene-cli -- sprites examples/chair.model examples/desk.model \
-    --views 8 --pivot center --atlas --debug-grid -o out/furniture
+git clone https://github.com/Foxkovsky/iso-scene
+cd iso-scene
+cargo install --path crates/scene-cli     # installs the `iso-scene` binary
 ```
 
-The lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel export
-and an isometric Tiled exporter with a separate wall layer are implemented.
-The normative documents are:
+Requires Rust 1.85 or newer. No Python, Node or GPU is needed.
 
-- [`docs/spec.md`](docs/spec.md) — language semantics;
-- [`docs/grammar.ebnf`](docs/grammar.ebnf) — grammar;
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — pipeline and crates;
-- [`docs/projections.md`](docs/projections.md) — projection formulas and their tests;
-- [`docs/walls.md`](docs/walls.md) — `.walls` format, 16-way masks and Tiled walls.
-- [`docs/backends.md`](docs/backends.md) — backends, Tiled export and sprite
-  sheets; [`docs/sprite-sheet.schema.json`](docs/sprite-sheet.schema.json) —
-  the `sheet.json` schema.
+## A first scene
 
-Examples: [`examples/chair.model`](examples/chair.model),
-[`examples/classroom.scene`](examples/classroom.scene).
+`crate.scene`:
 
-Render outputs and other generated binaries are gitignored; rebuild them from
-the sources with the commands above.
+```c
+version 1;
+
+object crate (1, 1) {
+    box at (0, 0, 0) size (w, d, 1) material wood;
+}
+
+render iso;
+scale 32;
+
+place crate at (0, 0, 0);
+place crate at (1.2, 0, 0) rot 90;
+```
+
+```bash
+iso-scene render crate.scene -o crate.png          # PNG
+iso-scene render crate.scene -o crate.svg          # SVG
+iso-scene render crate.scene --view top -o top.png # orthographic view
+```
+
+Then look at the image, change one thing, and render again.
+
+## The language at a glance
+
+Models (`.model`) define reusable objects; scenes (`.scene`) include models,
+place them and choose the projection. Every length is in **blocks**, the cell
+of the map; `scale` (pixels per block) belongs to the scene, never to the
+model.
+
+```c
+// desk.model
+version 1;
+material oak = "materials/oak.toml";
+material steel = "materials/steel.toml";
+
+object desk (5, 2) {                       // footprint w × d in blocks
+    let leg = 0.16;
+    box at (0.16, 0.16, 0) size (leg, leg, 2.8) material steel;
+    mirror x;                              // four legs from one
+    mirror y;
+    box at (0, 0, 2.8) size (w, d, 0.16) material oak;
+}
+```
+
+```c
+// door.scene
+version 1;
+include "desk.model";
+
+object door (2, 0.2) {
+    box at (0, 0, 0) size (w, d, 4) material oak;
+}
+
+render iso;
+scale 24;
+
+animation open (t) frames 7 duration 100 once;
+
+for i in 0..3 {
+    place desk at (i * 6, 0, 0) rot 0 anchor back;
+}
+place door at (-3, 2, 0) turn 80 * t;      // hinge at the door's local (0, 0)
+```
+
+Solids: `box`, `cyl`, `sphere`, `slantbox`, `slantcyl`, `ramp`. Also `let` /
+`var`, `for`, `if`, `mirror`, reusable parts with `use`, and `merge` for
+seamless welded surfaces. `iso-scene help <topic>` prints the relevant
+section of the spec.
+
+## Outputs
+
+| Command | Produces |
+|---|---|
+| `render scene -o out.png` / `out.svg` | iso or orthographic PNG, iso SVG |
+| `voxel scene -o out.vox` | MagicaVoxel model, split into chunks past 256 per axis |
+| `sprites a.model b.scene --views 8 --atlas` | sprite sheet, `sheet.json`, Tiled tilesets, Phaser/PixiJS atlas |
+| `animate scene` | each `animation` as a strip, an animated Tiled tile and a map |
+| `tiled scene --walls room.walls` | isometric Tiled map with floor, walls, shadows, objects, collisions |
+| `check` / `eval` | diagnostics / the evaluated scene graph |
+| `help [topic]` / `limits` | one section of the spec / every limit with its error code |
+
+Diagnostics look like ``room.scene:4:1: error[E0301]: unknown object `sofa` ``;
+codes are listed in the spec.
+
+## Editors and agents
+
+**VS Code.** `editors/vscode`: live preview (iso, drawing, voxels), errors in
+Problems as you type, hover, go to definition, outline, completion, build and
+sprite-sheet commands.
+
+```bash
+cd editors/vscode && npx @vscode/vsce package
+code --install-extension iso-scene-0.4.0.vsix
+```
+
+**Any LSP editor.** `iso-scene lsp` speaks the Language Server Protocol over
+stdio (Neovim and Helix setups in [`docs/servers.md`](docs/servers.md)).
+
+**AI agents (MCP).** `iso-scene mcp` exposes `check`, `render` (returns the
+image), `export`, `help` and `limits`. For Claude Code:
+
+```bash
+claude mcp add iso-scene -- iso-scene mcp
+```
+
+**Tiled.** `editors/tiled/iso-scene.js` checks collisions on the current
+object positions (Map → Check iso-scene Collisions).
+
+## Guarantees
+
+- **Deterministic output.** The same input gives byte-identical PNG, SVG, VOX
+  and JSON on every machine and thread count.
+- **Diagnostics, not crashes.** Malformed or hostile input (deep nesting,
+  huge loops, oversized grids) ends in a diagnostic with a span; the limits
+  are listed by `iso-scene limits` and tested against the spec.
+- **No surprises on disk.** `include` and `material` paths stay inside the
+  project root; so do all paths of the MCP server.
+
+## Documentation
+
+| Document | Covers |
+|---|---|
+| [`docs/spec.md`](docs/spec.md) | language semantics, limits, diagnostics (normative) |
+| [`docs/grammar.ebnf`](docs/grammar.ebnf) | grammar (normative) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | pipeline, crates, determinism, performance |
+| [`docs/backends.md`](docs/backends.md) | renderers, Tiled export, sprite sheets, animation |
+| [`docs/walls.md`](docs/walls.md) | `.walls` format, wall layers and shadows in Tiled |
+| [`docs/projections.md`](docs/projections.md) | projection formulas and their tests |
+| [`docs/servers.md`](docs/servers.md) | language server and MCP server |
+| [`docs/sprite-sheet.schema.json`](docs/sprite-sheet.schema.json) | the `sheet.json` schema |
+
+Examples live in [`examples/`](examples): a chair, a desk, a classroom in iso
+and top view, and an animated door.
+
+## Development
+
+```bash
+make fmt          # format
+make ci           # fmt-check, clippy -D warnings, tests, docs
+make bench        # criterion benchmarks
+make vscode-test  # VS Code extension tests in Node
+make vscode-it    # the extension inside VS Code (needs code, xvfb-run)
+```
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md). Any
+change to syntax or semantics updates `docs/spec.md` and `docs/grammar.ebnf`
+in the same commit; a change that can affect speed quotes benchmark numbers.
 
 ## Repository layout
 
 ```
-crates/scene-syntax/        lexer, parser, AST, diagnostics
-crates/scene-core/          validation, evaluation, scene graph
-crates/scene-render/       shared rasterizer, image, materials, mesh
-crates/scene-backend-iso/   2:1 isometric renderer
-crates/scene-backend-ortho/ top / front / side renderer
-crates/scene-backend-voxel/ voxelizer
-crates/scene-export-tiled/  Tiled JSON export
-crates/scene-cli/           command line
-crates/scene-server/        JSON-lines server for the VS Code extension
-docs/                       specification and architecture
-examples/                   models and scenes
+crates/scene-syntax/          lexer, parser, AST, diagnostics
+crates/scene-core/            evaluation, scene graph, limits
+crates/scene-render/          rasterizer, images, materials
+crates/scene-backend-iso/     2:1 isometric renderer and SVG
+crates/scene-backend-ortho/   top / front / side renderer
+crates/scene-backend-voxel/   voxelizer and VOX writer
+crates/scene-walls/           .walls format, autotiling, shadows
+crates/scene-export-sprites/  sprite sheets and animations
+crates/scene-export-tiled/    Tiled maps, footprints, collisions
+crates/scene-server/          help topics, limits, LSP and MCP servers
+crates/scene-cli/             the `iso-scene` command
+editors/vscode/               VS Code extension
+editors/tiled/                Tiled extension
+docs/                         specification and guides
+examples/                     models and scenes
 ```
 
 ## Roadmap
 
-| Milestone | Scope |
+| Done | Next |
 |---|---|
-| v0.1 | parser, validator, evaluator, iso backend, CLI |
-| v0.2 | scenes, top/ortho backends, TOML materials, voxel export |
-| v0.3 | sprite sheets, backend style options, LSP/MCP |
-| v1.0 | frozen grammar, formatter, LSP, public release |
-
-## Contributing
-
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md). Changes to syntax or semantics must
-update `docs/spec.md` and `docs/grammar.ebnf` together.
+| language, evaluator, iso/ortho/SVG/voxel backends | formatter |
+| sprite sheets, animations in the language | browser navigator with on-device WASM rendering |
+| Tiled export with walls, shadows and collisions | parametric objects (`object name (w, d)` overrides) |
+| language server, MCP server, VS Code extension | frozen grammar and 1.0 |
 
 ## License
 
 Code: **MIT OR Apache-2.0**. Assets and examples: **CC BY 4.0**.
-See `LICENSE-MIT`, `LICENSE-APACHE`, `LICENSE-ASSETS`.
+See [`LICENSE-MIT`](LICENSE-MIT), [`LICENSE-APACHE`](LICENSE-APACHE),
+[`LICENSE-ASSETS`](LICENSE-ASSETS).
 
 Русская версия: [`README.ru.md`](README.ru.md).

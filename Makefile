@@ -5,7 +5,7 @@
 
 CARGO ?= cargo
 
-.PHONY: help fmt fmt-check check clippy test bench doc ci run clean
+.PHONY: help fmt fmt-check check clippy test bench doc ci run clean vscode-test vscode-it
 
 help:
 	@printf '%s\n' \
@@ -14,6 +14,8 @@ help:
 		'make clippy     clippy with warnings as errors' \
 		'make test       run all tests' \
 		'make bench      run the criterion benchmarks' \
+		'make vscode-test test the VS Code extension (needs node)' \
+		'make vscode-it  run it inside VS Code (needs code, xvfb-run)' \
 		'make doc        build documentation' \
 		'make ci         fmt-check + clippy + test + doc' \
 		'make run        run the CLI (pass ARGS=...)' \
@@ -39,6 +41,16 @@ doc:
 
 bench:
 	$(CARGO) bench --workspace
+
+vscode-test:
+	$(CARGO) build --release -p scene-cli
+	node --test editors/vscode/test
+
+# VSCODE is the editor executable; the `code` wrapper may hand off to an open window.
+VSCODE ?= /usr/share/code/code
+vscode-it:
+	$(CARGO) build --release -p scene-cli
+	VSCODE=$(VSCODE) xvfb-run -a node editors/vscode/test/vscode/run.js
 
 ci: fmt-check clippy test doc
 

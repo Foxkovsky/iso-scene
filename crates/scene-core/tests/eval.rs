@@ -464,3 +464,149 @@ impl Drop for TempDir {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
+#[test]
+fn programs_at_the_nesting_limits_fit_a_small_stack() {
+    // The parser and evaluator recurse; spec §9 bounds the depth. At these
+    // limits a release build needs under 512 KiB (measured), so a 1 MiB
+    // Windows main thread is enough; a debug build needs up to 4 MiB, which
+    // this test thread gives it.
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let nesting = scene_syntax::parser::MAX_NESTING - 1;
+            let blocks = format!(
+                "version 1; object o (1, 1) {{ {}box at (0, 0, 0) size (1, 1, 1) material wood; {}}} render iso; scale 8; place o at (0, 0, 0);",
+                "if (true) { ".repeat(nesting),
+                "} ".repeat(nesting)
+            );
+            let terms = scene_syntax::parser::MAX_EXPR_DEPTH - 2;
+            let chain = vec!["1"; terms].join(" + ");
+            let parens = format!("{}1{}", "(".repeat(nesting), ")".repeat(nesting));
+            let exprs = format!(
+                "version 1; render iso; scale 8; let x = 1 + ({chain}) + {chain}; let y = {parens}; object b (1, 1) {{ box at (0, 0, 0) size (1, 1, 1) material wood; }} place b at (x - y - {}, 0, 0);",
+                2 * terms
+            );
+            for source in [blocks, exprs] {
+                let scene = compile_scene_ok(&source);
+                assert!(scene.instances[0].at[0].abs() < 1e-9);
+            }
+        })
+        .expect("spawn")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+}
+
+const DOOR: &str = "version 1; object leaf (1, 0.2) { box at (0, 0, 0) size (w, d, 2) material wood; } render iso; scale 16;";
+
+fn frame(source: &str, animation: &str, index: u32) -> Result<scene_core::SceneGraph, String> {
+    let program = parse_ok(source);
+    let here = Path::new(".");
+    scene_core::compile_scene_frame(&program, here, here, animation, index)
+        .map_err(|error| error.code.to_owned())
+}
+
+#[test]
+fn an_animation_variable_runs_from_zero_to_one_over_the_frames() {
+    let source = format!(
+        "{DOOR} animation open (t) frames 5 duration 100 once; animation slide (s) frames 3 duration 50; place leaf at (4 * s, 0, 0) turn 90 * t;"
+    );
+    // A plain compile sees every animation at rest.
+    let still = compile_scene_ok(&source);
+    assert_eq!(still.instances[0].angle, 0.0);
+    assert_eq!(still.animations.len(), 2);
+    assert_eq!(
+        (
+            still.animations[0].frames,
+            still.animations[0].duration,
+            still.animations[0].looped
+        ),
+        (5, 100, false)
+    );
+    assert!(still.animations[1].looped);
+    for (index, angle) in [(0, 0.0), (1, 22.5), (4, 90.0)] {
+        let scene = frame(&source, "open", index).expect("frame");
+        assert!((scene.instances[0].angle - angle).abs() < 1e-9);
+        // The other animation stays at 0.
+        assert_eq!(scene.instances[0].at[0], 0.0);
+    }
+    let scene = frame(&source, "slide", 2).expect("frame");
+    assert!((scene.instances[0].at[0] - 4.0).abs() < 1e-9);
+    assert_eq!(scene.instances[0].angle, 0.0);
+}
+
+#[test]
+fn animation_errors_are_diagnostics() {
+    let with = |directive: &str| format!("{DOOR} {directive} place leaf at (0, 0, 0);");
+    let ok = with("animation a (t) frames 2 duration 10;");
+    assert_eq!(frame(&ok, "b", 0).err().as_deref(), Some("E0301"));
+    assert_eq!(frame(&ok, "a", 2).err().as_deref(), Some("E0304"));
+    assert_eq!(
+        compile_error(&with("animation a (t) frames 0 duration 10;")),
+        "E0304"
+    );
+    assert_eq!(
+        compile_error(&with("animation a (t) frames 1025 duration 10;")),
+        "E0304"
+    );
+    assert_eq!(
+        compile_error(&with("animation a (t) frames 2 duration 0;")),
+        "E0304"
+    );
+    assert_eq!(
+        compile_error(&with(
+            "animation a (t) frames 2 duration 10; animation a (u) frames 2 duration 10;"
+        )),
+        "E0303"
+    );
+    // The variable follows the scope rules: no shadowing.
+    assert_eq!(
+        compile_error(&with("let t = 1; animation a (t) frames 2 duration 10;")),
+        "E0303"
+    );
+}
+
+#[test]
+fn a_single_frame_animation_is_at_zero() {
+    let source = format!("{DOOR} animation a (t) frames 1 duration 10; place leaf at (t, 0, 0);");
+    assert_eq!(
+        frame(&source, "a", 0).expect("frame").instances[0].at[0],
+        0.0
+    );
+}
+
+#[test]
+fn errors_in_an_included_file_point_at_the_include_and_name_the_file() {
+    let temp = TempDir::new();
+    let scene = "version 1;\ninclude \"a.model\";\nrender iso; scale 8; place a at (0, 0, 0);";
+    let compile = |model: &str| {
+        fs::write(temp.path().join("a.model"), model).expect("write model");
+        let program = parse_ok(scene);
+        compile_scene(&program, temp.path(), temp.path()).expect_err("model error")
+    };
+    let include = u32::try_from(scene.find("include").expect("include")).expect("small");
+    // An evaluation error and a parse error, both on line 3 of the model.
+    for (model, code, at) in [
+        (
+            "version 1;\nobject a (1, 1) {\n    box at (0, 0, 0) size (0, 1, 1) material wood;\n}\n",
+            "E0307",
+            "3:5",
+        ),
+        (
+            "version 1;\nobject a (1, 1) {\n    box at (0, 0, 0) size (1, 1 1) material wood;\n}\n",
+            "E0201",
+            "3:33",
+        ),
+    ] {
+        let error = compile(model);
+        assert_eq!(error.code, code);
+        assert_eq!(error.span.start, include, "{}", error.message);
+        assert!(
+            error
+                .message
+                .starts_with(&format!("in `a.model` at {at}: ")),
+            "{}",
+            error.message
+        );
+    }
+}
