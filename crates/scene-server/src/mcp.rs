@@ -173,19 +173,46 @@ fn text(body: String) -> Value {
 /// A path argument resolved inside the project root.
 fn inside(root: &Path, argument: Option<&str>, what: &str) -> Result<PathBuf, String> {
     let argument = argument.ok_or_else(|| format!("`{what}` is required"))?;
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let path = Path::new(argument);
-    let relative = path.strip_prefix(root).unwrap_or(path);
+    let relative = path.strip_prefix(&root).unwrap_or(path);
     if relative.is_absolute()
-        || relative
-            .components()
-            .any(|part| matches!(part, Component::ParentDir | Component::Prefix(_)))
+        || relative.has_root()
+        || relative.components().any(|part| {
+            matches!(
+                part,
+                Component::ParentDir | Component::Prefix(_) | Component::RootDir
+            )
+        })
     {
         return Err(format!(
             "`{argument}` must be inside the project root `{}`",
             root.display()
         ));
     }
-    Ok(root.join(relative))
+    let joined = root.join(relative);
+    // A symlink inside the root must not lead outside it. The file itself may
+    // not exist yet (an export target), so check its nearest existing ancestor.
+    let mut existing = joined.as_path();
+    loop {
+        match existing.canonicalize() {
+            Ok(canonical) => {
+                if !canonical.starts_with(&root) {
+                    return Err(format!(
+                        "`{argument}` resolves outside the project root `{}`",
+                        root.display()
+                    ));
+                }
+                break;
+            }
+            Err(_) => {
+                existing = existing
+                    .parent()
+                    .ok_or_else(|| format!("`{argument}` has no ancestor in the project root"))?;
+            }
+        }
+    }
+    Ok(joined)
 }
 
 /// A loaded source file.
@@ -492,7 +519,19 @@ pub fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::base64;
+    use super::{base64, inside};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "iso-scene-mcp-inside-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("scratch");
+        dir.canonicalize().expect("canonical scratch")
+    }
 
     #[test]
     fn base64_matches_the_rfc_vectors() {
@@ -507,5 +546,47 @@ mod tests {
         ] {
             assert_eq!(base64(input.as_bytes()), expected);
         }
+    }
+
+    #[test]
+    fn a_root_relative_path_is_refused() {
+        let root = scratch("root-relative");
+        // On Windows `/tmp` has a root but no prefix, so `is_absolute()` is
+        // false; it still escapes the project when joined.
+        #[cfg(windows)]
+        let argument = r"\tmp\elsewhere.png";
+        #[cfg(unix)]
+        let argument = "/tmp/elsewhere.png";
+        assert!(inside(&root, Some(argument), "out").is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_parent_component_is_refused() {
+        let root = scratch("parent");
+        assert!(inside(&root, Some("../outside.png"), "out").is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_absolute_path_inside_the_root_is_allowed() {
+        let root = scratch("absolute");
+        let file = root.join("scene.scene");
+        fs::write(&file, "").expect("write");
+        let resolved = inside(&root, file.to_str(), "path").expect("inside");
+        assert_eq!(resolved, file);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_outside_the_root_is_refused() {
+        use std::os::unix::fs::symlink;
+        let root = scratch("symlink-root");
+        let outside = scratch("symlink-outside");
+        symlink(&outside, root.join("link")).expect("symlink");
+        assert!(inside(&root, Some("link/evil.png"), "out").is_err());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 }
