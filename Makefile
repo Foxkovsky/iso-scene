@@ -44,7 +44,7 @@ bench:
 
 vscode-test:
 	$(CARGO) build --release -p scene-cli
-	node --test editors/vscode/test
+	node --test editors/vscode/test/lsp_client.test.js editors/vscode/test/extension.test.js
 
 # VSCODE is the editor executable; the `code` wrapper may hand off to an open window.
 VSCODE ?= /usr/share/code/code
