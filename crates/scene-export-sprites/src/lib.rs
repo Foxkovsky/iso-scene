@@ -51,6 +51,13 @@ pub const MAX_SHEET_SIDE: u32 = 8_192;
 /// Maximum sheet area in pixels.
 pub const MAX_SHEET_PIXELS: u64 = 16_000_000;
 
+/// Maximum total area of all rendered sprites, summed before packing.
+///
+/// The sheet area limit applies to the packed pages, but every cell is
+/// rendered first; this second budget bounds the temporary images (each is
+/// RGBA, so 64M pixels is 256 MiB) independently of how the pages are split.
+pub const MAX_SPRITE_PIXELS: u64 = 64_000_000;
+
 /// Maximum number of animation frames.
 pub const MAX_FRAMES: u32 = 1_024;
 
@@ -339,6 +346,8 @@ pub fn export(
     // Every cell is described first, in sheet order, then rendered in
     // parallel; results keep that order and the first failing cell (in order)
     // decides the error, so output and diagnostics do not depend on threads.
+    // Cells are rendered in small batches so the total image budget can stop
+    // before thousands of large sprites are held in memory at once.
     let mut jobs = Vec::with_capacity(cell_count);
     for (row, entry) in objects.iter().enumerate() {
         for (column, view) in options.views.iter().enumerate() {
@@ -376,13 +385,30 @@ pub fn export(
             });
         }
     }
-    let rendered: Vec<Result<Cell, Diagnostic>> = jobs
-        .par_iter()
-        .map(|job| job.render(options, materials))
-        .collect();
-    let cells = rendered
-        .into_iter()
-        .collect::<Result<Vec<Cell>, Diagnostic>>()?;
+    let batch = rayon::current_num_threads().max(1);
+    let mut cells = Vec::with_capacity(cell_count);
+    let mut sprite_pixels = 0_u64;
+    for chunk in jobs.chunks(batch) {
+        let rendered: Vec<Result<Cell, Diagnostic>> = chunk
+            .par_iter()
+            .map(|job| job.render(options, materials))
+            .collect();
+        for cell in rendered {
+            let cell = cell?;
+            sprite_pixels = sprite_pixels.saturating_add(
+                u64::from(cell.sprite.image.width) * u64::from(cell.sprite.image.height),
+            );
+            if sprite_pixels > MAX_SPRITE_PIXELS {
+                return Err(error(
+                    "E0602",
+                    format!(
+                        "rendered sprites exceed {MAX_SPRITE_PIXELS} pixels; use fewer views, frames or objects"
+                    ),
+                ));
+            }
+            cells.push(cell);
+        }
+    }
 
     let total_rows = objects.len() + options.animations.len();
     let rows_per_page = options

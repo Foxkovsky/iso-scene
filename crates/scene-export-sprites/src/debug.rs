@@ -2,12 +2,13 @@
 
 use scene_render::{Image, composite_over};
 
+use crate::SheetOptions;
 use crate::layout::{Page, cell_origin};
 
 /// The sheet on a light background with cell borders, anchor crosses and a
 /// `name/view` (or `name#frame`) label in each cell, for checking that nothing
 /// is clipped and that anchors line up.
-pub(crate) fn debug_grid(sheet: &Image, page: &Page, padding: u32) -> Image {
+pub(crate) fn debug_grid(sheet: &Image, page: &Page, options: &SheetOptions) -> Image {
     const BACKGROUND: [u8; 4] = [236, 236, 236, 255];
     const BORDER: [u8; 4] = [220, 40, 160, 255];
     const CROSS: [u8; 4] = [0, 150, 220, 255];
@@ -20,7 +21,7 @@ pub(crate) fn debug_grid(sheet: &Image, page: &Page, padding: u32) -> Image {
     };
     composite_over(&mut image, sheet, 0, 0, [0, 0, sheet.width, sheet.height]);
     for cell in cells {
-        let [left, top] = cell_origin(cell, cell_size, padding);
+        let [left, top] = cell_origin(cell, cell_size, options.padding);
         let right = left + cell_size[0] - 1;
         let bottom = top + cell_size[1] - 1;
         for x in left..=right {
@@ -52,7 +53,13 @@ pub(crate) fn debug_grid(sheet: &Image, page: &Page, padding: u32) -> Image {
             );
         }
         let label = match cell.animation {
-            Some(_) => format!("{}#{}", cell.name, cell.column),
+            Some(index) => {
+                let name = options
+                    .animations
+                    .get(index)
+                    .map_or(cell.name.as_str(), |animation| animation.name.as_str());
+                format!("{name}#{}", cell.column)
+            }
             None => format!("{}/{}", cell.name, cell.column),
         };
         draw_text(&mut image, left + 2, top + 2, right, &label, TEXT);

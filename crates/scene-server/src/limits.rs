@@ -174,6 +174,12 @@ pub fn all() -> Vec<Limit> {
             "лист спрайтов: площадь",
         ),
         limit(
+            "rendered sprite pixels before packing, summed",
+            format!("{} px", grouped(scene_export_sprites::MAX_SPRITE_PIXELS)),
+            "E0602",
+            "лист спрайтов: суммарная площадь спрайтов до упаковки",
+        ),
+        limit(
             "voxels along one axis",
             grouped(u64::from(scene_backend_voxel::MAX_AXIS)),
             "E0602",

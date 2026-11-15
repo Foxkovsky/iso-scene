@@ -49,7 +49,12 @@ pub(crate) fn atlas_json(options: &SheetOptions, page: &Page) -> Value {
             .filter(|cell| cell.animation == Some(index))
             .map(|cell| atlas_key(options, cell))
             .collect();
-        animations.insert(animation.name.clone(), json!(keys));
+        // A page split by `--max-rows` only describes the animations it
+        // actually contains; an empty frame list would make Phaser/PixiJS
+        // create a broken animation on every other page.
+        if !keys.is_empty() {
+            animations.insert(animation.name.clone(), json!(keys));
+        }
     }
     json!({
         "frames": frames,

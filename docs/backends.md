@@ -176,14 +176,16 @@ Input is one or more `.scene` or `.model` files. A scene contributes the
 objects it actually places (each object once, in placement order); a model
 contributes all objects defined in it, including helpers such as a
 `chair_leg` used by `chair`. Use `--object <name>` (repeatable) to keep only
-some of them, or `--exclude <name>` (repeatable) to drop some. The pixel scale is taken from the first scene; models
+some of them, or `--exclude <name>` (repeatable) to drop some. `--file <path>`
+(repeatable) restricts the input to the named files, which resolves a clash
+between two different objects that share a name. The pixel scale is taken from the first scene; models
 and mixed inputs use `--scale` (default 16).
 
 Objects are identified by name. The same object reached from several files
 (for example a model included by two scenes) is packed once. Two *different*
 objects with one name are an error (exit code 2) instead of one silently
-replacing the other; rename one or pick with `--object`. Likewise a material
-name bound to two different files is an error.
+replacing the other; rename one or pass `--file <path>` to choose an input
+file. Likewise a material name bound to two different files is an error.
 
 `--name <stem>` sets the file names (`<stem>.png`, `.json`, `.tsj`). It must be
 a bare stem: no `/`, `\`, `..` and no extension.
@@ -193,8 +195,10 @@ working directory does not contain it, `<dir>` also becomes the project root
 that `include` and `material` paths must stay inside, so a sheet can be built
 from any directory. This applies to `render`, `voxel` and `tiled` too.
 
-A sheet holds at most 4 096 cells (objects × views + frames) and 1 024
-animation frames; these limits are checked before anything is rendered.
+A sheet holds at most 4 096 cells (objects × views + frames), 1 024
+animation frames and 64 000 000 pixels across all rendered sprites; the
+cell/frame limits are checked before anything is rendered, the pixel budget
+while cells are rendered in batches.
 
 `--views 1|2|4|8|16` selects the static sides: `0°`, `0°/180°` (front and
 back), the four quarter turns, or 8/16 evenly spaced directions (45° and
@@ -254,7 +258,9 @@ level, chosen by `--pivot`:
 - `front` (default) — the front corner, the point nearest the viewer that
   touches the floor; Tiled aligns it to the bottom of a tile cell;
 - `back`, `left`, `right` — the other corners;
-- `center` — the middle of the footprint, handy for inventory icons.
+- `center` — the middle of the footprint, handy for inventory icons and for
+  turntables: with `--views 4|8|16` it keeps the object in place instead of
+  turning it around its front corner. `front` is for floor placement/Tiled.
 
 The footprint is used rather than the geometry's bounds, so a table top or a
 cornice that overhangs the footprint does not move the anchor. The object is

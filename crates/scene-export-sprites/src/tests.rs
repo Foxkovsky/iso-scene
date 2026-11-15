@@ -751,6 +751,48 @@ fn max_rows_splits_pages_with_their_own_cell_size() {
     let _ = fs::remove_dir_all(dir);
 }
 
+#[test]
+fn atlas_on_a_page_lists_only_the_animations_on_that_page() {
+    let objects = vec![SheetObject {
+        name: "door".into(),
+        object: box_object("door", 1.0, 1.0),
+        source: None,
+    }];
+    let mut options = chair_options("pagedanim");
+    options.views = vec![0.0, 90.0];
+    options.max_rows = Some(1);
+    options.atlas = true;
+    options.animations = vec![door_animation("open", 3), door_animation("shut", 2)];
+    let dir = scratch("iso-scene-sprites-page-atlas-test");
+    let report = export(&objects, &BTreeMap::new(), &options, &dir).expect("sheet exports");
+    assert_eq!(report.pages, 3);
+    let read = |page: usize| -> Value {
+        serde_json::from_str(
+            &fs::read_to_string(dir.join(format!("pagedanim-{page}.atlas.json"))).unwrap(),
+        )
+        .unwrap()
+    };
+    let first = read(1);
+    assert_eq!(first["animations"].as_object().unwrap().len(), 0);
+    let second = read(2);
+    assert_eq!(second["animations"]["open"].as_array().unwrap().len(), 3);
+    assert!(
+        !second["animations"]
+            .as_object()
+            .unwrap()
+            .contains_key("shut")
+    );
+    let third = read(3);
+    assert_eq!(third["animations"]["shut"].as_array().unwrap().len(), 2);
+    assert!(
+        !third["animations"]
+            .as_object()
+            .unwrap()
+            .contains_key("open")
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
 fn read_png(path: &Path) -> (u32, u32, Vec<u8>) {
     let decoder = png::Decoder::new(std::io::BufReader::new(fs::File::open(path).unwrap()));
     let mut reader = decoder.read_info().unwrap();
