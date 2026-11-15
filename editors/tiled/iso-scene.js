@@ -18,7 +18,7 @@
 
 var isoScene = (function () {
   var EPSILON = 1e-6;
-  var WALL_LAYERS = ["walls", "walls-back", "walls-front"];
+  var WALL_LAYERS = ["walls", "walls-back", "walls-front", "walls_back", "walls_front"];
 
   function layersNamed(map, names) {
     var found = [];
@@ -143,6 +143,7 @@ var isoScene = (function () {
     var buckets = {};
     var collisions = [];
     var seen = {};
+    var wallSeen = {};
     prints.forEach(function (print, index) {
       var c = cells(print);
       for (var y = c[1]; y < c[3]; ++y) {
@@ -156,7 +157,8 @@ var isoScene = (function () {
             }
           });
           buckets[key].push(index);
-          if (walls[key]) {
+          if (walls[key] && !wallSeen[index]) {
+            wallSeen[index] = true;
             collisions.push({ first: print, wall: walls[key] });
           }
         }

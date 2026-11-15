@@ -35,5 +35,6 @@ prints the collisions of each map given, for scripts and CI.
   `footprint_y` (cells, relative to the object position), `footprint_w`,
   `footprint_h`, `bottom` and `top`;
 - tile-layer game maps: tiles with `collides: true`, `cells_x`, `cells_y`;
-- wall tile layers named `walls`, `walls-back` or `walls-front`; a tile with
-  `collides: false` (a door) is passable.
+- wall tile layers named `walls`, `walls-back`/`walls-front` or
+  `walls_back`/`walls_front`; a tile with `collides: false` (a door) is
+  passable.
