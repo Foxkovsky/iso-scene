@@ -10,6 +10,7 @@ members = [
     "crates/scene-backend-voxel",
     "crates/scene-export-tiled",
     "crates/scene-export-sprites",
+    "crates/scene-wasm",
     "crates/scene-cli",
     "crates/scene-server",
 ]
