@@ -159,6 +159,29 @@ The `floor` layer remains a regular tile layer. Because object order is stored
 in the object layer, the Tiled `draworder` is `index`; do not sort objects in
 the Tiled UI if you want to preserve the generated depth order.
 
+## Importing a Tiled map
+
+`iso-scene import-tiled map.tmj --models objects --layers objects -o out/scene`
+turns a Tiled map back into a `.scene`:
+
+- object layers: each object's `type`/`name`, `rotation`, `turn` and `z`
+  become a `place ...` line (the format `iso-scene tiled` writes);
+- tile layers: each tile's `model` property (or its `type`) names the model;
+  `--cell` is the number of scene units per Tiled cell;
+- the referenced `.model` files and `materials/` are copied next to the
+  scene, so it renders without the original map.
+
+Defaults are chosen for two common cases: an object-layer map uses
+`scale = map.tileheight`, `cell = 1` (model units are blocks); a tile-layer
+map with `model` properties uses `scale = 1`, `cell = map.tileheight` (the
+university game, where model units are pixels). Override both with `--scale`
+and `--cell` when the source uses another convention.
+
+`--layers` is a comma-separated list or `all`; it defaults to `objects`, so a
+huge floor layer is not imported unless asked for. The importer reads
+isometric JSON/TMJ maps and does not reconstruct `merge` groups: it places
+the existing `.model` files.
+
 ## Sprite sheets
 
 `iso-scene sprites` packs object renders into a uniform grid, without a map.

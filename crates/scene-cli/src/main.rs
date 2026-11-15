@@ -36,6 +36,7 @@ fn main() -> ExitCode {
         "render" => commands::render::render_scene(args.collect()),
         "voxel" => commands::voxel::voxel_scene(args.collect()),
         "tiled" => commands::tiled::tiled_scene(args.collect()),
+        "import-tiled" => commands::import_tiled::import_tiled(args.collect()),
         "animate" => commands::animate::animate_scene(args.collect()),
         "sprites" => commands::sprites::sprites_scene(args.collect()),
         "limits" => commands::limits::limits(args.collect()),
@@ -61,6 +62,8 @@ pub(crate) fn print_help() {
     println!("  render <file>   render a .scene to PNG (iso or ortho); -o out.svg writes iso SVG");
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
+    println!("  import-tiled <map>  turn a Tiled map back into a .scene + copied models");
+    println!("                  --models <dir> --layers objects[,walls...] --scale --cell");
     println!("  animate <file>  render the scene's `animation`s as sprite sheets + animated tiles");
     println!("                  (--animation <name> for one); or turn one object:");
     println!("                  --object <name> --from --to --frames --duration [--base <dir>]");

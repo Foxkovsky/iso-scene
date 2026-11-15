@@ -1,0 +1,376 @@
+//! `import-tiled`: turn a Tiled map back into a `.scene`.
+//!
+//! Object layers from `iso-scene tiled` use the object's `type`/`name` and
+//! `rotation`/`turn` properties. Tile-layer maps (the university game) use a
+//! `model` property on each tile. In both cases the referenced `.model` files
+//! and their materials are copied next to the generated scene, so it is
+//! self-contained.
+
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::too_many_lines
+)]
+
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use serde_json::Value;
+
+use crate::common::{Args, Parsed, read, usage};
+
+pub(crate) fn import_tiled(args: Vec<String>) -> ExitCode {
+    match run(args) {
+        Ok(code) | Err(code) => code,
+    }
+}
+
+fn run(args: Vec<String>) -> Parsed<ExitCode> {
+    let mut map_path: Option<String> = None;
+    let mut models: Option<PathBuf> = None;
+    let mut layers: Option<Vec<String>> = None;
+    let mut scale: Option<u32> = None;
+    let mut cell: Option<f64> = None;
+    let mut output = PathBuf::from("out/scene-from-tiled");
+    let mut name = "scene".to_string();
+    let mut args = Args::new(args).hints(&[
+        ("--models", "a model directory"),
+        ("--layers", "layer names or `all`"),
+        ("--scale", "pixels per block"),
+        ("--cell", "scene units per Tiled cell"),
+        ("--out", "an output directory"),
+        ("--name", "a scene file stem"),
+    ]);
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--models" => models = Some(PathBuf::from(args.value("--models")?)),
+            "--layers" => {
+                let value = args.value("--layers")?;
+                layers = Some(
+                    value
+                        .split(',')
+                        .map(|part| part.trim().to_string())
+                        .filter(|part| !part.is_empty())
+                        .collect(),
+                );
+            }
+            "--scale" => {
+                scale = Some(args.parse(
+                    "--scale",
+                    |n: &u32| (1..=scene_core::MAX_SCALE).contains(n),
+                    |v| format!("invalid scale `{v}`"),
+                )?);
+            }
+            "--cell" => {
+                let value = args.value("--cell")?;
+                match value.parse::<f64>() {
+                    Ok(number) if number.is_finite() && number > 0.0 => cell = Some(number),
+                    _ => return Err(usage(format!("invalid cell size `{value}`"))),
+                }
+            }
+            "--out" | "-o" => output = PathBuf::from(args.value("--out")?),
+            "--name" => name = args.value("--name")?,
+            other if map_path.is_none() => map_path = Some(other.to_string()),
+            other => return Err(usage(format!("unexpected argument `{other}`"))),
+        }
+    }
+    let Some(map_path) = map_path else {
+        return Err(usage("`import-tiled` needs a .tmj or Tiled JSON map"));
+    };
+    let source = read(&map_path).ok_or(ExitCode::from(2))?;
+    let map: Value = serde_json::from_str(&source)
+        .map_err(|error| usage(format!("cannot parse `{map_path}`: {error}")))?;
+    if map["type"].as_str() != Some("map") || map["orientation"].as_str() != Some("isometric") {
+        return Err(usage("import-tiled expects an isometric Tiled JSON map"));
+    }
+    let map_dir = Path::new(&map_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let tile_height = map["tileheight"].as_f64().unwrap_or(32.0);
+    if tile_height <= 0.0 {
+        return Err(usage("map tileheight must be positive"));
+    }
+    let tilesets = load_tilesets(&map, map_dir)?;
+    let selected = layers.unwrap_or_else(|| vec!["objects".to_string()]);
+    let all = selected.iter().any(|layer| layer == "all");
+    let has_tile_models = map["layers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|layer| layer["type"] == "tilelayer")
+        .filter(|layer| {
+            all || selected
+                .iter()
+                .any(|name| Some(name.as_str()) == layer["name"].as_str())
+        })
+        .filter_map(|layer| layer["data"].as_array())
+        .flatten()
+        .filter_map(Value::as_u64)
+        .filter_map(|gid| tile_info(&tilesets, gid as u32))
+        .any(|(model, _)| !model.is_empty());
+    let object_mode = !has_tile_models;
+    let scale = scale.unwrap_or(if object_mode { tile_height as u32 } else { 1 });
+    let cell = cell.unwrap_or(if object_mode { 1.0 } else { tile_height });
+
+    let mut placements = Vec::new();
+    let mut used = BTreeSet::new();
+    for layer in map["layers"].as_array().into_iter().flatten() {
+        let kind = layer["type"].as_str().unwrap_or_default();
+        let layer_name = layer["name"].as_str().unwrap_or_default();
+        if !all && !selected.iter().any(|name| name == layer_name) {
+            continue;
+        }
+        match kind {
+            "objectgroup" => {
+                for object in layer["objects"].as_array().into_iter().flatten() {
+                    let Some(model) = object_model(object) else {
+                        continue;
+                    };
+                    let Some((x, y, z)) = object_position(object, tile_height) else {
+                        continue;
+                    };
+                    let rotation = object_rotation(object);
+                    let turn = object_turn(object);
+                    used.insert(model.clone());
+                    placements.push(Placement {
+                        model,
+                        x,
+                        y,
+                        z,
+                        rotation,
+                        turn,
+                    });
+                }
+            }
+            "tilelayer" => {
+                let data = layer["data"].as_array().into_iter().flatten();
+                for (index, gid) in data.enumerate() {
+                    let Some(gid) = gid.as_u64() else {
+                        continue;
+                    };
+                    if gid == 0 {
+                        continue;
+                    }
+                    let Some((model, rotation)) = tile_info(&tilesets, gid as u32) else {
+                        continue;
+                    };
+                    let width = map["width"].as_u64().unwrap_or(1) as usize;
+                    let x = (index % width) as f64 * cell;
+                    let y = (index / width) as f64 * cell;
+                    used.insert(model.clone());
+                    placements.push(Placement {
+                        model,
+                        x,
+                        y,
+                        z: 0.0,
+                        rotation,
+                        turn: 0.0,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if placements.is_empty() {
+        return Err(usage(format!(
+            "no objects or tiles with a model on layers {selected:?}; pass --layers"
+        )));
+    }
+    let Some(models) = models else {
+        return Err(usage(
+            "`--models <dir>` is required: the scene needs the .model files",
+        ));
+    };
+    let scene = render_scene(&name, &map_path, scale, &placements, &used);
+    fs::create_dir_all(&output)
+        .map_err(|error| usage(format!("cannot create `{}`: {error}", output.display())))?;
+    for model in &used {
+        let from = models.join(format!("{model}.model"));
+        if !from.is_file() {
+            return Err(usage(format!(
+                "model `{model}` not found in `{}`",
+                models.display()
+            )));
+        }
+        fs::copy(&from, output.join(format!("{model}.model"))).map_err(|error| {
+            usage(format!(
+                "cannot copy `{}` to `{}`: {error}",
+                from.display(),
+                output.display()
+            ))
+        })?;
+    }
+    copy_materials(&models, &output)?;
+    let scene_path = output.join(format!("{name}.scene"));
+    fs::write(&scene_path, scene)
+        .map_err(|error| usage(format!("cannot write `{}`: {error}", scene_path.display())))?;
+    println!(
+        "wrote {} ({} placements, {} models, scale {}, cell {})",
+        scene_path.display(),
+        placements.len(),
+        used.len(),
+        scale,
+        cell
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn load_tilesets(map: &Value, map_dir: &Path) -> Parsed<Vec<(u32, Value)>> {
+    let mut result = Vec::new();
+    for reference in map["tilesets"].as_array().into_iter().flatten() {
+        let firstgid = reference["firstgid"].as_u64().unwrap_or(1) as u32;
+        let json = if let Some(source) = reference["source"].as_str() {
+            let path = map_dir.join(source);
+            let text = read(&path.to_string_lossy()).ok_or(ExitCode::from(2))?;
+            serde_json::from_str(&text)
+                .map_err(|error| usage(format!("cannot parse tileset `{source}`: {error}")))?
+        } else {
+            reference.clone()
+        };
+        result.push((firstgid, json));
+    }
+    result.sort_by_key(|(firstgid, _)| *firstgid);
+    Ok(result)
+}
+
+fn property<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
+    value["properties"]
+        .as_array()?
+        .iter()
+        .find(|property| property["name"] == name)
+        .and_then(|property| property.get("value"))
+}
+
+fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16)> {
+    let (firstgid, tileset) = tilesets
+        .iter()
+        .rev()
+        .find(|(firstgid, _)| *firstgid <= gid)?;
+    let tile_id = gid - firstgid;
+    let tile = tileset["tiles"]
+        .as_array()?
+        .iter()
+        .find(|tile| tile["id"].as_u64() == Some(u64::from(tile_id)))?;
+    let model = property(tile, "model")
+        .and_then(Value::as_str)
+        .or_else(|| tile["type"].as_str())?;
+    let rotation = property(tile, "rotation")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u16;
+    Some((model.to_string(), rotation))
+}
+
+fn object_model(object: &Value) -> Option<String> {
+    let kind = object["type"]
+        .as_str()
+        .or_else(|| object["name"].as_str())?;
+    if matches!(kind, "" | "label" | "footprint") {
+        return None;
+    }
+    Some(kind.to_string())
+}
+
+fn object_position(object: &Value, tile_height: f64) -> Option<(f64, f64, f64)> {
+    let x = object["x"].as_f64()? / tile_height;
+    let y = object["y"].as_f64()? / tile_height;
+    let z = object["properties"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|property| property["name"] == "z")
+        .and_then(|property| property["value"].as_f64())
+        .unwrap_or(0.0);
+    Some((x + z, y + z, z))
+}
+
+fn object_rotation(object: &Value) -> u16 {
+    property(object, "rotation")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u16
+}
+
+fn object_turn(object: &Value) -> f64 {
+    property(object, "turn")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
+}
+
+struct Placement {
+    model: String,
+    x: f64,
+    y: f64,
+    z: f64,
+    rotation: u16,
+    turn: f64,
+}
+
+fn render_scene(
+    name: &str,
+    map_path: &str,
+    scale: u32,
+    placements: &[Placement],
+    used: &BTreeSet<String>,
+) -> String {
+    use std::fmt::Write as _;
+    let mut scene = String::new();
+    let _ = writeln!(
+        scene,
+        "// generated from {map_path} by `iso-scene import-tiled`"
+    );
+    let _ = writeln!(scene, "version 1;\n");
+    for model in used {
+        let _ = writeln!(scene, "include \"{model}.model\";");
+    }
+    let _ = writeln!(
+        scene,
+        "\nrender iso;\nscale {scale};\nbackground transparent;\n"
+    );
+    let _ = writeln!(scene, "// scene {name}");
+    for placement in placements {
+        let _ = write!(
+            scene,
+            "place {} at ({}, {}, {}) rot {}",
+            placement.model,
+            number(placement.x),
+            number(placement.y),
+            number(placement.z),
+            placement.rotation
+        );
+        if placement.turn != 0.0 {
+            let _ = write!(scene, " turn {}", number(placement.turn));
+        }
+        scene.push_str(";\n");
+    }
+    scene
+}
+
+fn number(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{}", value as i64)
+    } else {
+        format!("{value:.4}")
+    }
+}
+
+fn copy_materials(models: &Path, output: &Path) -> Parsed<()> {
+    let materials = models.join("materials");
+    if !materials.is_dir() {
+        return Ok(());
+    }
+    let target = output.join("materials");
+    fs::create_dir_all(&target)
+        .map_err(|error| usage(format!("cannot create `{}`: {error}", target.display())))?;
+    for entry in fs::read_dir(&materials)
+        .map_err(|error| usage(format!("cannot read `{}`: {error}", materials.display())))?
+    {
+        let entry = entry.map_err(|error| usage(error.to_string()))?;
+        if entry.path().extension().and_then(|value| value.to_str()) == Some("toml") {
+            fs::copy(entry.path(), target.join(entry.file_name()))
+                .map_err(|error| usage(format!("cannot copy material: {error}")))?;
+        }
+    }
+    Ok(())
+}

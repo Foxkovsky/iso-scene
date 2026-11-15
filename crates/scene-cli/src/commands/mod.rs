@@ -2,6 +2,7 @@
 
 pub(crate) mod animate;
 pub(crate) mod help;
+pub(crate) mod import_tiled;
 pub(crate) mod inspect;
 pub(crate) mod limits;
 pub(crate) mod render;
