@@ -69,7 +69,9 @@ pub(crate) fn print_help() {
     );
     println!("                  --views 1|2|4|8|16 or --angles 0,45,90,...");
     println!("                  --object <name> keeps, --exclude <name> drops objects");
+    println!("                  --file <path> uses only this input file (resolves name clashes)");
     println!("                  --pivot front|back|left|right|center anchors static views");
+    println!("                  (for 8/16-direction turntables use --pivot center)");
     println!("                  --shadow contact|none bakes or omits the contact shadow");
     println!("                  --padding <px> leaves transparent gaps around cells");
     println!("                  --debug-grid also writes <name>.debug.png with cell borders");

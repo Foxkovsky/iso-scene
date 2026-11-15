@@ -304,6 +304,71 @@ fn manifest(dir: &Path, out: &str) -> serde_json::Value {
 }
 
 #[test]
+fn objects_with_one_name_can_be_selected_by_file() {
+    let dir = scratch("file-select");
+    write(&dir, "a.model", THING_A);
+    write(&dir, "b.model", THING_B);
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "sprites", "a.model", "b.model", "--file", "a.model", "--object", "thing", "--scale",
+            "8", "--views", "1", "-o", "out",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        manifest(&dir, "out")["sprites"].as_array().unwrap().len(),
+        1
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "sprites", "a.model", "b.model", "--file", "b.model", "--object", "thing", "--scale",
+            "8", "--views", "1", "-o", "out2",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "sprites",
+            "a.model",
+            "b.model",
+            "--file",
+            "missing.model",
+            "-o",
+            "out3",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn orthographic_sheets_use_a_square_tile_width() {
+    let dir = scratch("ortho-tile");
+    room(&dir);
+    write(
+        &dir,
+        "top.scene",
+        &ROOM.replace("render iso;", "render top;"),
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args(["sprites", "top.scene", "--views", "1", "-o", "out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let sheet = manifest(&dir, "out");
+    assert_eq!(sheet["projection"], "top");
+    assert_eq!(sheet["tileWidth"], 8);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn a_scene_contributes_each_placed_object_once_in_order() {
     let dir = scratch("scene");
     room(&dir);

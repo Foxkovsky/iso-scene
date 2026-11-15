@@ -137,7 +137,7 @@ pub(crate) fn write_page(
 
     let debug = if options.debug_grid {
         let path = out_dir.join(format!("{}.debug.png", page.stem));
-        write_png(&debug_grid(&sheet, page, options.padding), &path)
+        write_png(&debug_grid(&sheet, page, options), &path)
             .map_err(|message| error("E0603", message))?;
         Some(path)
     } else {

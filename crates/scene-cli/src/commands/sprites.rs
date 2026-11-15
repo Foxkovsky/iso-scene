@@ -19,10 +19,17 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let mut inputs = load(&flags)?;
     let objects = select(&flags, std::mem::take(&mut inputs.objects))?;
     let scale = flags.scale.or(inputs.scale).unwrap_or(16);
+    let projection = flags.projection.or(inputs.projection).unwrap_or_default();
+    // Iso cells are twice as wide as they are tall; orthographic top/front/side
+    // cells are square, so a Tiled tile is `scale` wide there.
+    let tile_width = flags.tile_width.or_else(|| match projection {
+        Projection::Iso => scale.checked_mul(2),
+        Projection::Top | Projection::Front | Projection::Side => Some(scale),
+    });
     let options = SheetOptions {
         name: flags.name.clone(),
         scale,
-        projection: flags.projection.or(inputs.projection).unwrap_or_default(),
+        projection,
         views: flags
             .views
             .clone()
@@ -34,7 +41,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         atlas: flags.atlas,
         max_rows: flags.max_rows,
         animations: animation_specs(flags.animations)?,
-        tile_width: flags.tile_width.or_else(|| scale.checked_mul(2)),
+        tile_width,
     };
 
     let report = scene_export_sprites::export(&objects, &inputs.materials, &options, &flags.output)
@@ -74,6 +81,7 @@ struct Flags {
     tile_width: Option<u32>,
     keep: Vec<String>,
     exclude: Vec<String>,
+    files: Vec<String>,
     pivot: Pivot,
     shadow: bool,
     padding: u32,
@@ -96,6 +104,7 @@ fn parse(args: Vec<String>) -> Parsed<Flags> {
         tile_width: None,
         keep: Vec::new(),
         exclude: Vec::new(),
+        files: Vec::new(),
         pivot: Pivot::default(),
         shadow: true,
         padding: 0,
@@ -152,6 +161,7 @@ fn parse(args: Vec<String>) -> Parsed<Flags> {
             }
             "--object" => flags.keep.push(args.value("--object")?),
             "--exclude" => flags.exclude.push(args.value("--exclude")?),
+            "--file" => flags.files.push(args.value("--file")?),
             "--debug-grid" => flags.debug_grid = true,
             "--atlas" => flags.atlas = true,
             "--projection" => {
@@ -298,7 +308,28 @@ fn load(flags: &Flags) -> Parsed<Inputs> {
     // Object and material name -> file that first defined it, for conflicts.
     let mut object_files: BTreeMap<String, String> = BTreeMap::new();
     let mut material_files: BTreeMap<String, String> = BTreeMap::new();
+    if !flags.files.is_empty() {
+        for selected in &flags.files {
+            if !flags
+                .paths
+                .iter()
+                .any(|path| same_file(Path::new(path), Path::new(selected)))
+            {
+                return Err(usage(format!(
+                    "no input file `{selected}`; pass one of the files given on the command line"
+                )));
+            }
+        }
+    }
     for path in &flags.paths {
+        if !flags.files.is_empty()
+            && !flags
+                .files
+                .iter()
+                .any(|selected| same_file(Path::new(path), Path::new(selected)))
+        {
+            continue;
+        }
         let source = read(path).ok_or(ExitCode::from(2))?;
         let program = scene_syntax::parse(&source)
             .map_err(|diagnostic| report(path, &source, &diagnostic))?;
@@ -458,7 +489,7 @@ fn push_sheet_object(
         Some(_) => {
             let first = files.get(&object.name).map_or("", String::as_str);
             Err(format!(
-                "object `{}` in `{file}` differs from the one in `{first}`; rename one or pick with `--object`",
+                "object `{}` in `{file}` differs from the one in `{first}`; rename one or pass `--file <path>` to choose an input file",
                 object.name
             ))
         }
