@@ -68,6 +68,63 @@ var isoScene = (function () {
     ];
   }
 
+  // Human-readable name for an object-layer print or a tile-layer print.
+  function printLabel(print) {
+    return print.object
+      ? print.object.name + " #" + print.object.id
+      : print.label;
+  }
+
+  function tileNumber(tile, name, fallback) {
+    if (!tile || typeof tile.property !== "function") return fallback;
+    var value = tile.property(name);
+    return typeof value === "number" ? value : fallback;
+  }
+
+  // Wall cells of the map. A door tile is `collides: false` and is passable;
+  // when a tileset has no such property (older iso-scene maps), every tile in
+  // a wall layer is treated as a wall.
+  function wallCells(map) {
+    var cells = {};
+    layersNamed(map, WALL_LAYERS).forEach(function (layer) {
+      if (!layer.isTileLayer) return;
+      for (var y = 0; y < layer.height; ++y) {
+        for (var x = 0; x < layer.width; ++x) {
+          var tile = layer.tileAt(x, y);
+          if (!tile) continue;
+          if (tile.property && tile.property("collides") === false) continue;
+          cells[x + "," + y] = [x, y];
+        }
+      }
+    });
+    return cells;
+  }
+
+  // Furniture in the game map is a tile layer, not an object layer. Its
+  // tileset tiles carry `cells_x/y` and `collides`; check those footprints
+  // alongside object-layer maps produced by `iso-scene tiled`.
+  function tilePrints(map) {
+    var prints = [];
+    layersNamed(map, ["objects"]).forEach(function (layer) {
+      if (!layer.isTileLayer) return;
+      for (var y = 0; y < layer.height; ++y) {
+        for (var x = 0; x < layer.width; ++x) {
+          var tile = layer.tileAt(x, y);
+          if (!tile || !tile.property || tile.property("collides") !== true) continue;
+          var cx = tileNumber(tile, "cells_x", 1);
+          var cy = tileNumber(tile, "cells_y", 1);
+          prints.push({
+            object: null,
+            label: layer.name + " tile (" + x + ", " + y + ")",
+            area: [x, y, x + cx, y + cy],
+            height: [0, tileNumber(tile, "height", 1)],
+          });
+        }
+      }
+    });
+    return prints;
+  }
+
   // Same rules as the exporter: objects collide when their footprints and
   // height ranges overlap; an object collides with every wall cell under it.
   // Objects are bucketed by cell, so only neighbours are compared.
@@ -81,12 +138,11 @@ var isoScene = (function () {
         if (print) prints.push(print);
       });
     });
+    prints = prints.concat(tilePrints(map));
+    var walls = wallCells(map);
     var buckets = {};
     var collisions = [];
     var seen = {};
-    var walls = layersNamed(map, WALL_LAYERS).filter(function (layer) {
-      return layer.isTileLayer;
-    });
     prints.forEach(function (print, index) {
       var c = cells(print);
       for (var y = c[1]; y < c[3]; ++y) {
@@ -96,27 +152,25 @@ var isoScene = (function () {
             var pair = other + ":" + index;
             if (!seen[pair] && overlaps(prints[other], print)) {
               seen[pair] = true;
-              collisions.push({ first: prints[other].object, second: print.object });
+              collisions.push({ first: prints[other], second: print });
             }
           });
           buckets[key].push(index);
-          walls.forEach(function (layer) {
-            if (layer.tileAt(x, y)) {
-              collisions.push({ first: print.object, wall: [x, y] });
-            }
-          });
+          if (walls[key]) {
+            collisions.push({ first: print, wall: walls[key] });
+          }
         }
       }
     });
-    return { footprints: prints, collisions: collisions };
+    return { footprints: prints.filter(function (print) { return print.object; }), collisions: collisions };
   }
 
   function describe(collision) {
-    var first = collision.first.name + " #" + collision.first.id;
+    var first = printLabel(collision.first);
     if (collision.wall) {
       return first + " stands on the wall at cell (" + collision.wall.join(", ") + ")";
     }
-    return first + " overlaps " + collision.second.name + " #" + collision.second.id;
+    return first + " overlaps " + printLabel(collision.second);
   }
 
   // Replace the rectangles of the `collision` layer with the current
@@ -148,7 +202,8 @@ var isoScene = (function () {
     var selected = [];
     result.collisions.forEach(function (collision) {
       tiled.log(describe(collision));
-      [collision.first, collision.second].forEach(function (object) {
+      [collision.first, collision.second].forEach(function (print) {
+        var object = print && print.object;
         if (object && selected.indexOf(object) < 0) selected.push(object);
       });
     });
