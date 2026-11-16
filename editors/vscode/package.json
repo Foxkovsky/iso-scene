@@ -23,7 +23,7 @@
   ],
   "main": "./extension.js",
   "scripts": {
-    "test": "node --test test"
+    "test": "node --test \"test/*.test.js\""
   },
   "contributes": {
     "languages": [

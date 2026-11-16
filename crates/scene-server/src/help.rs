@@ -81,12 +81,12 @@ const TOPICS: &[Topic] = &[
     Topic {
         name: "merge",
         about: "reusable parts (use) and merged surfaces (merge)",
-        source: Source::Spec("### 6.2 Типовые", true),
+        source: Source::Spec("### 6.3 Типовые", true),
     },
     Topic {
         name: "decal",
         about: "flat PNG images on a face",
-        source: Source::Spec("### 6.3", true),
+        source: Source::Spec("### 6.4", true),
     },
     Topic {
         name: "expressions",

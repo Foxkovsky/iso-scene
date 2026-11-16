@@ -440,7 +440,11 @@ pub fn export(
         {
             return Err(error(
                 "E0602",
-                format!("sprite sheet {wide}x{tall} exceeds the limit; try `--max-rows`"),
+                format!(
+                    "sprite sheet {wide}x{tall} exceeds the limit; reduce `--scale` or the \
+                     number of views (`--views`/`--angles`), or pick fewer objects \
+                     (`--object`/`--exclude`)"
+                ),
             ));
         }
         let stem = if page_count == 1 {
