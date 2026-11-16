@@ -43,6 +43,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         max_rows: flags.max_rows,
         animations: animation_specs(flags.animations)?,
         tile_width,
+        light: inputs.light.unwrap_or_default(),
     };
 
     let report = scene_export_sprites::export(&objects, &inputs.materials, &options, &flags.output)
@@ -300,6 +301,7 @@ struct Inputs {
     /// Scale and projection of the first scene.
     scale: Option<u32>,
     projection: Option<Projection>,
+    light: Option<scene_render::material::Light>,
 }
 
 fn load(flags: &Flags) -> Parsed<Inputs> {
@@ -308,6 +310,7 @@ fn load(flags: &Flags) -> Parsed<Inputs> {
         materials: BTreeMap::new(),
         scale: None,
         projection: None,
+        light: None,
     };
     // Object and material name -> file that first defined it, for conflicts.
     let mut object_files: BTreeMap<String, String> = BTreeMap::new();
@@ -346,6 +349,10 @@ fn load(flags: &Flags) -> Parsed<Inputs> {
                 let scene = scene_core::compile_scene(&program, base, &root)
                     .map_err(|diagnostic| report(path, &source, &diagnostic))?;
                 inputs.scale.get_or_insert(scene.scale);
+                inputs.light.get_or_insert(scene_render::material::Light {
+                    sun: scene.sun,
+                    ambient: scene.ambient,
+                });
                 inputs.projection.get_or_insert(match scene.render {
                     scene_syntax::ast::RenderKind::Iso => Projection::Iso,
                     scene_syntax::ast::RenderKind::Top => Projection::Top,

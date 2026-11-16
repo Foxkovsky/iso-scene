@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use scene_backend_iso::{Sprite, render_object_sprite_with};
+use scene_backend_iso::{Sprite, render_object_sprite_with_light};
 use scene_core::CompiledObject;
 use scene_render::{Image, composite_over, write_png};
 use scene_syntax::Diagnostic;
@@ -235,22 +235,24 @@ pub(crate) fn render_cell(
     materials: &std::collections::BTreeMap<String, PathBuf>,
 ) -> Result<Sprite, Diagnostic> {
     match options.projection.ortho() {
-        None => render_object_sprite_with(
+        None => render_object_sprite_with_light(
             object,
             rotation,
             angle,
             options.scale,
             materials,
             options.shadow,
+            options.light,
         ),
         Some(view) => {
-            let (image, anchor) = scene_backend_ortho::render_object_sprite(
+            let (image, anchor) = scene_backend_ortho::render_object_sprite_light(
                 object,
                 view,
                 rotation,
                 angle,
                 options.scale,
                 materials,
+                options.light,
             )?;
             Ok(Sprite { image, anchor })
         }

@@ -93,6 +93,31 @@ pub fn render_object_sprite(
     scale: u32,
     materials: &BTreeMap<String, PathBuf>,
 ) -> Result<(OrthoImage, [f64; 2]), Diagnostic> {
+    render_object_sprite_light(
+        object,
+        view,
+        rotation,
+        angle,
+        scale,
+        materials,
+        scene_render::material::Light::default(),
+    )
+}
+
+/// [`render_object_sprite`] under a scene light instead of the defaults.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`render`].
+pub fn render_object_sprite_light(
+    object: &CompiledObject,
+    view: View,
+    rotation: u16,
+    angle: f64,
+    scale: u32,
+    materials: &BTreeMap<String, PathBuf>,
+    light: scene_render::material::Light,
+) -> Result<(OrthoImage, [f64; 2]), Diagnostic> {
     let instance = Instance {
         object: Arc::new(object.clone()),
         at: [0.0, 0.0, 0.0],
@@ -108,8 +133,8 @@ pub fn render_object_sprite(
         },
         scale,
         canvas: None,
-        sun: [135.0, 45.0],
-        ambient: 0.35,
+        sun: light.sun,
+        ambient: light.ambient,
         background: Background::Transparent,
         materials: materials.clone(),
         bounds: instance.world_bounds(),
@@ -274,6 +299,10 @@ fn collect_faces(
 ) -> Result<Vec<Face>, Diagnostic> {
     let view = View::from_render(scene.render)
         .ok_or_else(|| error("E0604", "the ortho backend needs top, front or side"))?;
+    let light = scene_render::material::Light {
+        sun: scene.sun,
+        ambient: scene.ambient,
+    };
     let mut faces = Vec::new();
     for (_, instance) in scene.ordered_instances() {
         for part in &instance.object.parts {
@@ -293,7 +322,7 @@ fn collect_faces(
                     .collect();
                 faces.push(Face {
                     points,
-                    color: view_color(view, &normal, palette),
+                    color: view_color(view, &normal, palette, light),
                     line: palette.line,
                     outline,
                 });
@@ -303,8 +332,13 @@ fn collect_faces(
     Ok(faces)
 }
 
-fn view_color(view: View, normal: &[f64; 3], palette: Palette) -> [u8; 3] {
-    match view {
+fn view_color(
+    view: View,
+    normal: &[f64; 3],
+    palette: Palette,
+    light: scene_render::material::Light,
+) -> [u8; 3] {
+    let base = match view {
         View::Top => {
             if normal[2] > 0.5 {
                 palette.top
@@ -332,7 +366,8 @@ fn view_color(view: View, normal: &[f64; 3], palette: Palette) -> [u8; 3] {
                 palette.left
             }
         }
-    }
+    };
+    scene_render::material::apply_light(base, *normal, &palette, light)
 }
 
 fn world_point(point: [f64; 3], instance: &Instance) -> [f64; 3] {

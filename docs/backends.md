@@ -9,10 +9,14 @@ Built-in names are always available. A scene or model may declare a TOML
 material alias; the renderer loads the file once per render. Flat tones are
 derived from `color`: `top = color`, `right = 0.78 * color`,
 `left = 0.59 * color`; optional `top`, `right` and `left` keys override any of
-them, and `outline` is used as-is. `roughness`, `metallic` and
-`specular` are validated but not used by flat shading yet, and texture blocks
-are accepted but ignored. `emission` replaces the visible face colour with a
-fixed glow colour; `glow` (0..=1) feeds the screen-space bloom mask.
+them, and `outline` is used as-is. The scene's `sun`/`ambient` scale each face
+by the ratio of its Lambert term to the reference `(135, 45)`/`0.35`, so the
+default light keeps the palette pixels. `specular` adds a sun highlight to lit
+faces, `metallic` tints it with the base colour and lowers the diffuse by up to
+25%, `roughness` sharpens the highlight; all default to `0.5`/`0`/`0`, which is
+flat shading without a highlight. Texture blocks are accepted but ignored.
+`emission` replaces the visible face colour with a fixed glow colour; `glow`
+(0..=1) feeds the screen-space bloom mask.
 
 Used when a shape omits `material`. Values are RGB, one tone per visible face
 plus an outline. A project should normally declare `.toml` materials instead.

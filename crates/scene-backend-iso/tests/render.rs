@@ -345,3 +345,18 @@ fn the_order_of_equivalent_placements_does_not_change_pixels() {
     assert_eq!(first.height, second.height);
     assert_eq!(first.rgba, second.rgba);
 }
+
+#[test]
+fn scene_light_defaults_keep_the_pixels_and_other_values_change_them() {
+    let source = |extra: &str| {
+        format!(
+            "version 1; {extra} object a (1, 1) {{ box at (0, 0, 0) size (1, 1, 1) material wood; }} render iso; scale 8; place a at (0, 0, 0);"
+        )
+    };
+    let base = render(&compile_source(&source(""))).expect("base");
+    let explicit =
+        render(&compile_source(&source("sun (135, 45); ambient 0.35;"))).expect("explicit");
+    assert_eq!(base.rgba, explicit.rgba);
+    let bright = render(&compile_source(&source("sun (0, 90); ambient 0.8;"))).expect("bright");
+    assert_ne!(base.rgba, bright.rgba);
+}

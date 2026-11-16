@@ -18,7 +18,7 @@ use collision::Footprint;
 pub use collision::{Collision, MAX_FOOTPRINT_CELLS};
 
 use rayon::prelude::*;
-use scene_backend_iso::{Sprite, project_point, render_object_sprite_at};
+use scene_backend_iso::{Sprite, project_point, render_object_sprite_at_light};
 use scene_core::SceneGraph;
 use scene_render::{Image, write_png};
 use scene_syntax::Diagnostic;
@@ -238,12 +238,16 @@ pub fn export_with(
     let rendered: Vec<Result<SpriteEntry, Diagnostic>> = keys
         .into_par_iter()
         .map(|(key, instance)| {
-            let sprite = render_object_sprite_at(
+            let sprite = render_object_sprite_at_light(
                 instance.object.as_ref(),
                 instance.rotation,
                 key.angle(),
                 scale,
                 &scene.materials,
+                scene_render::material::Light {
+                    sun: scene.sun,
+                    ambient: scene.ambient,
+                },
             )?;
             let zero = scene_core::Instance {
                 object: instance.object.clone(),

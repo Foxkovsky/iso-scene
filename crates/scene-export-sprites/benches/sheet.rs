@@ -13,6 +13,7 @@ fn examples() -> PathBuf {
 
 fn options(name: &str, views: u32, scale: u32) -> SheetOptions {
     SheetOptions {
+        light: scene_render::material::Light::default(),
         name: name.into(),
         scale,
         projection: Projection::Iso,
@@ -69,6 +70,7 @@ fn benches(c: &mut Criterion) {
         })
         .collect();
     let crates_8 = SheetOptions {
+        light: scene_render::material::Light::default(),
         max_rows: Some(32),
         ..options("crates", 8, 16)
     };

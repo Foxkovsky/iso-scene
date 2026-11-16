@@ -70,6 +70,91 @@ pub struct Palette {
     pub emission: Option<[u8; 3]>,
     /// Bloom mask written with the face, 0..=255.
     pub glow: u8,
+    /// Surface roughness, 0..=1: lower makes the specular highlight sharper.
+    pub roughness: f64,
+    /// Metallic tint of the highlight and a slight diffuse darkening.
+    pub metallic: f64,
+    /// Strength of the sun highlight on lit faces; 0 keeps flat shading.
+    pub specular: f64,
+}
+
+/// Scene lighting: the sun position and the ambient floor.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Light {
+    pub sun: [f64; 2],
+    pub ambient: f64,
+}
+
+impl Default for Light {
+    fn default() -> Self {
+        Self {
+            sun: [135.0, 45.0],
+            ambient: 0.35,
+        }
+    }
+}
+
+impl Light {
+    /// Unit vector towards the sun from an azimuth and altitude in degrees.
+    #[must_use]
+    pub fn sun_direction(self) -> [f64; 3] {
+        let azimuth = self.sun[0].to_radians();
+        let altitude = self.sun[1].to_radians();
+        [
+            altitude.cos() * azimuth.cos(),
+            altitude.cos() * azimuth.sin(),
+            altitude.sin(),
+        ]
+    }
+
+    /// Lambert term of a face normal: ambient plus the diffuse sun.
+    fn lambert(self, normal: [f64; 3]) -> f64 {
+        let sun = self.sun_direction();
+        let dot = normal[0] * sun[0] + normal[1] * sun[1] + normal[2] * sun[2];
+        self.ambient + (1.0 - self.ambient) * dot.max(0.0)
+    }
+
+    /// How much this light changes a face relative to the reference palette:
+    /// exactly `1.0` at the default `[135, 45]` / `0.35`, so default scenes
+    /// keep their pixels.
+    #[must_use]
+    pub fn face_factor(self, normal: [f64; 3]) -> f64 {
+        let reference = Self::default().lambert(normal);
+        if reference <= 1e-6 {
+            return 1.0;
+        }
+        (self.lambert(normal) / reference).clamp(0.0, 4.0)
+    }
+}
+
+/// Apply the scene light and material response to one flat face.
+#[must_use]
+pub fn apply_light(color: [u8; 3], normal: [f64; 3], palette: &Palette, light: Light) -> [u8; 3] {
+    use std::ops::Mul;
+    // Metal has little diffuse light; the energy moves to the highlight.
+    let diffuse = light.face_factor(normal) * (1.0 - 0.25 * palette.metallic);
+    let mut shaded = [
+        tone(color[0], diffuse),
+        tone(color[1], diffuse),
+        tone(color[2], diffuse),
+    ];
+    let sun = light.sun_direction();
+    let dot = normal[0].mul(sun[0]) + normal[1].mul(sun[1]) + normal[2].mul(sun[2]);
+    if palette.specular > 0.0 && dot > 0.0 {
+        let gloss = (1.0 - palette.roughness).clamp(0.0, 1.0);
+        let strength = palette.specular * (0.35 + 0.65 * gloss) * dot.powf(1.0 + 4.0 * gloss);
+        // A metal tints its highlight with the base colour, a dielectric with white.
+        let tint = [
+            tone(255, 1.0 - palette.metallic) + tone(color[0], palette.metallic),
+            tone(255, 1.0 - palette.metallic) + tone(color[1], palette.metallic),
+            tone(255, 1.0 - palette.metallic) + tone(color[2], palette.metallic),
+        ];
+        for (channel, target) in shaded.iter_mut().zip(tint) {
+            *channel = tone(*channel, 1.0 - strength.clamp(0.0, 1.0))
+                + tone(target, strength.clamp(0.0, 1.0));
+        }
+    }
+    shaded
 }
 
 fn palette(top: [u8; 3], right: [u8; 3], left: [u8; 3], line: [u8; 3]) -> Palette {
@@ -81,6 +166,9 @@ fn palette(top: [u8; 3], right: [u8; 3], left: [u8; 3], line: [u8; 3]) -> Palett
         texture: None,
         emission: None,
         glow: 0,
+        roughness: 0.5,
+        metallic: 0.0,
+        specular: 0.0,
     }
 }
 
@@ -161,14 +249,16 @@ pub fn load(path: &Path) -> Result<Palette, String> {
         .as_table()
         .ok_or_else(|| "material must be a TOML table".to_owned())?;
 
-    for key in ["roughness", "metallic", "specular"] {
-        if let Some(value) = table.get(key) {
+    let mut properties = [0.5_f64, 0.0, 0.0];
+    for (index, key) in ["roughness", "metallic", "specular"].iter().enumerate() {
+        if let Some(value) = table.get(*key) {
             let number = value
                 .as_float()
                 .ok_or_else(|| format!("`{key}` must be a number"))?;
             if !(0.0..=1.0).contains(&number) {
                 return Err(format!("`{key}` must be in 0..=1"));
             }
+            properties[index] = number;
         }
     }
 
@@ -193,6 +283,9 @@ pub fn load(path: &Path) -> Result<Palette, String> {
             *tone = parse_hex(value)?;
         }
     }
+    palette.roughness = properties[0];
+    palette.metallic = properties[1];
+    palette.specular = properties[2];
     palette.texture = parse_texture(table.get("texture"))?;
     palette.emission = match table.get("emission").and_then(toml::Value::as_str) {
         Some(value) => Some(parse_hex(value)?),
@@ -314,6 +407,9 @@ fn tone_pair(base: [u8; 3], line: [u8; 3]) -> Palette {
         texture: None,
         emission: None,
         glow: 0,
+        roughness: 0.5,
+        metallic: 0.0,
+        specular: 0.0,
     }
 }
 
@@ -477,5 +573,46 @@ mod face_tone_tests {
         fs::write(&path, "color = \"#BD8953\"\ntop = \"#GGGGGG\"\n").expect("write");
         assert!(load(&path).is_err());
         let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod light_tests {
+    use super::{Light, apply_light, builtin};
+
+    #[test]
+    fn the_reference_light_keeps_the_palette_tones() {
+        let palette = builtin("wood").expect("wood");
+        let light = Light::default();
+        for (normal, tone) in [
+            ([0.0, 0.0, 1.0], palette.top),
+            ([1.0, 0.0, 0.0], palette.right),
+            ([0.0, 1.0, 0.0], palette.left),
+        ] {
+            assert_eq!(apply_light(tone, normal, &palette, light), tone);
+        }
+    }
+
+    #[test]
+    fn another_sun_and_ambient_change_the_faces() {
+        let palette = builtin("wood").expect("wood");
+        let bright = Light {
+            sun: [0.0, 90.0],
+            ambient: 0.9,
+        };
+        let default = apply_light(palette.top, [0.0, 0.0, 1.0], &palette, Light::default());
+        let lit = apply_light(palette.top, [0.0, 0.0, 1.0], &palette, bright);
+        assert_ne!(lit, default);
+        assert!(lit[0] > default[0], "{lit:?} vs {default:?}");
+    }
+
+    #[test]
+    fn specular_and_metallic_light_a_lit_face() {
+        let mut palette = builtin("wood").expect("wood");
+        palette.specular = 1.0;
+        palette.metallic = 0.5;
+        palette.roughness = 0.2;
+        let lit = apply_light(palette.top, [0.0, 0.0, 1.0], &palette, Light::default());
+        assert_ne!(lit, palette.top);
     }
 }

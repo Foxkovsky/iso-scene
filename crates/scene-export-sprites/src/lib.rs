@@ -228,6 +228,8 @@ pub struct SheetOptions {
     pub animations: Vec<AnimationSpec>,
     /// Tile width used for the Tiled `tileoffset`, when known.
     pub tile_width: Option<u32>,
+    /// Scene lighting for the sprites; the default keeps flat reference tones.
+    pub light: scene_render::material::Light,
 }
 
 /// Files written by [`export`]. With several pages, the per-page fields

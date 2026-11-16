@@ -121,6 +121,22 @@ pub fn render_object_sprite_at(
     render_object_sprite_with(object, rotation, angle, scale, materials, true)
 }
 
+/// [`render_object_sprite_at`] under a scene light instead of the defaults.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`render`].
+pub fn render_object_sprite_at_light(
+    object: &CompiledObject,
+    rotation: u16,
+    angle: f64,
+    scale: u32,
+    materials: &BTreeMap<String, PathBuf>,
+    light: scene_render::material::Light,
+) -> Result<Sprite, Diagnostic> {
+    render_object_sprite_with_light(object, rotation, angle, scale, materials, true, light)
+}
+
 /// Like [`render_object_sprite_at`], with the baked contact shadow optional
 /// (a game that draws its own shadows wants the bare object).
 ///
@@ -135,12 +151,37 @@ pub fn render_object_sprite_with(
     materials: &BTreeMap<String, PathBuf>,
     shadow: bool,
 ) -> Result<Sprite, Diagnostic> {
+    render_object_sprite_with_light(
+        object,
+        rotation,
+        angle,
+        scale,
+        materials,
+        shadow,
+        scene_render::material::Light::default(),
+    )
+}
+
+/// [`render_object_sprite_with`] under a scene light instead of the defaults.
+///
+/// # Errors
+///
+/// Returns the same diagnostics as [`render`].
+pub fn render_object_sprite_with_light(
+    object: &CompiledObject,
+    rotation: u16,
+    angle: f64,
+    scale: u32,
+    materials: &BTreeMap<String, PathBuf>,
+    shadow: bool,
+    light: scene_render::material::Light,
+) -> Result<Sprite, Diagnostic> {
     let graph = SceneGraph {
         render: RenderKind::Iso,
         scale,
         canvas: None,
-        sun: [135.0, 45.0],
-        ambient: 0.35,
+        sun: light.sun,
+        ambient: light.ambient,
         background: Background::Transparent,
         materials: materials.clone(),
         instances: vec![Instance {
@@ -922,6 +963,10 @@ fn collect_faces(
     palettes: &BTreeMap<String, Palette>,
     images: Option<&BTreeMap<PathBuf, Arc<Image>>>,
 ) -> Result<Vec<Face>, Diagnostic> {
+    let light = scene_render::material::Light {
+        sun: scene.sun,
+        ambient: scene.ambient,
+    };
     let mut faces = Vec::new();
     for (owner, instance) in scene.ordered_instances() {
         for part in &instance.object.parts {
@@ -988,7 +1033,7 @@ fn collect_faces(
                 let hidden = vec![false; points.len()];
                 faces.push(Face {
                     points,
-                    color: iso_color(&normal, palette),
+                    color: iso_color(&normal, palette, light),
                     line: palette.line,
                     outline,
                     texture: palette.texture,
@@ -1319,17 +1364,18 @@ fn weld_groups(faces: &mut Vec<Face>) {
     }
 }
 
-fn iso_color(normal: &[f64; 3], palette: Palette) -> [u8; 3] {
+fn iso_color(normal: &[f64; 3], palette: Palette, light: scene_render::material::Light) -> [u8; 3] {
     if let Some(color) = palette.emission {
         return color;
     }
-    if normal[2] > normal[0].abs() + normal[1].abs() {
+    let base = if normal[2] > normal[0].abs() + normal[1].abs() {
         palette.top
     } else if normal[0] > normal[1] {
         palette.right
     } else {
         palette.left
-    }
+    };
+    scene_render::material::apply_light(base, *normal, &palette, light)
 }
 
 fn world_point(point: [f64; 3], instance: &Instance) -> [f64; 3] {

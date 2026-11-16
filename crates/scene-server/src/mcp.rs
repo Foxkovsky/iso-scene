@@ -636,6 +636,7 @@ type SheetInputs = (
     BTreeMap<String, PathBuf>,
     Option<u32>,
     Option<Projection>,
+    Option<scene_render::material::Light>,
 );
 
 /// Objects, materials and defaults of one `.scene` or `.model`.
@@ -665,6 +666,10 @@ fn sheet_inputs(source: &Source, root: &Path) -> Result<SheetInputs, String> {
                 scene.materials.clone(),
                 Some(scene.scale),
                 Some(projection),
+                Some(scene_render::material::Light {
+                    sun: scene.sun,
+                    ambient: scene.ambient,
+                }),
             ))
         }
         crate::analysis::FileKind::Model => {
@@ -680,7 +685,7 @@ fn sheet_inputs(source: &Source, root: &Path) -> Result<SheetInputs, String> {
                     source: Some(source.shown.clone()),
                 })
                 .collect();
-            Ok((objects, model.materials.clone(), None, None))
+            Ok((objects, model.materials.clone(), None, None, None))
         }
         _ => Err("`sprites` needs a .scene or .model file".to_owned()),
     }
@@ -689,7 +694,7 @@ fn sheet_inputs(source: &Source, root: &Path) -> Result<SheetInputs, String> {
 #[allow(clippy::too_many_lines)]
 fn sprites(arguments: &Value, root: &Path) -> Result<Value, String> {
     let source = Source::load(root, arguments)?;
-    let (objects, materials, scene_scale, scene_projection) = sheet_inputs(&source, root)?;
+    let (objects, materials, scene_scale, scene_projection, light) = sheet_inputs(&source, root)?;
     let scale_inferred = arguments["scale"].is_null() && scene_scale.is_none();
     let scale = match arguments["scale"].as_u64() {
         Some(scale) => u32::try_from(scale).map_err(|_| "`scale` is too large".to_owned())?,
@@ -765,6 +770,7 @@ fn sprites(arguments: &Value, root: &Path) -> Result<Value, String> {
         atlas: arguments["atlas"].as_bool().unwrap_or(false),
         max_rows: None,
         animations: Vec::new(),
+        light: light.unwrap_or_default(),
         tile_width: match projection {
             Projection::Iso => scale.checked_mul(2),
             Projection::Top | Projection::Front | Projection::Side => Some(scale),

@@ -41,6 +41,7 @@ fn pack_two_objects_with_four_views() {
         },
     ];
     let options = SheetOptions {
+        light: scene_render::material::Light::default(),
         name: "sheet".into(),
         scale: 8,
         projection: Projection::Iso,
@@ -89,6 +90,7 @@ fn animation_gets_its_own_row_and_tiled_animation() {
         source: None,
     }];
     let options = SheetOptions {
+        light: scene_render::material::Light::default(),
         name: "door".into(),
         scale: 8,
         projection: Projection::Iso,
@@ -149,6 +151,7 @@ fn a_single_view_stays_on_one_row() {
         source: None,
     }];
     let options = SheetOptions {
+        light: scene_render::material::Light::default(),
         name: "one".into(),
         scale: 8,
         projection: Projection::Iso,
@@ -171,6 +174,7 @@ fn a_single_view_stays_on_one_row() {
 
 fn chair_options(name: &str) -> SheetOptions {
     SheetOptions {
+        light: scene_render::material::Light::default(),
         name: name.into(),
         scale: 8,
         projection: Projection::Iso,
