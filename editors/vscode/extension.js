@@ -102,11 +102,15 @@ async function render(document, tab, token) {
         const source = liveFile(document);
         const dir = path.dirname(source);
         if (tab === 'iso') {
-            const images = await Promise.all([0, 90, 180, 270].map(async (degrees) => {
-                const out = path.join(dir, `iso-${degrees}.png`);
-                await runCli(['render', source, '--base', base, '--rotate', String(degrees), '-o', out], base);
-                return imageData(out);
-            }));
+            // One process renders all four sides; four compiles per keystroke
+            // was the preview's main cost on big scenes.
+            const stem = path.basename(source, path.extname(source));
+            const outDir = path.join(dir, 'rotations');
+            fs.rmSync(outDir, { recursive: true, force: true });
+            await runCli(['render', source, '--base', base, '--rotate', '0,90,180,270', '-o', outDir], base);
+            const images = [0, 90, 180, 270].map(
+                (degrees) => imageData(path.join(outDir, `${stem}-${degrees}.png`))
+            );
             if (token !== version) return;
             panel.webview.postMessage({ type: 'render', kind: 'iso', images });
         } else if (tab === 'anim') {

@@ -36,11 +36,13 @@ screen_y = (x + y) * scale / 2 - z * scale
 - One block on the floor is a `2*scale × scale` diamond.
 - Vertical size is not foreshortened.
 - At `scale = 32` the tile grid is 64×32.
-- Faces are sorted back-to-front with a z-buffer; ties use a stable order.
+- Faces are sorted back-to-front with a z-buffer; ties use a stable order
+  (instances are visited by object name and position, not by `place` order).
 - `iso-scene render scene.scene --rotate 90` turns the whole scene around
   its plan centre by a quarter turn (0, 90, 180 or 270). Rendering the four
   values shows all four isometric sides; the VS Code preview does this in a
-  2×2 grid.
+  2×2 grid from **one** process: `--rotate 0,90,180,270 -o out/` writes
+  `<stem>-<angle>.png` per angle after a single compile.
 - `decal` statements are flat RGBA PNGs sampled nearest-neighbour on top of
   the geometry. They are drawn without lighting, alpha `0` is transparent, and
   a small depth bias lifts them off the surface without moving them on screen.

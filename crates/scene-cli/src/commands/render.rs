@@ -1,12 +1,12 @@
 //! `render`: PNG or SVG of a scene or model.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use scene_syntax::ast::RenderKind;
 
-use crate::common::{Args, Parsed, create_parent, load_scene, usage};
+use crate::common::{Args, Loaded, Parsed, create_parent, load_scene, usage};
 
 pub(crate) fn render_scene(args: Vec<String>) -> ExitCode {
     match run(args) {
@@ -14,11 +14,59 @@ pub(crate) fn render_scene(args: Vec<String>) -> ExitCode {
     }
 }
 
+/// Render the scene once per quarter turn into `<out>/<stem>-<angle>.png`.
+fn render_rotations(
+    loaded: &Loaded,
+    rotations: &[u16],
+    output: Option<PathBuf>,
+    path: &str,
+) -> Parsed<ExitCode> {
+    let stem = Path::new(path)
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("scene")
+        .to_owned();
+    let directory = output.unwrap_or_else(|| PathBuf::from("out").join(&stem));
+    let extension = directory
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default();
+    if matches!(extension.to_ascii_lowercase().as_str(), "png" | "svg") {
+        return Err(usage(format!(
+            "with several rotations, `--out` must be a directory, not `{}`",
+            directory.display()
+        )));
+    }
+    fs::create_dir_all(&directory)
+        .map_err(|error| usage(format!("cannot create `{}`: {error}", directory.display())))?;
+    for &degrees in rotations {
+        let mut scene = loaded.scene.clone();
+        scene.rotate_z(degrees);
+        let image = match scene.render {
+            RenderKind::Iso => scene_backend_iso::render(&scene),
+            RenderKind::Top | RenderKind::Front | RenderKind::Side => {
+                scene_backend_ortho::render(&scene)
+            }
+        }
+        .map_err(|diagnostic| loaded.report(&diagnostic))?;
+        let out = directory.join(format!("{stem}-{degrees}.png"));
+        scene_render::write_png(&image, &out).map_err(usage)?;
+        println!(
+            "wrote {} ({}x{}, {} instances, {degrees}°)",
+            out.display(),
+            image.width,
+            image.height,
+            scene.instances.len()
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let mut path: Option<String> = None;
     let mut output: Option<PathBuf> = None;
     let mut view: Option<String> = None;
-    let mut rotate: Option<u16> = None;
+    let mut rotations: Vec<u16> = Vec::new();
     let mut base: Option<PathBuf> = None;
     let mut args = Args::new(args).hints(&[
         ("--out", "a path"),
@@ -32,14 +80,23 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
             "--view" => view = Some(args.value("--view")?),
             "--rotate" => {
                 let value = args.value("--rotate")?;
-                match value.parse::<u16>() {
-                    Ok(degrees) if matches!(degrees, 0 | 90 | 180 | 270) => rotate = Some(degrees),
-                    _ => {
-                        return Err(usage(format!(
-                            "invalid rotation `{value}`; expected 0, 90, 180 or 270"
-                        )));
+                let mut parsed = Vec::new();
+                for part in value.split(',') {
+                    match part.trim().parse::<u16>() {
+                        Ok(degrees) if matches!(degrees, 0 | 90 | 180 | 270) => {
+                            if parsed.contains(&degrees) {
+                                return Err(usage(format!("duplicate rotation `{degrees}`")));
+                            }
+                            parsed.push(degrees);
+                        }
+                        _ => {
+                            return Err(usage(format!(
+                                "invalid rotation `{part}`; expected 0, 90, 180 or 270"
+                            )));
+                        }
                     }
                 }
+                rotations = parsed;
             }
             "--base" => base = Some(PathBuf::from(args.value("--base")?)),
             _ if path.is_none() => path = Some(argument),
@@ -61,8 +118,11 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
             }
         };
     }
-    if let Some(rotate) = rotate {
-        loaded.scene.rotate_z(rotate);
+    if rotations.len() > 1 {
+        return render_rotations(&loaded, &rotations, output, &path);
+    }
+    if let Some(rotate) = rotations.first() {
+        loaded.scene.rotate_z(*rotate);
     }
     let output = output.unwrap_or_else(|| loaded.default_output("png"));
     create_parent(&output)?;

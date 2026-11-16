@@ -60,7 +60,10 @@ pub(crate) fn print_help() {
     println!("  check <file>    parse and evaluate a .model, .scene or .walls file");
     println!("  eval <file>     parse and evaluate to a scene graph");
     println!("  render <file>   render a .scene to PNG (iso or ortho); -o out.svg writes iso SVG");
-    println!("                  --view iso|top|front|side, --rotate 0|90|180|270");
+    println!("                  --view iso|top|front|side, --rotate 0|90|180|270[,0,90,...]");
+    println!(
+        "                  (several rotations write <stem>-<angle>.png into --out, a directory)"
+    );
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
     println!("                  --walls <file> adds a 16-way wall tile layer with Wang set");
