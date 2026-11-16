@@ -24,8 +24,7 @@ use scene_render::{Image, write_png};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::RenderKind;
 use scene_walls::{
-    WallCell, WallLayout, layer_data_where, render_shadow_tiles, render_tiles, shadow_layer_data,
-    wangid,
+    WallCell, WallLayout, layer_data_where, render_tiles, shadow_layer_data, wangid,
 };
 use serde_json::{Value, json};
 
@@ -216,7 +215,7 @@ pub fn export_with(
         });
         let path = out_dir.join("walls.tsj");
         write_json(&path, &tileset)?;
-        write_shadow_tileset(scale, out_dir)?;
+        write_shadow_tileset(scale, scene.shadow, out_dir)?;
         Some(path)
     } else {
         None
@@ -248,6 +247,8 @@ pub fn export_with(
                     sun: scene.sun,
                     ambient: scene.ambient,
                 },
+                scene.shadow,
+                scene.halo,
             )?;
             let zero = scene_core::Instance {
                 object: instance.object.clone(),
@@ -736,8 +737,12 @@ fn stack_tiles(tiles: &[(usize, u32)], cells: usize) -> Result<Vec<Vec<u32>>, Di
 
 /// Write `wall_shadow.png` and `wall_shadow.tsj`: floor-sized tiles that
 /// darken the floor along the walls next to it.
-fn write_shadow_tileset(scale: u32, out_dir: &Path) -> Result<(), Diagnostic> {
-    let tiles = render_shadow_tiles(scale);
+fn write_shadow_tileset(
+    scale: u32,
+    shadow: scene_core::Shadow,
+    out_dir: &Path,
+) -> Result<(), Diagnostic> {
+    let tiles = scene_walls::render_shadow_tiles_with(scale, shadow.reach, shadow.strength);
     write_png(&tiles.image, &out_dir.join("wall_shadow.png"))
         .map_err(|message| error("E0603", message))?;
     let tileset = json!({

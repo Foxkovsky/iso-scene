@@ -16,7 +16,13 @@ faces, `metallic` tints it with the base colour and lowers the diffuse by up to
 25%, `roughness` sharpens the highlight; all default to `0.5`/`0`/`0`, which is
 flat shading without a highlight. Texture blocks are accepted but ignored.
 `emission` replaces the visible face colour with a fixed glow colour; `glow`
-(0..=1) feeds the screen-space bloom mask.
+(0..=1) feeds the screen-space bloom mask. A scene sets the mask blur with
+`halo (radius, strength);`: the default `6` px / `1.6` is the reference, and a
+zero radius or strength switches the bloom off. Contact shadows under sprites
+and the wall-shadow strip in the Tiled export use `shadow (reach, strength);`:
+the default reach is `0.4` blocks, wall opacity is `0.42 * strength`, contact
+opacity is `0.36 * strength`, and the contact footprint scales with
+`reach / 0.4`. Zero reach or strength removes the shadow.
 
 Used when a shape omits `material`. Values are RGB, one tone per visible face
 plus an outline. A project should normally declare `.toml` materials instead.

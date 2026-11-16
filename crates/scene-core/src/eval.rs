@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use scene_syntax::ast::{
     Ambient, Anchor, Animation, AssignOp, Axis, Background, BinaryOp, Block, Decal, ElseBranch,
-    Expr, ExprKind, Facing, Include, ItemKind, Material, Object, Origin, Program, Shape, Statement,
-    StatementKind, Sun, UnaryOp,
+    Expr, ExprKind, Facing, Halo, Include, ItemKind, Material, Object, Origin, Program, Shadow,
+    Shape, Statement, StatementKind, Sun, UnaryOp,
 };
 use scene_syntax::{Diagnostic, Span, parse};
 
@@ -292,6 +292,8 @@ impl Evaluator {
         let mut canvas = None;
         let mut sun = [135.0, 45.0];
         let mut ambient = 0.35;
+        let mut shadow = crate::geometry::Shadow::default();
+        let mut halo = crate::geometry::Halo::default();
         let mut background = Background::Transparent;
         let mut animations: Vec<SceneAnimation> = Vec::new();
         self.declare_animations(program);
@@ -337,6 +339,12 @@ impl Evaluator {
                 ItemKind::Ambient(value) => {
                     ambient = self.ambient(value, item.span)?;
                 }
+                ItemKind::Shadow(value) => {
+                    shadow = self.shadow(value, item.span)?;
+                }
+                ItemKind::Halo(value) => {
+                    halo = self.halo(value, item.span)?;
+                }
                 ItemKind::Background(value) => background = *value,
                 ItemKind::Animation(animation) => {
                     let declared = Self::animation(animation, &animations)?;
@@ -374,6 +382,8 @@ impl Evaluator {
 
         Ok(SceneGraph {
             render,
+            shadow,
+            halo,
             scale,
             canvas,
             sun,
@@ -471,6 +481,30 @@ impl Evaluator {
             ));
         }
         Ok([azimuth, altitude])
+    }
+
+    fn shadow(&self, shadow: &Shadow, span: Span) -> Result<crate::geometry::Shadow, Diagnostic> {
+        let reach = self.constant_number(&shadow.reach, span, "shadow reach")?;
+        let strength = self.constant_number(&shadow.strength, span, "shadow strength")?;
+        if !(0.0..=8.0).contains(&reach) {
+            return Err(diag("E0304", "shadow reach must be in 0..=8 blocks", span));
+        }
+        if !(0.0..=4.0).contains(&strength) {
+            return Err(diag("E0304", "shadow strength must be in 0..=4", span));
+        }
+        Ok(crate::geometry::Shadow { reach, strength })
+    }
+
+    fn halo(&self, halo: &Halo, span: Span) -> Result<crate::geometry::Halo, Diagnostic> {
+        let radius = self.constant_number(&halo.radius, span, "halo radius")?;
+        let strength = self.constant_number(&halo.strength, span, "halo strength")?;
+        if !(0.0..=64.0).contains(&radius) {
+            return Err(diag("E0304", "halo radius must be in 0..=64 pixels", span));
+        }
+        if !(0.0..=16.0).contains(&strength) {
+            return Err(diag("E0304", "halo strength must be in 0..=16", span));
+        }
+        Ok(crate::geometry::Halo { radius, strength })
     }
 
     fn ambient(&self, ambient: &Ambient, span: Span) -> Result<f64, Diagnostic> {

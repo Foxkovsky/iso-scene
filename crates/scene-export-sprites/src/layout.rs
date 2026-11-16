@@ -243,6 +243,8 @@ pub(crate) fn render_cell(
             materials,
             options.shadow,
             options.light,
+            options.shadow_style,
+            options.halo,
         ),
         Some(view) => {
             let (image, anchor) = scene_backend_ortho::render_object_sprite_light(

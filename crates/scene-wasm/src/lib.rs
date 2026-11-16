@@ -67,6 +67,8 @@ fn build_demo() -> Option<scene_render::Image> {
     let model = scene_core::compile_model(&program, Path::new(".")).ok()?;
     let object = model.objects.get("demo")?.clone();
     let graph = SceneGraph {
+        shadow: scene_core::Shadow::default(),
+        halo: scene_core::Halo::default(),
         render: RenderKind::Iso,
         scale: 32,
         canvas: None,

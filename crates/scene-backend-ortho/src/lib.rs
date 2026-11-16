@@ -126,6 +126,8 @@ pub fn render_object_sprite_light(
     };
     let origin_world = instance.to_world([0.0, 0.0, 0.0]);
     let graph = SceneGraph {
+        shadow: scene_core::Shadow::default(),
+        halo: scene_core::Halo::default(),
         render: match view {
             View::Top => RenderKind::Top,
             View::Front => RenderKind::Front,

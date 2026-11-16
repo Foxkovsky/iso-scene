@@ -36,9 +36,6 @@ const MARGIN: f64 = 2.0;
 /// Depth lift for flat decals, in blocks. The decal sits exactly on its wall;
 /// the bias keeps the z-buffer from rejecting it as coplanar.
 const DECAL_BIAS: f64 = 0.01;
-/// Blur radius and strength of the screen-space glow.
-const GLOW_RADIUS: usize = 6;
-const GLOW_STRENGTH: f64 = 1.6;
 
 /// Project a world point to isometric screen coordinates.
 ///
@@ -126,6 +123,7 @@ pub fn render_object_sprite_at(
 /// # Errors
 ///
 /// Returns the same diagnostics as [`render`].
+#[allow(clippy::too_many_arguments)]
 pub fn render_object_sprite_at_light(
     object: &CompiledObject,
     rotation: u16,
@@ -133,8 +131,12 @@ pub fn render_object_sprite_at_light(
     scale: u32,
     materials: &BTreeMap<String, PathBuf>,
     light: scene_render::material::Light,
+    shadow: scene_core::Shadow,
+    halo: scene_core::Halo,
 ) -> Result<Sprite, Diagnostic> {
-    render_object_sprite_with_light(object, rotation, angle, scale, materials, true, light)
+    render_object_sprite_with_light(
+        object, rotation, angle, scale, materials, true, light, shadow, halo,
+    )
 }
 
 /// Like [`render_object_sprite_at`], with the baked contact shadow optional
@@ -159,6 +161,8 @@ pub fn render_object_sprite_with(
         materials,
         shadow,
         scene_render::material::Light::default(),
+        scene_core::Shadow::default(),
+        scene_core::Halo::default(),
     )
 }
 
@@ -167,6 +171,7 @@ pub fn render_object_sprite_with(
 /// # Errors
 ///
 /// Returns the same diagnostics as [`render`].
+#[allow(clippy::too_many_arguments)]
 pub fn render_object_sprite_with_light(
     object: &CompiledObject,
     rotation: u16,
@@ -175,9 +180,13 @@ pub fn render_object_sprite_with_light(
     materials: &BTreeMap<String, PathBuf>,
     shadow: bool,
     light: scene_render::material::Light,
+    contact_shadow: scene_core::Shadow,
+    halo: scene_core::Halo,
 ) -> Result<Sprite, Diagnostic> {
     let graph = SceneGraph {
         render: RenderKind::Iso,
+        shadow: contact_shadow,
+        halo,
         scale,
         canvas: None,
         sun: light.sun,
@@ -200,7 +209,15 @@ pub fn render_object_sprite_with_light(
     let screen = project_point([x, y, 0.0], f64::from(scale));
     let mut image = rendered.image;
     if shadow {
-        add_contact_shadow(&mut image, object, rotation, angle, scale, rendered.origin);
+        add_contact_shadow(
+            &mut image,
+            object,
+            rotation,
+            angle,
+            scale,
+            rendered.origin,
+            contact_shadow,
+        );
     }
     Ok(Sprite {
         image,
@@ -223,7 +240,12 @@ fn add_contact_shadow(
     angle: f64,
     scale: u32,
     origin: [f64; 2],
+    shadow: scene_core::Shadow,
 ) {
+    if shadow.reach <= 0.0 || shadow.strength <= 0.0 {
+        return;
+    }
+    let reach = (shadow.reach / 0.4).clamp(0.0, 8.0);
     let corners = [
         [0.0, 0.0],
         [object.width, 0.0],
@@ -245,8 +267,8 @@ fn add_contact_shadow(
         min[0].midpoint(max[0]) - origin[0],
         min[1].midpoint(max[1]) - origin[1],
     ];
-    let radius_x = ((max[0] - min[0]) / 2.0 * 0.92).max(0.5);
-    let radius_y = ((max[1] - min[1]) / 2.0 * 0.92).max(0.5);
+    let radius_x = ((max[0] - min[0]) / 2.0 * 0.92 * reach).max(0.5);
+    let radius_y = ((max[1] - min[1]) / 2.0 * 0.92 * reach).max(0.5);
     let color = [10.0, 12.0, 16.0];
     // Outside `center ± radius` the L1 distance is at least 1 and nothing is
     // drawn, so only that box (plus a pixel) is visited.
@@ -266,7 +288,7 @@ fn add_contact_shadow(
             if distance >= 1.0 {
                 continue;
             }
-            let alpha = 0.36 * (1.0 - distance).powf(1.2);
+            let alpha = 0.36 * shadow.strength * (1.0 - distance).powf(1.2);
             if alpha <= 0.004 {
                 continue;
             }
@@ -298,6 +320,7 @@ struct Prepared {
     shapes: Vec<Shape>,
     /// Instance each shape comes from, parallel to `shapes`.
     owners: Vec<usize>,
+    halo: scene_core::Halo,
 }
 
 impl Prepared {
@@ -308,7 +331,10 @@ impl Prepared {
             height: u32::try_from(self.height).unwrap_or(0),
             rgba,
         };
-        scene_render::bloom::apply(&mut image, &glow, GLOW_RADIUS, GLOW_STRENGTH);
+        let radius = self.halo.radius.round();
+        if radius > 0.0 && self.halo.strength > 0.0 {
+            scene_render::bloom::apply(&mut image, &glow, radius as usize, self.halo.strength);
+        }
         Rendered {
             image,
             origin: self.origin,
@@ -357,7 +383,7 @@ fn prepare_with(
     let faces = collect_faces(scene, &palettes, Some(images))?;
     let scale = f64::from(scene.scale);
     let glow_margin = if faces.iter().any(|face| face.glow > 0) {
-        GLOW_RADIUS as f64
+        scene.halo.radius.max(0.0)
     } else {
         0.0
     };
@@ -435,6 +461,7 @@ fn prepare_with(
         background,
         shapes,
         owners,
+        halo: scene.halo,
     })
 }
 

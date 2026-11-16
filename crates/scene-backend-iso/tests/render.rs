@@ -360,3 +360,71 @@ fn scene_light_defaults_keep_the_pixels_and_other_values_change_them() {
     let bright = render(&compile_source(&source("sun (0, 90); ambient 0.8;"))).expect("bright");
     assert_ne!(base.rgba, bright.rgba);
 }
+
+fn compile_at(source: &str, base: &Path) -> scene_core::SceneGraph {
+    let program = parse(source).unwrap_or_else(|error| panic!("{}: {}", error.code, error.message));
+    compile_scene(&program, base, base)
+        .unwrap_or_else(|error| panic!("{}: {}", error.code, error.message))
+}
+
+#[test]
+fn halo_directive_changes_the_bloom() {
+    let dir = std::env::temp_dir().join(format!("iso-scene-halo-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("glow.toml"),
+        "color = \"#FFFFFF\"\nemission = \"#FFFFFF\"\nglow = 1.0\n",
+    )
+    .unwrap();
+    let source = |halo: &str| {
+        format!(
+            r#"
+            version 1;
+            {halo}
+            material glow = "glow.toml";
+            object b (1, 1) {{ box at (0, 0, 0) size (1, 1, 1) material glow; }}
+            render iso;
+            scale 8;
+            place b at (0, 0, 0);
+            "#
+        )
+    };
+    let weak = render(&compile_at(&source("halo (0, 0);"), &dir)).expect("render weak halo");
+    let strong = render(&compile_at(&source("halo (6, 4.0);"), &dir)).expect("render strong halo");
+    assert_ne!(weak.rgba, strong.rgba);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn contact_shadow_style_changes_the_sprite() {
+    let scene = compile_source(
+        r"
+        version 1;
+        object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; }
+        render iso;
+        scale 8;
+        place b at (0, 0, 0);
+        ",
+    );
+    let object = &scene.instances[0].object;
+    let reference =
+        scene_backend_iso::render_object_sprite_with(object, 0, 0.0, 8, &scene.materials, true)
+            .expect("reference sprite");
+    let custom = scene_backend_iso::render_object_sprite_with_light(
+        object,
+        0,
+        0.0,
+        8,
+        &scene.materials,
+        true,
+        scene_render::material::Light::default(),
+        scene_core::Shadow {
+            reach: 0.8,
+            strength: 2.0,
+        },
+        scene_core::Halo::default(),
+    )
+    .expect("custom sprite");
+    assert_ne!(reference.image.rgba, custom.image.rgba);
+}

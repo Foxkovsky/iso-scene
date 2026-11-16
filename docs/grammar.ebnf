@@ -20,6 +20,8 @@ item            = include
                 | canvas
                 | sun
                 | ambient
+                | shadow
+                | halo
                 | background
                 | animation
                 | statement ;
@@ -33,6 +35,9 @@ scale           = "scale", integer, ";" ;
 canvas          = "canvas", tuple3, ";" ;
 sun             = "sun", pair, ";" ;
 ambient         = "ambient", expr, ";" ;
+(* `shadow (…)` and `halo (…)` are contextual: the words are identifiers. *)
+shadow          = "shadow", "(", expr, ",", expr, ")", ";" ;
+halo            = "halo", "(", expr, ",", expr, ")", ";" ;
 background      = "background", ( color | "transparent" ), ";" ;
 (* `animation`, `frames`, `duration` and `once` are contextual words. *)
 animation       = "animation", ident, "(", ident, ")",

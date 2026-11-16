@@ -448,6 +448,10 @@ impl Instance {
 #[derive(Clone, Debug)]
 pub struct SceneGraph {
     pub render: RenderKind,
+    /// Contact and wall shadow style.
+    pub shadow: Shadow,
+    /// Screen-space bloom style.
+    pub halo: Halo,
     pub scale: u32,
     pub canvas: Option<[f64; 3]>,
     pub sun: [f64; 2],
@@ -542,6 +546,42 @@ fn quarter_turn(x: f64, y: f64, degrees: u16) -> (f64, f64) {
         180 => (-x, -y),
         270 => (y, -x),
         _ => (x, y),
+    }
+}
+
+/// Contact and wall shadow style: `shadow (reach, strength);`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shadow {
+    /// Wall shadow reach in blocks; also scales the contact shadow size.
+    pub reach: f64,
+    /// Multiplier for both shadow opacities; the reference is 1.0.
+    pub strength: f64,
+}
+
+impl Default for Shadow {
+    fn default() -> Self {
+        Self {
+            reach: 0.4,
+            strength: 1.0,
+        }
+    }
+}
+
+/// Screen-space bloom style: `halo (radius, strength);`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Halo {
+    /// Blur radius in pixels.
+    pub radius: f64,
+    /// Bloom strength; the reference is 1.6.
+    pub strength: f64,
+}
+
+impl Default for Halo {
+    fn default() -> Self {
+        Self {
+            radius: 6.0,
+            strength: 1.6,
+        }
     }
 }
 

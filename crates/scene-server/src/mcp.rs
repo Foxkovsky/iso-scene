@@ -637,6 +637,8 @@ type SheetInputs = (
     Option<u32>,
     Option<Projection>,
     Option<scene_render::material::Light>,
+    Option<scene_core::Shadow>,
+    Option<scene_core::Halo>,
 );
 
 /// Objects, materials and defaults of one `.scene` or `.model`.
@@ -670,6 +672,8 @@ fn sheet_inputs(source: &Source, root: &Path) -> Result<SheetInputs, String> {
                     sun: scene.sun,
                     ambient: scene.ambient,
                 }),
+                Some(scene.shadow),
+                Some(scene.halo),
             ))
         }
         crate::analysis::FileKind::Model => {
@@ -685,7 +689,15 @@ fn sheet_inputs(source: &Source, root: &Path) -> Result<SheetInputs, String> {
                     source: Some(source.shown.clone()),
                 })
                 .collect();
-            Ok((objects, model.materials.clone(), None, None, None))
+            Ok((
+                objects,
+                model.materials.clone(),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ))
         }
         _ => Err("`sprites` needs a .scene or .model file".to_owned()),
     }
@@ -694,7 +706,8 @@ fn sheet_inputs(source: &Source, root: &Path) -> Result<SheetInputs, String> {
 #[allow(clippy::too_many_lines)]
 fn sprites(arguments: &Value, root: &Path) -> Result<Value, String> {
     let source = Source::load(root, arguments)?;
-    let (objects, materials, scene_scale, scene_projection, light) = sheet_inputs(&source, root)?;
+    let (objects, materials, scene_scale, scene_projection, light, shadow, halo) =
+        sheet_inputs(&source, root)?;
     let scale_inferred = arguments["scale"].is_null() && scene_scale.is_none();
     let scale = match arguments["scale"].as_u64() {
         Some(scale) => u32::try_from(scale).map_err(|_| "`scale` is too large".to_owned())?,
@@ -771,6 +784,8 @@ fn sprites(arguments: &Value, root: &Path) -> Result<Value, String> {
         max_rows: None,
         animations: Vec::new(),
         light: light.unwrap_or_default(),
+        shadow_style: shadow.unwrap_or_default(),
+        halo: halo.unwrap_or_default(),
         tile_width: match projection {
             Projection::Iso => scale.checked_mul(2),
             Projection::Top | Projection::Front | Projection::Side => Some(scale),

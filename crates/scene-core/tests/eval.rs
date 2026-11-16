@@ -755,3 +755,41 @@ fn errors_in_an_included_file_point_at_the_include_and_name_the_file() {
         );
     }
 }
+
+#[test]
+fn shadow_and_halo_directives_are_stored() {
+    let scene = compile_scene_ok(
+        r"
+        version 1;
+        render iso;
+        scale 8;
+        shadow (0.8, 2.0);
+        halo (4, 3.0);
+        object a (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; }
+        place a at (0, 0, 0);
+        ",
+    );
+    assert_eq!(
+        scene.shadow,
+        scene_core::Shadow {
+            reach: 0.8,
+            strength: 2.0
+        }
+    );
+    assert_eq!(
+        scene.halo,
+        scene_core::Halo {
+            radius: 4.0,
+            strength: 3.0
+        }
+    );
+}
+
+#[test]
+fn shadow_and_halo_ranges_are_validated() {
+    let base = "version 1; render iso; scale 8; object a (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } place a at (0, 0, 0);";
+    assert_eq!(compile_error(&format!("{base} shadow (9, 1);")), "E0304");
+    assert_eq!(compile_error(&format!("{base} shadow (1, 5);")), "E0304");
+    assert_eq!(compile_error(&format!("{base} halo (65, 1);")), "E0304");
+    assert_eq!(compile_error(&format!("{base} halo (6, 17);")), "E0304");
+}

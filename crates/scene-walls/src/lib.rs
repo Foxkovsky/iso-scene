@@ -319,6 +319,16 @@ const SHADOW_ALPHA: f64 = 0.42;
 /// fades from the wall into the cell, so it works on any floor.
 #[must_use]
 pub fn render_shadow_tiles(scale: u32) -> WallTiles {
+    render_shadow_tiles_with(scale, SHADOW_REACH, 1.0)
+}
+
+/// [`render_shadow_tiles`] with a custom reach (blocks) and opacity multiplier.
+///
+/// A zero `reach` or `strength` produces fully transparent tiles.
+#[must_use]
+pub fn render_shadow_tiles_with(scale: u32, reach: f64, strength: f64) -> WallTiles {
+    let reach = reach.max(0.0);
+    let strength = strength.max(0.0);
     let s = f64::from(scale.max(1));
     let tile_width = 2 * scale.max(1);
     let tile_height = scale.max(1);
@@ -349,12 +359,18 @@ pub fn render_shadow_tiles(scale: u32) -> WallTiles {
                 let shade = sides
                     .iter()
                     .filter(|(bit, _)| mask & bit != 0)
-                    .map(|&(_, distance)| (1.0 - distance / SHADOW_REACH).max(0.0).powi(2))
+                    .map(|&(_, distance)| {
+                        if reach <= 0.0 {
+                            0.0
+                        } else {
+                            (1.0 - distance / reach).max(0.0).powi(2)
+                        }
+                    })
                     .fold(0.0_f64, f64::max);
                 if shade <= 0.0 {
                     continue;
                 }
-                let alpha = (shade * SHADOW_ALPHA * 255.0).round() as u8;
+                let alpha = (shade * SHADOW_ALPHA * strength * 255.0).round() as u8;
                 let at = (y as usize * width + (u32::from(mask) * tile_width + x) as usize) * 4;
                 strip.rgba[at..at + 4].copy_from_slice(&[0, 0, 0, alpha]);
             }

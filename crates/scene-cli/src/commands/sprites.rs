@@ -44,6 +44,8 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         animations: animation_specs(flags.animations)?,
         tile_width,
         light: inputs.light.unwrap_or_default(),
+        shadow_style: inputs.shadow.unwrap_or_default(),
+        halo: inputs.halo.unwrap_or_default(),
     };
 
     let report = scene_export_sprites::export(&objects, &inputs.materials, &options, &flags.output)
@@ -302,8 +304,11 @@ struct Inputs {
     scale: Option<u32>,
     projection: Option<Projection>,
     light: Option<scene_render::material::Light>,
+    shadow: Option<scene_core::Shadow>,
+    halo: Option<scene_core::Halo>,
 }
 
+#[allow(clippy::too_many_lines)]
 fn load(flags: &Flags) -> Parsed<Inputs> {
     let mut inputs = Inputs {
         objects: Vec::new(),
@@ -311,6 +316,8 @@ fn load(flags: &Flags) -> Parsed<Inputs> {
         scale: None,
         projection: None,
         light: None,
+        shadow: None,
+        halo: None,
     };
     // Object and material name -> file that first defined it, for conflicts.
     let mut object_files: BTreeMap<String, String> = BTreeMap::new();
@@ -353,6 +360,8 @@ fn load(flags: &Flags) -> Parsed<Inputs> {
                     sun: scene.sun,
                     ambient: scene.ambient,
                 });
+                inputs.shadow.get_or_insert(scene.shadow);
+                inputs.halo.get_or_insert(scene.halo);
                 inputs.projection.get_or_insert(match scene.render {
                     scene_syntax::ast::RenderKind::Iso => Projection::Iso,
                     scene_syntax::ast::RenderKind::Top => Projection::Top,

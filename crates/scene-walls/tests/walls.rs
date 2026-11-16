@@ -247,3 +247,12 @@ fn wall_height_has_no_style_cap_but_its_image_does() {
     .expect_err("zero height");
     assert_eq!(error.code, "E0304");
 }
+
+#[test]
+fn custom_shadow_reach_and_strength_change_the_strip() {
+    let reference = scene_walls::render_shadow_tiles(16);
+    let custom = scene_walls::render_shadow_tiles_with(16, 0.8, 2.0);
+    assert_ne!(reference.image.rgba, custom.image.rgba);
+    let none = scene_walls::render_shadow_tiles_with(16, 0.0, 1.0);
+    assert!(none.image.rgba.iter().all(|value| *value == 0));
+}

@@ -5,8 +5,8 @@
 
 use crate::ast::{
     Ambient, Anchor, Animation, AssignOp, Axis, Background, BinaryOp, Block, Canvas, Decal,
-    ElseBranch, Expr, ExprKind, Facing, Include, Item, ItemKind, Material, Object, Origin, Program,
-    Render, RenderKind, Scale, Shape, Statement, StatementKind, Sun, UnaryOp,
+    ElseBranch, Expr, ExprKind, Facing, Halo, Include, Item, ItemKind, Material, Object, Origin,
+    Program, Render, RenderKind, Scale, Shadow, Shape, Statement, StatementKind, Sun, UnaryOp,
 };
 use crate::{Diagnostic, Span, Token, TokenKind, lex};
 
@@ -223,6 +223,17 @@ impl Parser {
             TokenKind::Sun => ItemKind::Sun(self.parse_sun()?),
             TokenKind::Ambient => ItemKind::Ambient(self.parse_ambient()?),
             TokenKind::Background => ItemKind::Background(self.parse_background()?),
+            // `shadow (...)` and `halo (...)` are contextual directives.
+            TokenKind::Ident(word)
+                if word == "shadow" && matches!(self.peek_kind(1), TokenKind::LParen) =>
+            {
+                ItemKind::Shadow(self.parse_shadow()?)
+            }
+            TokenKind::Ident(word)
+                if word == "halo" && matches!(self.peek_kind(1), TokenKind::LParen) =>
+            {
+                ItemKind::Halo(self.parse_halo()?)
+            }
             // `animation` is contextual: `animation name (` starts the
             // directive, anything else is an ordinary statement.
             TokenKind::Ident(word)
@@ -322,6 +333,22 @@ impl Parser {
         let [azimuth, altitude] = angles;
         self.expect(&TokenKind::Semicolon, "`;`")?;
         Ok(Sun { azimuth, altitude })
+    }
+
+    fn parse_shadow(&mut self) -> Result<Shadow, Diagnostic> {
+        self.expect_word("shadow")?;
+        let (values, _) = self.parse_pair()?;
+        let [reach, strength] = values;
+        self.expect(&TokenKind::Semicolon, "`;`")?;
+        Ok(Shadow { reach, strength })
+    }
+
+    fn parse_halo(&mut self) -> Result<Halo, Diagnostic> {
+        self.expect_word("halo")?;
+        let (values, _) = self.parse_pair()?;
+        let [radius, strength] = values;
+        self.expect(&TokenKind::Semicolon, "`;`")?;
+        Ok(Halo { radius, strength })
     }
 
     fn parse_ambient(&mut self) -> Result<Ambient, Diagnostic> {

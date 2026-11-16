@@ -32,6 +32,8 @@ pub enum ItemKind {
     Canvas(Canvas),
     Sun(Sun),
     Ambient(Ambient),
+    Shadow(Shadow),
+    Halo(Halo),
     Background(Background),
     Animation(Animation),
     Statement(Box<Statement>),
@@ -105,6 +107,20 @@ pub struct Sun {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ambient {
     pub value: Expr,
+}
+
+/// `shadow (reach, strength);`
+#[derive(Clone, Debug, PartialEq)]
+pub struct Shadow {
+    pub reach: Expr,
+    pub strength: Expr,
+}
+
+/// `halo (radius, strength);`
+#[derive(Clone, Debug, PartialEq)]
+pub struct Halo {
+    pub radius: Expr,
+    pub strength: Expr,
 }
 
 /// `background #RRGGBB;` or `background transparent;`

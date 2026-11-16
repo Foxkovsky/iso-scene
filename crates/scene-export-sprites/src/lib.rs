@@ -230,6 +230,10 @@ pub struct SheetOptions {
     pub tile_width: Option<u32>,
     /// Scene lighting for the sprites; the default keeps flat reference tones.
     pub light: scene_render::material::Light,
+    /// Scene contact-shadow style; the default keeps the baked shadow.
+    pub shadow_style: scene_core::Shadow,
+    /// Scene bloom style for emissive materials and decals.
+    pub halo: scene_core::Halo,
 }
 
 /// Files written by [`export`]. With several pages, the per-page fields
