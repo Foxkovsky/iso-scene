@@ -77,6 +77,136 @@ fn an_object_layer_becomes_a_scene() {
 }
 
 #[test]
+fn an_object_layer_restores_the_back_corner_from_the_footprint() {
+    let dir = scratch("footprint");
+    let models = dir.join("models");
+    fs::create_dir_all(&models).unwrap();
+    write(
+        &models.join("desk.model"),
+        "version 1;\nobject desk (5, 2) { box at (0, 0, 0) size (5, 2, 2) material wood; }\n",
+    );
+    // `iso-scene tiled` stores the near corner (at + footprint) and puts the
+    // footprint relative to it; the two must add back up to the placement.
+    write(
+        &dir.join("map.tmj"),
+        r#"{
+  "type": "map", "orientation": "isometric",
+  "width": 16, "height": 10, "tilewidth": 64, "tileheight": 32,
+  "tilesets": [],
+  "layers": [{
+    "type": "objectgroup", "name": "objects",
+    "objects": [{
+      "id": 1, "name": "desk", "type": "desk",
+      "x": 192, "y": 96, "width": 160, "height": 64,
+      "properties": [
+        {"name": "rotation", "type": "int", "value": 0},
+        {"name": "z", "type": "float", "value": 0},
+        {"name": "footprint_x", "type": "float", "value": -5},
+        {"name": "footprint_y", "type": "float", "value": -2}
+      ]
+    }]
+  }]
+}"#,
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args(["import-tiled", "map.tmj", "--models", "models", "-o", "out"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let scene = fs::read_to_string(dir.join("out/scene.scene")).unwrap();
+    assert!(scene.contains("place desk at (1, 1, 0) rot 0;"), "{scene}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn tiled_export_round_trips_through_import_in_both_layouts() {
+    let dir = scratch("roundtrip");
+    let models = dir.join("models");
+    fs::create_dir_all(models.join("materials")).unwrap();
+    write(
+        &models.join("desk.model"),
+        "version 1;\nmaterial oak = \"materials/oak.toml\";\nobject desk (5, 2) { box at (0, 0, 0) size (5, 2, 2) material oak; }\n",
+    );
+    write(
+        &models.join("materials/oak.toml"),
+        "name = \"oak\"\ncolor = \"#BD8953\"\n",
+    );
+    write(
+        &dir.join("exact.scene"),
+        "version 1;\ninclude \"models/desk.model\";\nrender iso; scale 32;\nplace desk at (1, 1, 0);\nplace desk at (5, 5, 0) rot 90;\nplace desk at (9, 1, 0) rot 180;\n",
+    );
+    let render = |scene: &str, out: &str| {
+        let output = binary()
+            .current_dir(&dir)
+            .args(["render", scene, "-o", out])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::read(dir.join(out)).unwrap()
+    };
+    let exact = render("exact.scene", "exact.png");
+    for (tile_layer, layers) in [(false, "objects"), (true, "all")] {
+        let mut source = vec!["tiled", "exact.scene"];
+        if tile_layer {
+            source.push("--tile-layer");
+        }
+        source.extend(["-o", "map"]);
+        let output = binary().current_dir(&dir).args(&source).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = binary()
+            .current_dir(&dir)
+            .args([
+                "import-tiled",
+                "map/scene.tmj",
+                "--models",
+                "models",
+                "--layers",
+                layers,
+                "-o",
+                "back",
+                "--name",
+                "back",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let scene = fs::read_to_string(dir.join("back/back.scene")).unwrap();
+        assert!(scene.contains("scale 32;"), "{scene}");
+        for placement in [
+            "place desk at (1, 1, 0) rot 0;",
+            "place desk at (5, 5, 0) rot 90;",
+            "place desk at (9, 1, 0) rot 180;",
+        ] {
+            assert!(scene.contains(placement), "{tile_layer}: {scene}");
+        }
+        assert!(
+            render("back/back.scene", "back.png") == exact,
+            "{tile_layer}"
+        );
+        let _ = fs::remove_dir_all(dir.join("map"));
+        let _ = fs::remove_dir_all(dir.join("back"));
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn a_tile_layer_uses_the_model_property() {
     let dir = scratch("tiles");
     let models = dir.join("models");

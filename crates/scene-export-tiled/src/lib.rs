@@ -366,6 +366,13 @@ pub fn export_with(
                     "properties": [
                         {"name": "rotation", "type": "int", "value": key.key.rotation},
                         {"name": "turn", "type": "float", "value": key.key.angle()},
+                        // Where the placement's back corner sits relative to
+                        // the tile's cell, so `import-tiled` can undo the cell
+                        // snap that a tile layer applies to the sprite.
+                        {"name": "origin_x", "type": "float",
+                         "value": -(key.bottom_world[0] - 1.0).floor()},
+                        {"name": "origin_y", "type": "float",
+                         "value": -(key.bottom_world[1] - 1.0).floor()},
                         {"name": "walkable", "type": "bool", "value": false},
                         {"name": "collides", "type": "bool", "value": true}
                     ]
@@ -619,6 +626,10 @@ pub fn export_with(
         "tilewidth": tile_w,
         "tileheight": tile_h,
         "infinite": false,
+        "properties": [
+            {"name": "iso_scale", "type": "int", "value": scale},
+            {"name": "iso_units", "type": "string", "value": "blocks"}
+        ],
         "nextlayerid": next_layer_id,
         "nextobjectid": 2 * ordered.len() + 1,
         "tilesets": tilesets,

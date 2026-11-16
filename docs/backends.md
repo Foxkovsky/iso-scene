@@ -114,7 +114,12 @@ Occupancy sampling of the same `SceneGraph`:
 - `objects.tsj` + `objects.png` — atlas of unique object/rotation sprites;
 - `walls.tsj`/`walls.png` and `wall_shadow.tsj`/`wall_shadow.png` with
   `--walls`;
-- `preview.png` — the normal iso render.
+- `preview.png` — the normal iso render;
+- map properties `iso_scale` (pixels per block) and `iso_units = "blocks"`,
+  plus per-tile `origin_x`/`origin_y` in `objects.tsj`: that is what
+  `import-tiled` needs to restore the scale and the exact placements of a
+  `--tile-layer` map. Object layers carry the same data in `footprint_*`
+  properties.
 
 If the map looks semi-transparent when opened in Tiled, that is the editor,
 not the export: **View → Highlight Current Layer** draws layers above the

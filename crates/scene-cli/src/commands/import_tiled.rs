@@ -110,10 +110,26 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         .flatten()
         .filter_map(Value::as_u64)
         .filter_map(|gid| tile_info(&tilesets, gid as u32))
-        .any(|(model, _)| !model.is_empty());
+        .any(|(model, ..)| !model.is_empty());
+    // A map written by `iso-scene tiled` says so: its tiles reference models
+    // in blocks, while a tileset from the university game uses pixel units.
+    let blocks = property(&map, "iso_units").and_then(Value::as_str) == Some("blocks");
+    let map_scale = property(&map, "iso_scale")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
     let object_mode = !has_tile_models;
-    let scale = scale.unwrap_or(if object_mode { tile_height as u32 } else { 1 });
-    let cell = cell.unwrap_or(if object_mode { 1.0 } else { tile_height });
+    let scale = scale.unwrap_or_else(|| {
+        if object_mode {
+            tile_height as u32
+        } else {
+            map_scale.unwrap_or(1)
+        }
+    });
+    let cell = cell.unwrap_or(if object_mode || blocks {
+        1.0
+    } else {
+        tile_height
+    });
 
     let mut placements = Vec::new();
     let mut used = BTreeSet::new();
@@ -129,7 +145,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
                     let Some(model) = object_model(object) else {
                         continue;
                     };
-                    let Some((x, y, z)) = object_position(object, tile_height) else {
+                    let Some((x, y, z)) = object_position(object, tile_height, cell) else {
                         continue;
                     };
                     let rotation = object_rotation(object);
@@ -154,12 +170,19 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
                     if gid == 0 {
                         continue;
                     }
-                    let Some((model, rotation)) = tile_info(&tilesets, gid as u32) else {
+                    let Some((model, rotation, origin)) = tile_info(&tilesets, gid as u32) else {
                         continue;
                     };
                     let width = map["width"].as_u64().unwrap_or(1) as usize;
-                    let x = (index % width) as f64 * cell;
-                    let y = (index / width) as f64 * cell;
+                    let (cell_x, cell_y) = ((index % width) as f64, (index / width) as f64);
+                    let (x, y) = match origin {
+                        // The exporter stores the offset from the tile's cell
+                        // back to the placement's back corner.
+                        Some([origin_x, origin_y]) => {
+                            ((cell_x + origin_x) * cell, (cell_y + origin_y) * cell)
+                        }
+                        None => (cell_x * cell, cell_y * cell),
+                    };
                     used.insert(model.clone());
                     placements.push(Placement {
                         model,
@@ -244,7 +267,7 @@ fn property<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
         .and_then(|property| property.get("value"))
 }
 
-fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16)> {
+fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16, Option<[f64; 2]>)> {
     let (firstgid, tileset) = tilesets
         .iter()
         .rev()
@@ -254,13 +277,27 @@ fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16)> {
         .as_array()?
         .iter()
         .find(|tile| tile["id"].as_u64() == Some(u64::from(tile_id)))?;
-    let model = property(tile, "model")
-        .and_then(Value::as_str)
-        .or_else(|| tile["type"].as_str())?;
+    // An object tile names its model explicitly (the university game) or
+    // carries the cell origin that `iso-scene tiled` writes. Floor, shadow and
+    // wall tiles have neither and must not become placements.
+    let model = if let Some(model) = property(tile, "model").and_then(Value::as_str) {
+        model.to_string()
+    } else if property(tile, "origin_x").is_some() && property(tile, "origin_y").is_some() {
+        tile["type"].as_str()?.to_string()
+    } else {
+        return None;
+    };
     let rotation = property(tile, "rotation")
         .and_then(Value::as_u64)
         .unwrap_or(0) as u16;
-    Some((model.to_string(), rotation))
+    let origin = match (
+        property(tile, "origin_x").and_then(Value::as_f64),
+        property(tile, "origin_y").and_then(Value::as_f64),
+    ) {
+        (Some(x), Some(y)) => Some([x, y]),
+        _ => None,
+    };
+    Some((model, rotation, origin))
 }
 
 fn object_model(object: &Value) -> Option<String> {
@@ -273,7 +310,7 @@ fn object_model(object: &Value) -> Option<String> {
     Some(kind.to_string())
 }
 
-fn object_position(object: &Value, tile_height: f64) -> Option<(f64, f64, f64)> {
+fn object_position(object: &Value, tile_height: f64, cell: f64) -> Option<(f64, f64, f64)> {
     let x = object["x"].as_f64()? / tile_height;
     let y = object["y"].as_f64()? / tile_height;
     let z = object["properties"]
@@ -283,7 +320,17 @@ fn object_position(object: &Value, tile_height: f64) -> Option<(f64, f64, f64)> 
         .find(|property| property["name"] == "z")
         .and_then(|property| property["value"].as_f64())
         .unwrap_or(0.0);
-    Some((x + z, y + z, z))
+    // `iso-scene tiled` stores the sprite's near corner. `footprint_x/y` are
+    // relative to that corner, so their sum is the placement's back corner in
+    // cells; a map without them keeps the old position as written.
+    let (x, y) = match (
+        property(object, "footprint_x").and_then(Value::as_f64),
+        property(object, "footprint_y").and_then(Value::as_f64),
+    ) {
+        (Some(fx), Some(fy)) => (x + fx, y + fy),
+        _ => (x + z, y + z),
+    };
+    Some((x * cell, y * cell, z))
 }
 
 fn object_rotation(object: &Value) -> u16 {
@@ -348,8 +395,10 @@ fn render_scene(
 }
 
 fn number(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e15 {
-        format!("{}", value as i64)
+    // `object.x / tileheight` and the anchor nudge leave values like
+    // `1.0000003`; the exported map is a grid, so print them as integers.
+    if (value - value.round()).abs() < 1e-6 && value.abs() < 1e15 {
+        format!("{}", value.round() as i64)
     } else {
         format!("{value:.4}")
     }
