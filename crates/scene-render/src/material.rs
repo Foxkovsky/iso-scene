@@ -137,9 +137,10 @@ pub fn builtin(name: &str) -> Option<Palette> {
 
 /// Load a material TOML file and derive flat face tones.
 ///
-/// `color` and `outline` are used; `roughness`, `metallic` and `specular` are
-/// validated but flat shading does not use them yet. Texture blocks are
-/// accepted and ignored for now.
+/// `color` and `outline` are used; `top`, `right` and `left` override the
+/// derived face tones. `roughness`, `metallic` and `specular` are validated but
+/// flat shading does not use them yet. Texture blocks are accepted and used for
+/// the isometric raster.
 ///
 /// # Errors
 ///
@@ -182,6 +183,16 @@ pub fn load(path: &Path) -> Result<Palette, String> {
     };
 
     let mut palette = tone_pair(base, outline);
+    // Optional explicit face tones; by default they are derived from `color`.
+    for (key, tone) in [
+        ("top", &mut palette.top),
+        ("right", &mut palette.right),
+        ("left", &mut palette.left),
+    ] {
+        if let Some(value) = table.get(key).and_then(toml::Value::as_str) {
+            *tone = parse_hex(value)?;
+        }
+    }
     palette.texture = parse_texture(table.get("texture"))?;
     palette.emission = match table.get("emission").and_then(toml::Value::as_str) {
         Some(value) => Some(parse_hex(value)?),
@@ -410,5 +421,61 @@ mod tests {
         assert!((texture.scale - 4.0).abs() < 1e-9);
         assert!((texture.seed - 7.0).abs() < 1e-9);
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod face_tone_tests {
+    use super::load;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "iso-scene-material-tones-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create dir");
+        dir
+    }
+
+    #[test]
+    fn explicit_face_tones_override_the_derived_ones() {
+        let dir = scratch("explicit");
+        let path = dir.join("m.toml");
+        fs::write(
+            &path,
+            "color = \"#BD8953\"\ntop = \"#FFFFFF\"\nright = \"#808080\"\nleft = \"#202020\"\n",
+        )
+        .expect("write");
+        let palette = load(&path).expect("load");
+        assert_eq!(palette.top, [0xFF, 0xFF, 0xFF]);
+        assert_eq!(palette.right, [0x80, 0x80, 0x80]);
+        assert_eq!(palette.left, [0x20, 0x20, 0x20]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn missing_face_tones_keep_the_derivation() {
+        let dir = scratch("derived");
+        let path = dir.join("m.toml");
+        fs::write(&path, "color = \"#BD8953\"\nright = \"#000000\"\n").expect("write");
+        let palette = load(&path).expect("load");
+        assert_eq!(palette.top, [0xBD, 0x89, 0x53]);
+        assert_eq!(palette.right, [0, 0, 0]);
+        assert_eq!(palette.left, [0x70, 0x51, 0x31]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_bad_face_tone_is_an_error() {
+        let dir = scratch("bad");
+        let path = dir.join("m.toml");
+        fs::write(&path, "color = \"#BD8953\"\ntop = \"#GGGGGG\"\n").expect("write");
+        assert!(load(&path).is_err());
+        let _ = fs::remove_dir_all(dir);
     }
 }

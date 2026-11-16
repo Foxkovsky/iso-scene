@@ -8,7 +8,8 @@ on. It will grow with the implementation.
 Built-in names are always available. A scene or model may declare a TOML
 material alias; the renderer loads the file once per render. Flat tones are
 derived from `color`: `top = color`, `right = 0.78 * color`,
-`left = 0.59 * color`; `outline` is used as-is. `roughness`, `metallic` and
+`left = 0.59 * color`; optional `top`, `right` and `left` keys override any of
+them, and `outline` is used as-is. `roughness`, `metallic` and
 `specular` are validated but not used by flat shading yet, and texture blocks
 are accepted but ignored. `emission` replaces the visible face colour with a
 fixed glow colour; `glow` (0..=1) feeds the screen-space bloom mask.
