@@ -116,7 +116,8 @@ Occupancy sampling of the same `SceneGraph`:
 - `objects.tsj` + `objects.png` — atlas of unique object/rotation sprites;
 - `walls.tsj`/`walls.png` and `wall_shadow.tsj`/`wall_shadow.png` with
   `--walls`;
-- `preview.png` — the normal iso render;
+- `preview.png` — the normal iso render, skipped with a warning when the
+  image would exceed the limits (the map is still written);
 - map properties `iso_scale` (pixels per block), `iso_units = "blocks"`,
   `iso_background`, `iso_sun`, `iso_ambient`, when the scene sets one
   `iso_canvas`, and with `--walls` the exact `iso_walls_layout` /

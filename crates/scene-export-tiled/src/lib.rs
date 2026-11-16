@@ -65,6 +65,8 @@ pub struct ExportReport {
     pub objects_tileset: Option<PathBuf>,
     pub walls_tileset: Option<PathBuf>,
     pub preview: Option<PathBuf>,
+    /// Why `preview.png` was not written, when the map itself is fine.
+    pub preview_skipped: Option<String>,
     pub instances: usize,
     pub cells: [u32; 2],
     /// Overlapping objects and objects on wall cells, sorted.
@@ -664,11 +666,22 @@ pub fn export_with(
     let map_path = out_dir.join("scene.tmj");
     write_json(&map_path, &map)?;
 
+    // The map is the product; a preview that would exceed the image limits is
+    // skipped with a warning instead of failing the whole export.
+    let mut preview_skipped = None;
     let preview_path = if has_objects {
-        let preview = scene_backend_iso::render(scene)?;
-        let path = out_dir.join("preview.png");
-        write_png(&preview, &path).map_err(|message| error("E0603", message))?;
-        Some(path)
+        match scene_backend_iso::render(scene) {
+            Ok(preview) => {
+                let path = out_dir.join("preview.png");
+                write_png(&preview, &path).map_err(|message| error("E0603", message))?;
+                Some(path)
+            }
+            Err(error) if error.code == "E0602" => {
+                preview_skipped = Some(error.message.clone());
+                None
+            }
+            Err(error) => return Err(error),
+        }
     } else {
         None
     };
@@ -679,6 +692,7 @@ pub fn export_with(
         objects_tileset: object_ts_path,
         walls_tileset: wall_tileset_path,
         preview: preview_path,
+        preview_skipped,
         instances: scene.instances.len(),
         collisions,
         cells: [width, height],

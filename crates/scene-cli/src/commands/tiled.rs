@@ -78,6 +78,9 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
             ),
         }
     }
+    if let Some(reason) = &exported.preview_skipped {
+        eprintln!("warning: preview skipped: {reason}");
+    }
     println!(
         "wrote {} ({}x{} cells, {} instances); open it in Tiled; preview: {}",
         exported.map.display(),
@@ -85,7 +88,10 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         exported.cells[1],
         exported.instances,
         exported.preview.as_ref().map_or_else(
-            || "none (no objects)".to_string(),
+            || match &exported.preview_skipped {
+                Some(reason) => format!("none (skipped: {reason})"),
+                None => "none (no objects)".to_string(),
+            },
             |p| p.display().to_string()
         )
     );

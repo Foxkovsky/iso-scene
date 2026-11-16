@@ -563,6 +563,9 @@ fn export(arguments: &Value, root: &Path) -> Result<Value, String> {
                     .iter()
                     .map(|collision| format!("warning: {collision:?}")),
             );
+            if let Some(reason) = &report.preview_skipped {
+                lines.push(format!("warning: preview skipped: {reason}"));
+            }
             Ok(text(lines.join("\n")))
         }
         "voxel" => {
