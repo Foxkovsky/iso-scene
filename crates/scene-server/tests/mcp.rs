@@ -48,6 +48,7 @@ place b at (s * 2, 0, 0);
 ";
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn an_agent_checks_renders_exports_and_reads_the_spec() {
     let root = scratch("session");
     fs::write(root.join("room.scene"), ROOM).expect("scene");
@@ -105,7 +106,10 @@ fn an_agent_checks_renders_exports_and_reads_the_spec() {
         .iter()
         .filter_map(|tool| tool["name"].as_str())
         .collect();
-    assert_eq!(tools, ["check", "render", "export", "help", "limits"]);
+    assert_eq!(
+        tools,
+        ["check", "render", "export", "sprites", "help", "limits"]
+    );
     assert!(
         text(reply(3)).starts_with("ok: 1 instances"),
         "{}",
@@ -182,5 +186,29 @@ fn an_agent_rotates_and_writes_a_tile_layer_map() {
         .expect("objects layer");
     assert_eq!(objects["type"], "tilelayer");
     assert_eq!(replies[3]["result"]["isError"], true);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn an_agent_packs_a_sprite_sheet() {
+    let root = scratch("sprites");
+    fs::write(root.join("room.scene"), ROOM).expect("scene");
+    let replies = session(
+        &root,
+        &[
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}}}),
+            call(
+                2,
+                "sprites",
+                &json!({"path": "room.scene", "views": 4, "atlas": true}),
+            ),
+            call(3, "sprites", &json!({"path": "room.scene", "views": 7})),
+        ],
+    );
+    assert!(text(&replies[1]).contains("wrote"), "{}", text(&replies[1]));
+    assert!(root.join("out/sprites/room/room.png").is_file());
+    assert!(root.join("out/sprites/room/room.json").is_file());
+    assert!(root.join("out/sprites/room/room.atlas.json").is_file());
+    assert_eq!(replies[2]["result"]["isError"], true);
     let _ = fs::remove_dir_all(root);
 }

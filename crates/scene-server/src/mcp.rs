@@ -4,9 +4,13 @@
 //! Every path is resolved against the server's working directory (the
 //! project root) and must stay inside it, for reading and for writing.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+
+use scene_export_sprites::{Pivot, Projection, SheetObject, SheetOptions};
 
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Program, RenderKind};
@@ -133,6 +137,26 @@ fn tools() -> Value {
             }
         },
         {
+            "name": "sprites",
+            "description": "Pack the objects placed by a .scene (or declared by a .model) into a sprite sheet with a JSON manifest and a Tiled tileset.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": path,
+                    "views": {"type": "integer", "enum": [1, 2, 4, 8, 16], "description": "directions around the object; default 4"},
+                    "angles": {"type": "array", "items": {"type": "number"}, "description": "explicit view angles, overrides `views`"},
+                    "scale": {"type": "integer", "minimum": 1, "maximum": 256, "description": "pixels per block; a scene supplies it, a model defaults to 16"},
+                    "projection": {"type": "string", "enum": ["iso", "top", "front", "side"]},
+                    "pivot": {"type": "string", "enum": ["front", "back", "left", "right", "center"]},
+                    "atlas": {"type": "boolean", "description": "also write a Phaser/PixiJS atlas"},
+                    "shadow": {"type": "boolean", "description": "bake the contact shadow; default true"},
+                    "out": {"type": "string", "description": "output directory; default out/sprites/<stem>"},
+                    "name": {"type": "string", "description": "sheet name; default the source stem"}
+                },
+                "required": ["path"]
+            }
+        },
+        {
             "name": "help",
             "description": "One section of the language spec. Without `topic`, the list of topics and a minimal scene.",
             "inputSchema": {"type": "object", "properties": {"topic": {"type": "string", "enum": help::names()}}}
@@ -151,6 +175,7 @@ fn call(name: &str, arguments: &Value, root: &Path) -> Option<Value> {
         "check" => check(arguments, root),
         "render" => render(arguments, root),
         "export" => export(arguments, root),
+        "sprites" => sprites(arguments, root),
         "help" => match arguments["topic"].as_str() {
             None => Ok(text(help::index())),
             Some(topic) => match help::topic(topic) {
@@ -503,6 +528,182 @@ fn export(arguments: &Value, root: &Path) -> Result<Value, String> {
             "unknown format `{other}`; use tiled, voxel or animate"
         )),
     }
+}
+
+type SheetInputs = (
+    Vec<SheetObject>,
+    BTreeMap<String, PathBuf>,
+    Option<u32>,
+    Option<Projection>,
+);
+
+/// Objects, materials and defaults of one `.scene` or `.model`.
+fn sheet_inputs(source: &Source, root: &Path) -> Result<SheetInputs, String> {
+    match crate::analysis::FileKind::of(&source.path) {
+        crate::analysis::FileKind::Scene => {
+            let scene = source.scene(root)?;
+            let mut seen = std::collections::BTreeSet::new();
+            let mut objects = Vec::new();
+            for instance in &scene.instances {
+                if seen.insert(instance.object.name.clone()) {
+                    objects.push(SheetObject {
+                        name: instance.object.name.clone(),
+                        object: Arc::clone(&instance.object),
+                        source: Some(source.shown.clone()),
+                    });
+                }
+            }
+            let projection = match scene.render {
+                RenderKind::Iso => Projection::Iso,
+                RenderKind::Top => Projection::Top,
+                RenderKind::Front => Projection::Front,
+                RenderKind::Side => Projection::Side,
+            };
+            Ok((
+                objects,
+                scene.materials.clone(),
+                Some(scene.scale),
+                Some(projection),
+            ))
+        }
+        crate::analysis::FileKind::Model => {
+            let program = source.program()?;
+            let model = scene_core::compile_model(&program, source.directory())
+                .map_err(|error| source.report(&error))?;
+            let objects = model
+                .objects
+                .iter()
+                .map(|(name, object)| SheetObject {
+                    name: name.clone(),
+                    object: Arc::clone(object),
+                    source: Some(source.shown.clone()),
+                })
+                .collect();
+            Ok((objects, model.materials.clone(), None, None))
+        }
+        _ => Err("`sprites` needs a .scene or .model file".to_owned()),
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn sprites(arguments: &Value, root: &Path) -> Result<Value, String> {
+    let source = Source::load(root, arguments)?;
+    let (objects, materials, scene_scale, scene_projection) = sheet_inputs(&source, root)?;
+    let scale_inferred = arguments["scale"].is_null() && scene_scale.is_none();
+    let scale = match arguments["scale"].as_u64() {
+        Some(scale) => u32::try_from(scale).map_err(|_| "`scale` is too large".to_owned())?,
+        None => scene_scale.unwrap_or(16),
+    };
+    if !(1..=scene_core::MAX_SCALE).contains(&scale) {
+        return Err(format!("`scale` must be in 1..={}", scene_core::MAX_SCALE));
+    }
+    let projection = match arguments["projection"].as_str() {
+        Some(name) => Projection::parse(name)
+            .ok_or_else(|| format!("unknown projection `{name}`; use iso, top, front or side"))?,
+        None => scene_projection.unwrap_or_default(),
+    };
+    let views = match arguments["angles"].as_array() {
+        Some(angles) => {
+            let mut views = Vec::with_capacity(angles.len());
+            for angle in angles {
+                let angle = angle
+                    .as_f64()
+                    .filter(|angle| angle.is_finite())
+                    .ok_or_else(|| "`angles` must be finite numbers".to_owned())?;
+                views.push(angle);
+            }
+            views
+        }
+        None => match arguments["views"].as_u64() {
+            Some(count) => {
+                let count = u32::try_from(count)
+                    .ok()
+                    .filter(|count| matches!(count, 1 | 2 | 4 | 8 | 16))
+                    .ok_or_else(|| format!("`views` must be 1, 2, 4, 8 or 16, got {count}"))?;
+                match count {
+                    1 => vec![0.0],
+                    2 => vec![0.0, 180.0],
+                    _ => (0..count)
+                        .map(|index| f64::from(index) * 360.0 / f64::from(count))
+                        .collect(),
+                }
+            }
+            None => vec![0.0, 90.0, 180.0, 270.0],
+        },
+    };
+    if views.is_empty() {
+        return Err("at least one view or angle is required".to_owned());
+    }
+    let pivot = match arguments["pivot"].as_str() {
+        Some(name) => Pivot::parse(name)
+            .ok_or_else(|| "`pivot` must be front, back, left, right or center".to_owned())?,
+        None => Pivot::default(),
+    };
+    let stem = arguments["name"].as_str().map_or_else(
+        || {
+            source.path.file_stem().map_or_else(
+                || "sheet".to_owned(),
+                |stem| stem.to_string_lossy().into_owned(),
+            )
+        },
+        str::to_owned,
+    );
+    let out = match arguments["out"].as_str() {
+        Some(out) => inside(root, Some(out), "out")?,
+        None => root.join("out/sprites").join(&stem),
+    };
+    let options = SheetOptions {
+        name: stem,
+        scale,
+        projection,
+        views,
+        pivot,
+        shadow: arguments["shadow"].as_bool().unwrap_or(true),
+        padding: 0,
+        debug_grid: false,
+        atlas: arguments["atlas"].as_bool().unwrap_or(false),
+        max_rows: None,
+        animations: Vec::new(),
+        tile_width: match projection {
+            Projection::Iso => scale.checked_mul(2),
+            Projection::Top | Projection::Front | Projection::Side => Some(scale),
+        },
+    };
+    let report = scene_export_sprites::export(&objects, &materials, &options, &out)
+        .map_err(|error| format!("error[{}]: {}", error.code, error.message))?;
+    let shown = |path: &Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string()
+    };
+    let mut lines = vec![format!(
+        "wrote {} ({}x{} cells of {}x{}, {} sprites, {} frames, scale {scale}, projection {})",
+        shown(&report.image),
+        report.columns,
+        report.rows,
+        report.cells[0],
+        report.cells[1],
+        report.sprites,
+        report.frames,
+        projection.name()
+    )];
+    for extra in report.debug.iter().chain(&report.atlas) {
+        lines.push(format!("wrote {}", shown(extra)));
+    }
+    if report.pages > 1 {
+        lines.push(format!(
+            "{} pages; the manifest lists them all: {}",
+            report.pages,
+            shown(&report.manifest)
+        ));
+    }
+    if scale_inferred {
+        lines.push(format!(
+            "note: a .model has no scale; used {scale} px per block (pass `scale`)"
+        ));
+    }
+    Ok(text(lines.join("\n")))
 }
 
 fn create_parent(path: &Path) -> Result<(), String> {
