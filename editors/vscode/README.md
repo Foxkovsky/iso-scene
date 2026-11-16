@@ -52,7 +52,7 @@
 ```bash
 cargo install --path crates/scene-cli
 cd editors/vscode && npx @vscode/vsce package
-code --install-extension iso-scene-0.7.0.vsix
+code --install-extension iso-scene-0.8.0.vsix
 ```
 
 CLI ищется в `PATH`, затем в `~/.cargo/bin/iso-scene`; путь задаётся
@@ -76,7 +76,7 @@ F12, автодополнение, символы, `.walls`, сборка, пр�
 ```bash
 make vscode-it                       # из исходников расширения
 VSCODE=/usr/share/code/code xvfb-run -a \
-    node editors/vscode/test/vscode/run.js --vsix iso-scene-0.7.0.vsix
+    node editors/vscode/test/vscode/run.js --vsix iso-scene-0.8.0.vsix
 ```
 
 `VSCODE` — исполняемый файл редактора (у Arch-пакета это

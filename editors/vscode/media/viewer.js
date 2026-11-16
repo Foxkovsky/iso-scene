@@ -2,6 +2,7 @@
 const vscode = acquireVsCodeApi();
 const iso = document.querySelector('#iso');
 const views = document.querySelector('#views');
+const anims = document.querySelector('#anims');
 const canvas = document.querySelector('#canvas');
 const ctx = canvas.getContext('2d');
 const info = document.querySelector('#info');
@@ -22,6 +23,7 @@ function switchTab(next) {
     buttons.forEach((b) => b.classList.toggle('active', b.dataset.tab === next));
     iso.style.display = next === 'iso' ? 'grid' : 'none';
     views.style.display = next === 'drawing' ? 'grid' : 'none';
+    anims.style.display = next === 'anim' ? 'grid' : 'none';
     canvas.style.display = next === 'voxel' ? 'block' : 'none';
     hint.textContent = next === 'voxel'
         ? 'Вращение: перетаскивание мышью. Масштаб: колесо. Оси X/Y/Z — от начала сетки.'
@@ -36,10 +38,26 @@ function switchTab(next) {
             if (data.drawing[index]) el.src = 'data:image/png;base64,' + data.drawing[index];
         });
     }
+    if (next === 'anim') showAnims();
     if (next === 'voxel') {
         if (model) draw();
         else ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
+}
+
+function showAnims() {
+    if (!data || !data.anim) return;
+    anims.replaceChildren();
+    data.anim.names.forEach((name, index) => {
+        const figure = document.createElement('figure');
+        const image = document.createElement('img');
+        image.alt = name;
+        image.src = 'data:image/gif;base64,' + data.anim.images[index];
+        const caption = document.createElement('figcaption');
+        caption.textContent = name;
+        figure.append(image, caption);
+        anims.append(figure);
+    });
 }
 
 buttons.forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
@@ -171,6 +189,9 @@ window.addEventListener('message', (event) => {
     } else if (m.kind === 'iso') {
         data.iso = m.images || [m.image];
         info.textContent = 'Изометрия: 0°, 90°, 180°, 270°';
+    } else if (m.kind === 'anim') {
+        data.anim = { names: m.names, images: m.images };
+        info.textContent = 'Анимация: ' + m.names.join(', ');
     } else {
         data[m.kind] = m.image;
         info.textContent = 'Обновлено';

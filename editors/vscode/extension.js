@@ -109,6 +109,21 @@ async function render(document, tab, token) {
             }));
             if (token !== version) return;
             panel.webview.postMessage({ type: 'render', kind: 'iso', images });
+        } else if (tab === 'anim') {
+            const stem = path.basename(source, path.extname(source));
+            const animDir = path.join(dir, `${stem}-anim`);
+            fs.rmSync(animDir, { recursive: true, force: true });
+            fs.mkdirSync(animDir, { recursive: true });
+            await runCli(['animate', source, '--base', base, '-o', animDir], base);
+            const names = fs.readdirSync(animDir, { withFileTypes: true })
+                .filter((entry) => entry.isDirectory())
+                .map((entry) => entry.name)
+                .filter((name) => fs.existsSync(path.join(animDir, name, `${name}.gif`)))
+                .sort();
+            if (!names.length) throw new Error('в сцене нет animation с готовым GIF');
+            const images = names.map((name) => imageData(path.join(animDir, name, `${name}.gif`)));
+            if (token !== version) return;
+            panel.webview.postMessage({ type: 'render', kind: 'anim', names, images });
         } else if (tab === 'drawing') {
             const images = [];
             for (const view of ['top', 'front', 'side']) {
@@ -171,12 +186,17 @@ img{max-width:100%;image-rendering:pixelated;display:none}
 #views img{display:block;margin:0 auto}
 #views figure{margin:0;padding:8px}
 #views figcaption{text-align:center;color:#9aa0a8;font-size:12px;margin-top:4px}
+#anims{display:none;grid-template-columns:1fr;gap:12px;padding:8px}
+#anims figure{margin:0;padding:8px;border-radius:8px;background-color:#202226}
+#anims img{display:block;max-width:100%;margin:0 auto;image-rendering:auto}
+#anims figcaption{text-align:center;color:#9aa0a8;font-size:12px;margin-top:4px}
 canvas{width:100%;height:70vh;touch-action:none;display:none;background:#202226;border-radius:8px}
 #hint{padding:8px;color:#9aa0a8}
 </style></head><body>
 <nav>
   <button data-tab="iso" class="active">Изометрия</button>
   <button data-tab="drawing">Чертёж</button>
+  <button data-tab="anim">Анимация</button>
   <button data-tab="voxel">Воксели</button>
 </nav>
 <div id="info">Загрузка…</div>
@@ -191,6 +211,7 @@ canvas{width:100%;height:70vh;touch-action:none;display:none;background:#202226;
   <figure><img alt="front"><figcaption>спереди (XZ)</figcaption></figure>
   <figure><img alt="side"><figcaption>сбоку (YZ)</figcaption></figure>
 </div>
+<div id="anims"></div>
 <canvas id="canvas"></canvas>
 <div id="hint"></div>
 <script nonce="${nonce}" src="${voxUri}"></script>
@@ -223,7 +244,7 @@ function start(document) {
         });
         panel.webview.onDidReceiveMessage((m) => {
             if (m.type === 'ready') schedule(current);
-            if (m.type === 'tab' && ['iso', 'drawing', 'voxel'].includes(m.tab)) {
+            if (m.type === 'tab' && ['iso', 'drawing', 'anim', 'voxel'].includes(m.tab)) {
                 activeTab = m.tab;
                 schedule(current);
             }
