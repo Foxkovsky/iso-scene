@@ -115,11 +115,19 @@ Occupancy sampling of the same `SceneGraph`:
 - `walls.tsj`/`walls.png` and `wall_shadow.tsj`/`wall_shadow.png` with
   `--walls`;
 - `preview.png` — the normal iso render;
-- map properties `iso_scale` (pixels per block) and `iso_units = "blocks"`,
-  plus per-tile `origin_x`/`origin_y` in `objects.tsj`: that is what
-  `import-tiled` needs to restore the scale and the exact placements of a
-  `--tile-layer` map. Object layers carry the same data in `footprint_*`
-  properties.
+- map properties `iso_scale` (pixels per block), `iso_units = "blocks"`,
+  `iso_background`, `iso_sun`, `iso_ambient` and, when the scene sets one,
+  `iso_canvas`; plus per-tile `origin_x`/`origin_y` in `objects.tsj`. That is
+  what `import-tiled` needs to restore the scene settings, the scale and the
+  exact placements of a `--tile-layer` map. Object layers carry the positions
+  in `footprint_*` properties.
+
+`import-tiled` also rebuilds `<name>.walls` from the `walls`, `walls-back`
+and `walls-front` layers (the height comes from the wall tileset). A Tiled map
+does not record the original wall material or which gap was a door and which
+a window, so the generated file keeps the default palette and plain floor in
+the gaps; both are noted in its header. A map with walls but no objects imports
+as an empty scene plus `.walls`.
 
 If the map looks semi-transparent when opened in Tiled, that is the editor,
 not the export: **View → Highlight Current Layer** draws layers above the

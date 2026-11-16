@@ -370,9 +370,9 @@ pub fn export_with(
                         // the tile's cell, so `import-tiled` can undo the cell
                         // snap that a tile layer applies to the sprite.
                         {"name": "origin_x", "type": "float",
-                         "value": -(key.bottom_world[0] - 1.0).floor()},
+                         "value": 0.0 - (key.bottom_world[0] - 1.0).floor()},
                         {"name": "origin_y", "type": "float",
-                         "value": -(key.bottom_world[1] - 1.0).floor()},
+                         "value": 0.0 - (key.bottom_world[1] - 1.0).floor()},
                         {"name": "walkable", "type": "bool", "value": false},
                         {"name": "collides", "type": "bool", "value": true}
                     ]
@@ -615,6 +615,24 @@ pub fn export_with(
     }
     let next_layer_id = layers.len() + 1;
 
+    let background = match scene.background {
+        scene_syntax::ast::Background::Transparent => "transparent".to_owned(),
+        scene_syntax::ast::Background::Color([r, g, b]) => format!("#{r:02x}{g:02x}{b:02x}"),
+    };
+    let mut properties = vec![
+        json!({"name": "iso_scale", "type": "int", "value": scale}),
+        json!({"name": "iso_units", "type": "string", "value": "blocks"}),
+        json!({"name": "iso_background", "type": "string", "value": background}),
+        json!({"name": "iso_sun", "type": "string",
+               "value": format!("{} {}", scene.sun[0], scene.sun[1])}),
+        json!({"name": "iso_ambient", "type": "float", "value": scene.ambient}),
+    ];
+    if let Some([width, depth, height]) = scene.canvas {
+        properties.push(json!({
+            "name": "iso_canvas", "type": "string",
+            "value": format!("{width} {depth} {height}")
+        }));
+    }
     let map = json!({
         "type": "map",
         "version": "1.10",
@@ -626,10 +644,7 @@ pub fn export_with(
         "tilewidth": tile_w,
         "tileheight": tile_h,
         "infinite": false,
-        "properties": [
-            {"name": "iso_scale", "type": "int", "value": scale},
-            {"name": "iso_units", "type": "string", "value": "blocks"}
-        ],
+        "properties": properties,
         "nextlayerid": next_layer_id,
         "nextobjectid": 2 * ordered.len() + 1,
         "tilesets": tilesets,

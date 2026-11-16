@@ -125,11 +125,18 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
             map_scale.unwrap_or(1)
         }
     });
+    if !(1..=scene_core::MAX_SCALE).contains(&scale) {
+        return Err(usage(format!(
+            "cannot infer a scene scale from the map; pass --scale (1..={})",
+            scene_core::MAX_SCALE
+        )));
+    }
     let cell = cell.unwrap_or(if object_mode || blocks {
         1.0
     } else {
         tile_height
     });
+    let settings = scene_settings(&map);
 
     let mut placements = Vec::new();
     let mut used = BTreeSet::new();
@@ -198,39 +205,56 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
             _ => {}
         }
     }
-    if placements.is_empty() {
+    let walls = collect_walls(&map, &tilesets);
+    if walls.is_none() && has_wall_tiles(&map, &tilesets) {
+        eprintln!(
+            "iso-scene: wall layers found, but the wall height does not fit `1..=8`; no .walls written"
+        );
+    }
+    if placements.is_empty() && walls.is_none() {
         return Err(usage(format!(
             "no objects or tiles with a model on layers {selected:?}; pass --layers"
         )));
     }
-    let Some(models) = models else {
-        return Err(usage(
-            "`--models <dir>` is required: the scene needs the .model files",
-        ));
-    };
-    let scene = render_scene(&name, &map_path, scale, &placements, &used);
+    let scene = render_scene(&name, &map_path, scale, &placements, &used, &settings);
     fs::create_dir_all(&output)
         .map_err(|error| usage(format!("cannot create `{}`: {error}", output.display())))?;
-    for model in &used {
-        let from = models.join(format!("{model}.model"));
-        if !from.is_file() {
-            return Err(usage(format!(
-                "model `{model}` not found in `{}`",
-                models.display()
-            )));
+    if !used.is_empty() {
+        let Some(models) = models.as_deref() else {
+            return Err(usage(
+                "`--models <dir>` is required: the scene needs the .model files",
+            ));
+        };
+        for model in &used {
+            let from = models.join(format!("{model}.model"));
+            if !from.is_file() {
+                return Err(usage(format!(
+                    "model `{model}` not found in `{}`",
+                    models.display()
+                )));
+            }
+            fs::copy(&from, output.join(format!("{model}.model"))).map_err(|error| {
+                usage(format!(
+                    "cannot copy `{}` to `{}`: {error}",
+                    from.display(),
+                    output.display()
+                ))
+            })?;
         }
-        fs::copy(&from, output.join(format!("{model}.model"))).map_err(|error| {
-            usage(format!(
-                "cannot copy `{}` to `{}`: {error}",
-                from.display(),
-                output.display()
-            ))
-        })?;
+        copy_assets(models, &output)?;
     }
-    copy_assets(&models, &output)?;
     let scene_path = output.join(format!("{name}.scene"));
     fs::write(&scene_path, scene)
         .map_err(|error| usage(format!("cannot write `{}`: {error}", scene_path.display())))?;
+    let walls_path = match &walls {
+        Some(grid) => {
+            let path = output.join(format!("{name}.walls"));
+            fs::write(&path, render_walls(&map_path, grid))
+                .map_err(|error| usage(format!("cannot write `{}`: {error}", path.display())))?;
+            Some(path)
+        }
+        None => None,
+    };
     println!(
         "wrote {} ({} placements, {} models, scale {}, cell {})",
         scene_path.display(),
@@ -239,6 +263,13 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         scale,
         cell
     );
+    if let (Some(path), Some(grid)) = (&walls_path, &walls) {
+        println!(
+            "restored walls: {} (height {}; see its header for material and gaps)",
+            path.display(),
+            grid.height
+        );
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -268,16 +299,20 @@ fn property<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
         .and_then(|property| property.get("value"))
 }
 
-fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16, f64, Option<[f64; 2]>)> {
+fn tile_json(tilesets: &[(u32, Value)], gid: u32) -> Option<&Value> {
     let (firstgid, tileset) = tilesets
         .iter()
         .rev()
         .find(|(firstgid, _)| *firstgid <= gid)?;
     let tile_id = gid - firstgid;
-    let tile = tileset["tiles"]
+    tileset["tiles"]
         .as_array()?
         .iter()
-        .find(|tile| tile["id"].as_u64() == Some(u64::from(tile_id)))?;
+        .find(|tile| tile["id"].as_u64() == Some(u64::from(tile_id)))
+}
+
+fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16, f64, Option<[f64; 2]>)> {
+    let tile = tile_json(tilesets, gid)?;
     // An object tile names its model explicitly (the university game) or
     // carries the cell origin that `iso-scene tiled` writes. Floor, shadow and
     // wall tiles have neither and must not become placements.
@@ -302,6 +337,153 @@ fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16, f64, O
         _ => None,
     };
     Some((model, rotation, turn, origin))
+}
+
+/// Wall cells rebuilt from the wall layers of a Tiled map.
+struct WallGrid {
+    columns: u32,
+    rows: u32,
+    height: u32,
+    cells: Vec<bool>,
+}
+
+/// Layer names `iso-scene tiled` uses for walls.
+const WALL_LAYERS: [&str; 5] = [
+    "walls",
+    "walls-back",
+    "walls-front",
+    "walls_back",
+    "walls_front",
+];
+
+/// A wall tile of `iso-scene tiled`: the 16-mask autotile, not a wall model
+/// sprite (the university game puts `wall.model` tiles into its wall layers).
+fn is_wall_tile(tile: &Value) -> bool {
+    property(tile, "mask").is_some()
+}
+
+fn has_wall_tiles(map: &Value, tilesets: &[(u32, Value)]) -> bool {
+    map["layers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|layer| {
+            layer["type"] == "tilelayer"
+                && layer["name"]
+                    .as_str()
+                    .is_some_and(|name| WALL_LAYERS.contains(&name))
+        })
+        .filter_map(|layer| layer["data"].as_array())
+        .flatten()
+        .filter_map(Value::as_u64)
+        .filter(|gid| *gid > 0)
+        .any(|gid| tile_json(tilesets, gid as u32).is_some_and(is_wall_tile))
+}
+
+/// Rebuild the wall grid from `walls`, `walls-back` and `walls-front` layers.
+///
+/// The map stores the cells and the tile height but not the original material
+/// or which gap was a door and which a window; those stay in the header of the
+/// generated `.walls` file as a note.
+fn collect_walls(map: &Value, tilesets: &[(u32, Value)]) -> Option<WallGrid> {
+    let columns = u32::try_from(map["width"].as_u64()?).ok()?;
+    let rows = u32::try_from(map["height"].as_u64()?).ok()?;
+    if columns == 0 || rows == 0 {
+        return None;
+    }
+    let map_height = map["tileheight"].as_f64()?;
+    let mut cells = vec![false; (columns as usize).checked_mul(rows as usize)?];
+    let mut height = None;
+    for layer in map["layers"].as_array().into_iter().flatten() {
+        let name = layer["name"].as_str().unwrap_or_default();
+        if layer["type"] != "tilelayer" || !WALL_LAYERS.contains(&name) {
+            continue;
+        }
+        let Some(data) = layer["data"].as_array() else {
+            continue;
+        };
+        for (index, gid) in data.iter().enumerate() {
+            let Some(gid) = gid.as_u64() else {
+                continue;
+            };
+            if gid == 0 {
+                continue;
+            }
+            let Some(tile) = tile_json(tilesets, gid as u32) else {
+                continue;
+            };
+            if !is_wall_tile(tile) {
+                continue;
+            }
+            let x = index % columns as usize;
+            let y = index / columns as usize;
+            if x >= columns as usize || y >= rows as usize {
+                continue;
+            }
+            cells[y * columns as usize + x] = true;
+            if height.is_none() {
+                // The wall tileset is one height unit taller than the wall.
+                height = Some(wall_height(tilesets, gid as u32, map_height));
+            }
+        }
+    }
+    if !cells.iter().any(|&wall| wall) {
+        return None;
+    }
+    // A `.walls` height is `1..=8`; a taller autotile cannot be represented.
+    let height = height.flatten()?;
+    Some(WallGrid {
+        columns,
+        rows,
+        height,
+        cells,
+    })
+}
+
+fn wall_height(tilesets: &[(u32, Value)], gid: u32, map_height: f64) -> Option<u32> {
+    let (firstgid, tileset) = tilesets
+        .iter()
+        .rev()
+        .find(|(firstgid, _)| *firstgid <= gid)?;
+    let _ = firstgid;
+    let tile_height = tileset["tileheight"].as_f64()?;
+    if !map_height.is_finite() || map_height <= 0.0 {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let walls = (tile_height / map_height).round() as i64 - 1;
+    u32::try_from(walls)
+        .ok()
+        .filter(|value| (1..=8).contains(value))
+}
+
+fn render_walls(map_path: &str, grid: &WallGrid) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    let _ = writeln!(
+        text,
+        "// rebuilt from {map_path} by `iso-scene import-tiled`"
+    );
+    text.push_str(
+        "// Door and window gaps are plain floor: a Tiled map does not record which was which,\n",
+    );
+    text.push_str(
+        "// so a re-export can move a wall between the back and the front layer near a gap.\n",
+    );
+    text.push_str("// The wall palette is baked into the tileset; add `material` to restore it.\n");
+    text.push_str("version 1;\n");
+    let _ = writeln!(text, "height {};", grid.height);
+    text.push_str("layout {\n");
+    for y in 0..grid.rows {
+        text.push_str("    \"");
+        for x in 0..grid.columns {
+            let wall = grid.cells[(y * grid.columns + x) as usize];
+            text.push(if wall { '#' } else { '.' });
+        }
+        text.push_str("\"\n");
+    }
+    text.push_str("}\n");
+    text
 }
 
 fn object_model(object: &Value) -> Option<String> {
@@ -358,12 +540,80 @@ struct Placement {
     turn: f64,
 }
 
+/// Scene-level settings `iso-scene tiled` keeps in map properties.
+#[derive(Default)]
+struct SceneSettings {
+    background: Option<String>,
+    sun: Option<[f64; 2]>,
+    ambient: Option<f64>,
+    canvas: Option<[f64; 3]>,
+}
+
+fn scene_settings(map: &Value) -> SceneSettings {
+    SceneSettings {
+        background: property(map, "iso_background")
+            .and_then(Value::as_str)
+            .and_then(valid_background),
+        sun: property(map, "iso_sun")
+            .and_then(Value::as_str)
+            .and_then(parse_sun),
+        ambient: property(map, "iso_ambient")
+            .and_then(Value::as_f64)
+            .filter(|value| (0.0..=1.0).contains(value)),
+        canvas: property(map, "iso_canvas")
+            .and_then(Value::as_str)
+            .and_then(parse_canvas),
+    }
+}
+
+/// A `#RRGGBB` colour or `transparent`; anything else is dropped rather than
+/// written into a scene the parser would reject.
+fn valid_background(text: &str) -> Option<String> {
+    if text == "transparent" {
+        return Some(text.to_owned());
+    }
+    let digits = text.strip_prefix('#')?;
+    (digits.len() == 6
+        && digits
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()))
+    .then(|| text.to_owned())
+}
+
+fn parse_sun(text: &str) -> Option<[f64; 2]> {
+    let mut parts = text.split_whitespace();
+    let azimuth = parts.next()?.parse::<f64>().ok()?;
+    let altitude = parts.next()?.parse::<f64>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    ((0.0..=360.0).contains(&azimuth) && (0.0..=90.0).contains(&altitude))
+        .then_some([azimuth, altitude])
+}
+
+fn parse_canvas(text: &str) -> Option<[f64; 3]> {
+    let mut parts = text.split_whitespace();
+    let mut size = [0.0; 3];
+    for value in &mut size {
+        *value = parts.next()?.parse::<f64>().ok()?;
+    }
+    if parts.next().is_some()
+        || !size.iter().all(|value| {
+            value.is_finite() && *value > 0.0 && *value <= scene_core::MAX_CANVAS_BLOCKS
+        })
+    {
+        return None;
+    }
+    Some(size)
+}
+
 fn render_scene(
     name: &str,
     map_path: &str,
     scale: u32,
     placements: &[Placement],
     used: &BTreeSet<String>,
+    settings: &SceneSettings,
 ) -> String {
     use std::fmt::Write as _;
     let mut scene = String::new();
@@ -375,10 +625,24 @@ fn render_scene(
     for model in used {
         let _ = writeln!(scene, "include \"{model}.model\";");
     }
-    let _ = writeln!(
-        scene,
-        "\nrender iso;\nscale {scale};\nbackground transparent;\n"
-    );
+    let _ = writeln!(scene, "\nrender iso;\nscale {scale};");
+    let background = settings.background.as_deref().unwrap_or("transparent");
+    let _ = writeln!(scene, "background {background};");
+    if let Some([azimuth, altitude]) = settings.sun {
+        let _ = writeln!(scene, "sun ({}, {});", number(azimuth), number(altitude));
+    }
+    if let Some(ambient) = settings.ambient {
+        let _ = writeln!(scene, "ambient {};", number(ambient));
+    }
+    if let Some([width, depth, height]) = settings.canvas {
+        let _ = writeln!(
+            scene,
+            "canvas ({}, {}, {});",
+            number(width),
+            number(depth),
+            number(height)
+        );
+    }
     let _ = writeln!(scene, "// scene {name}");
     for placement in placements {
         let _ = write!(

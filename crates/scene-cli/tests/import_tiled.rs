@@ -138,7 +138,7 @@ fn tiled_export_round_trips_through_import_in_both_layouts() {
     );
     write(
         &dir.join("exact.scene"),
-        "version 1;\ninclude \"models/desk.model\";\nrender iso; scale 32;\nplace desk at (1, 1, 0);\nplace desk at (5, 5, 0) rot 90;\nplace desk at (9, 1, 0) rot 180;\nplace desk at (13, 5, 0) turn 30;\n",
+        "version 1;\ninclude \"models/desk.model\";\nrender iso; scale 32;\nsun (120, 30);\nambient 0.5;\nbackground #112233;\ncanvas (16, 10, 4);\nplace desk at (1, 1, 0);\nplace desk at (5, 5, 0) rot 90;\nplace desk at (9, 1, 0) rot 180;\nplace desk at (13, 5, 0) turn 30;\n",
     );
     let render = |scene: &str, out: &str| {
         let output = binary()
@@ -189,6 +189,9 @@ fn tiled_export_round_trips_through_import_in_both_layouts() {
         );
         let scene = fs::read_to_string(dir.join("back/back.scene")).unwrap();
         assert!(scene.contains("scale 32;"), "{scene}");
+        assert!(scene.contains("background #112233;"), "{scene}");
+        assert!(scene.contains("sun (120, 30);"), "{scene}");
+        assert!(scene.contains("canvas (16, 10, 4);"), "{scene}");
         for placement in [
             "place desk at (1, 1, 0) rot 0;",
             "place desk at (5, 5, 0) rot 90;",
@@ -253,5 +256,151 @@ fn a_tile_layer_uses_the_model_property() {
     );
     let scene = fs::read_to_string(dir.join("out/scene.scene")).unwrap();
     assert!(scene.contains("place thing at (0, 0, 0) rot 0;"), "{scene}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn an_imported_map_gets_its_walls_back() {
+    let dir = scratch("walls-back");
+    let models = dir.join("models");
+    fs::create_dir_all(&models).unwrap();
+    write(
+        &models.join("thing.model"),
+        "version 1;\nobject thing (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; }\n",
+    );
+    write(
+        &dir.join("room.scene"),
+        "version 1;\ninclude \"models/thing.model\";\nrender iso; scale 16;\nplace thing at (1, 1, 0);\n",
+    );
+    // A ring without door/window gaps: those cannot be recovered from a map.
+    write(
+        &dir.join("room.walls"),
+        "version 1;\nheight 2;\nlayout {\n\"###\"\n\"#.#\"\n\"###\"\n}\n",
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args(["tiled", "room.scene", "--walls", "room.walls", "-o", "mapA"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "import-tiled",
+            "mapA/scene.tmj",
+            "--models",
+            "models",
+            "--layers",
+            "all",
+            "-o",
+            "back",
+            "--name",
+            "back",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let walls = fs::read_to_string(dir.join("back/back.walls")).expect("rebuilt walls");
+    assert!(walls.contains("height 2;"), "{walls}");
+    for row in ["\"###\"", "\"#.#\""] {
+        assert!(walls.contains(row), "{walls}");
+    }
+    // Exporting the rebuilt scene with the rebuilt walls must reproduce the
+    // wall layers and palette of the first map.
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "tiled",
+            "back/back.scene",
+            "--walls",
+            "back/back.walls",
+            "-o",
+            "mapB",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let first: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("mapA/scene.tmj")).unwrap()).unwrap();
+    let second: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("mapB/scene.tmj")).unwrap()).unwrap();
+    let layers = |map: &serde_json::Value| {
+        map["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|layer| {
+                matches!(
+                    layer["name"].as_str(),
+                    Some("walls" | "walls-back" | "walls-front")
+                )
+            })
+            .map(|layer| layer["data"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(layers(&first), layers(&second));
+    assert_eq!(
+        fs::read(dir.join("mapA/walls.png")).unwrap(),
+        fs::read(dir.join("mapB/walls.png")).unwrap()
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_walls_only_map_still_restores_walls() {
+    let dir = scratch("walls-only");
+    write(
+        &dir.join("empty.scene"),
+        "version 1;\nrender iso;\nscale 16;\n",
+    );
+    write(
+        &dir.join("room.walls"),
+        "version 1;\nheight 1;\nlayout {\n\"##\"\n\"##\"\n}\n",
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args(["tiled", "empty.scene", "--walls", "room.walls", "-o", "map"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "import-tiled",
+            "map/scene.tmj",
+            "--layers",
+            "all",
+            "-o",
+            "back",
+            "--name",
+            "back",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let walls = fs::read_to_string(dir.join("back/back.walls")).expect("rebuilt walls");
+    assert!(walls.contains("\"##\""), "{walls}");
+    let scene = fs::read_to_string(dir.join("back/back.scene")).expect("scene");
+    assert!(scene.contains("scale 16;"), "{scene}");
     let _ = fs::remove_dir_all(dir);
 }
