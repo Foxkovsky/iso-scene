@@ -149,9 +149,13 @@ fn is_word(c: char) -> bool {
 #[must_use]
 pub fn word_at(text: &str, offset: usize) -> Option<(&str, usize, usize)> {
     let offset = floor_boundary(text, offset.min(text.len()));
+    // Step over the whole character, not one byte: a Cyrillic character
+    // before the word is two bytes long, and `start` must stay a boundary.
     let start = text[..offset]
-        .rfind(|c: char| !is_word(c))
-        .map_or(0, |index| index + 1);
+        .char_indices()
+        .rev()
+        .find(|&(_, character)| !is_word(character))
+        .map_or(0, |(index, character)| index + character.len_utf8());
     let end = offset
         + text[offset..]
             .find(|c: char| !is_word(c))
@@ -502,6 +506,17 @@ mod tests {
         assert!(keyword_doc("scale").is_some());
         assert_eq!(word_at("ab cd", 4), Some(("cd", 3, 5)));
         assert_eq!(word_at("ab  cd", 3), None);
+    }
+
+    #[test]
+    fn a_non_ascii_comment_does_not_break_word_ranges() {
+        let text = "version 1;\n// Стул: план\nobject a (1, 1) { box at (0, 0, 0) size (1, 1, 1); }\nrender iso; scale 8; place a at (0, 0, 0);\n";
+        let cyrillic = text.find("Стул").expect("comment") + 2;
+        assert_eq!(word_at(text, cyrillic), None);
+        assert_eq!(hover(Path::new("x.scene"), text, cyrillic), None);
+        let keyword = text.find("box").expect("box") + 1;
+        assert!(hover(Path::new("x.scene"), text, keyword).is_some());
+        assert_eq!(word_at("С", 0), None);
     }
 
     #[test]
