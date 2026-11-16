@@ -47,6 +47,9 @@ screen_y = (x + y) * scale / 2 - z * scale
   Decals are rendered by the iso PNG, sprite-sheet and Tiled-sprite paths; SVG,
   top/front/side and voxel backends skip them for now. `glow` on a decal or
   material adds a deterministic box-blur halo around the emissive pixels.
+  A decal with `animation name` is a horizontal frame strip; `iso-scene
+  animate` selects the frame matching that scene animation, while a plain
+  render uses frame 0.
 
 ## top
 

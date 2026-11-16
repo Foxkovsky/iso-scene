@@ -706,11 +706,17 @@ impl Parser {
         } else {
             return Err(self.expected("`+` or `-` after `facing`"));
         };
-        let glow = if self.eat_word("glow") {
-            Some(self.parse_expr()?)
-        } else {
-            None
-        };
+        let mut glow = None;
+        let mut animation = None;
+        loop {
+            if self.eat_word("glow") {
+                glow = Some(self.parse_expr()?);
+            } else if self.eat_word("animation") {
+                animation = Some(self.expect_ident("animation name")?.0);
+            } else {
+                break;
+            }
+        }
         self.expect(&TokenKind::Semicolon, "`;`")?;
         Ok(Decal {
             path,
@@ -719,6 +725,7 @@ impl Parser {
             size,
             facing,
             glow,
+            animation,
         })
     }
 
@@ -1398,7 +1405,7 @@ mod tests {
     fn a_decal_has_a_path_size_and_facing() {
         let source = r#"
             version 1;
-            decal "textures/screen.png" at (1, 2, 3) size (4, 5) facing +y glow 0.5;
+            decal "textures/screen.png" at (1, 2, 3) size (4, 5) facing +y glow 0.5 animation matrix;
         "#;
         let program = parse_ok(source);
         let ItemKind::Statement(statement) = &program.items[0].kind else {
@@ -1410,6 +1417,7 @@ mod tests {
         assert_eq!(decal.path, "textures/screen.png");
         assert_eq!(decal.facing, Facing::PosY);
         assert!(decal.glow.is_some());
+        assert_eq!(decal.animation.as_deref(), Some("matrix"));
         assert_eq!(decal.size.len(), 2);
     }
 

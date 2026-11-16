@@ -151,6 +151,7 @@ pub fn render_object_sprite_with(
         }],
         bounds: object.local_bounds(),
         animations: Vec::new(),
+        animation_frame: None,
     };
     let rendered = render_internal(&graph, MARGIN)?;
     // The yaw turns around the local origin, so the origin stays put.
@@ -883,6 +884,22 @@ struct Face {
     instance: usize,
 }
 
+fn decal_frame(scene: &SceneGraph, animation: Option<&str>) -> (u32, u32) {
+    let Some(name) = animation else {
+        return (0, 1);
+    };
+    let Some(animation) = scene.animations.iter().find(|item| item.name == name) else {
+        return (0, 1);
+    };
+    let frame = scene
+        .animation_frame
+        .as_ref()
+        .filter(|(current, _)| current == name)
+        .map_or(0, |(_, frame)| *frame)
+        .min(animation.frames.saturating_sub(1));
+    (frame, animation.frames)
+}
+
 fn preload_decals(
     scene: &SceneGraph,
     cache: &mut BTreeMap<PathBuf, Arc<Image>>,
@@ -912,6 +929,7 @@ fn collect_faces(
                 corners,
                 path,
                 glow,
+                animation,
             } = &part.primitive
             {
                 let Some(cache) = images else {
@@ -924,6 +942,17 @@ fn collect_faces(
                     ));
                 };
                 let image = Arc::clone(image);
+                let (frame, frames) = decal_frame(scene, animation.as_deref());
+                let u0 = if frames > 1 {
+                    f64::from(frame) / f64::from(frames)
+                } else {
+                    0.0
+                };
+                let u1 = if frames > 1 {
+                    f64::from(frame + 1) / f64::from(frames)
+                } else {
+                    1.0
+                };
                 faces.push(Face {
                     points: corners
                         .iter()
@@ -935,7 +964,7 @@ fn collect_faces(
                     texture: None,
                     image: Some(DecalFace {
                         image,
-                        uv: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        uv: [[u0, 0.0], [u1, 0.0], [u1, 1.0], [u0, 1.0]],
                         glow: *glow,
                     }),
                     glow: *glow,

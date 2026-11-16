@@ -145,9 +145,12 @@ UI, chalk drawings and logos stay drawings instead of extruded boxes:
 
 ```c
 decal "textures/atm_screen.png" at (0.2, 2, 3) size (3, 1.6) facing +y glow 0.6;
+decal "textures/matrix.png" at (0.2, 2, 4) size (3, 1.6) facing +y animation matrix;
 ```
 
-Materials and decals can glow: `emission = "#FFD9A0"` plus `glow = 0..1` in
+A decal can name a scene animation: its PNG is then a horizontal strip of
+frames, and `iso-scene animate` renders the matching frame. Materials and
+decals can glow: `emission = "#FFD9A0"` plus `glow = 0..1` in
 TOML, or `glow 0..1` on a decal. The iso backend adds a deterministic bloom
 halo around those pixels; SVG and orthographic views keep the flat image.
 

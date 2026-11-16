@@ -81,7 +81,7 @@ pub fn compile_scene_frame(
 ) -> Result<SceneGraph, Diagnostic> {
     let mut evaluator = Evaluator::new(DEFAULT_FUEL);
     evaluator.frame = Some((animation.to_owned(), frame));
-    let scene = evaluator.scene(program, base_dir, root)?;
+    let mut scene = evaluator.scene(program, base_dir, root)?;
     let Some(declared) = scene.animations.iter().find(|a| a.name == animation) else {
         return Err(diag(
             "E0301",
@@ -99,6 +99,7 @@ pub fn compile_scene_frame(
             program.span,
         ));
     }
+    scene.animation_frame = Some((animation.to_owned(), frame));
     Ok(scene)
 }
 
@@ -374,6 +375,7 @@ impl Evaluator {
             instances,
             bounds,
             animations,
+            animation_frame: None,
         })
     }
 
@@ -1072,6 +1074,7 @@ impl Evaluator {
                 corners: decal_corners(at, size, decal.facing),
                 path: base_dir.join(&decal.path),
                 glow,
+                animation: decal.animation.clone(),
             },
             material: None,
             group: None,

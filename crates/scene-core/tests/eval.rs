@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use scene_core::{compile_model, compile_scene, compile_scene_with_fuel};
+use scene_core::{compile_model, compile_scene, compile_scene_frame, compile_scene_with_fuel};
 use scene_syntax::parse;
 
 fn examples() -> PathBuf {
@@ -434,6 +434,26 @@ fn include_must_be_a_model() {
     let program = parse_ok(source);
     let error = compile_scene(&program, temp.path(), temp.path()).expect_err("wrong extension");
     assert_eq!(error.code, "E0503");
+}
+
+#[test]
+fn a_scene_frame_records_the_animation_for_decal_strips() {
+    let source = r#"
+        version 1;
+        object panel (1, 1) {
+            decal "strip.png" at (0, 1, 0) size (1, 1) facing +y animation matrix;
+        }
+        render iso;
+        scale 8;
+        animation matrix (t) frames 3 duration 100;
+        place panel at (0, 0, 0);
+    "#;
+    let program = parse_ok(source);
+    let here = std::path::Path::new(".");
+    let plain = compile_scene(&program, here, here).expect("compile");
+    assert_eq!(plain.animation_frame, None);
+    let frame = compile_scene_frame(&program, here, here, "matrix", 2).expect("frame");
+    assert_eq!(frame.animation_frame, Some(("matrix".to_owned(), 2)));
 }
 
 #[test]

@@ -44,6 +44,8 @@ pub enum Primitive {
         path: PathBuf,
         /// Bloom mask, 0..=255.
         glow: u8,
+        /// Scene animation whose frames select a strip frame.
+        animation: Option<String>,
     },
 }
 
@@ -157,10 +159,12 @@ impl Primitive {
                 corners,
                 path,
                 glow,
+                animation,
             } => Self::Decal {
                 corners: corners.map(|point| mirror_point(point, axis, width, depth)),
                 path: path.clone(),
                 glow: *glow,
+                animation: animation.clone(),
             },
         }
     }
@@ -243,6 +247,7 @@ impl Primitive {
                 corners,
                 path,
                 glow,
+                animation,
             } => Self::Decal {
                 corners: corners.map(|corner| {
                     let (x, y) = point(corner[0], corner[1]);
@@ -250,6 +255,7 @@ impl Primitive {
                 }),
                 path: path.clone(),
                 glow: *glow,
+                animation: animation.clone(),
             },
         }
     }
@@ -301,6 +307,7 @@ impl Primitive {
                 corners,
                 path,
                 glow,
+                animation,
             } => Self::Decal {
                 corners: corners.map(|corner| {
                     [
@@ -311,6 +318,7 @@ impl Primitive {
                 }),
                 path: path.clone(),
                 glow: *glow,
+                animation: animation.clone(),
             },
         }
     }
@@ -450,6 +458,8 @@ pub struct SceneGraph {
     pub bounds: Bounds,
     /// The `animation` directives, in source order.
     pub animations: Vec<SceneAnimation>,
+    /// The animation frame currently being evaluated, for animated decals.
+    pub animation_frame: Option<(String, u32)>,
 }
 
 impl SceneGraph {

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use scene_backend_iso::{IsoImage, render, write_png};
-use scene_core::compile_scene;
+use scene_core::{compile_scene, compile_scene_frame};
 use scene_syntax::parse;
 
 fn compile_source(source: &str) -> scene_core::SceneGraph {
@@ -63,6 +63,54 @@ fn four_quarter_turns_render_the_original_pixels_again() {
     }
     let again = render(&scene).expect("render again");
     assert_eq!(front.rgba, again.rgba);
+}
+
+#[test]
+fn an_animated_decal_reads_the_frame_from_the_scene_animation() {
+    let dir = std::env::temp_dir().join(format!("iso-scene-decal-frames-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let mut rgba = vec![0_u8; 4 * 2 * 4];
+    for y in 0..2 {
+        for x in 0..2 {
+            let left = (y * 4 + x) * 4;
+            rgba[left..left + 4].copy_from_slice(&[255, 0, 255, 255]);
+            let right = (y * 4 + x + 2) * 4;
+            rgba[right..right + 4].copy_from_slice(&[0, 255, 255, 255]);
+        }
+    }
+    scene_render::write_png(
+        &scene_render::Image {
+            width: 4,
+            height: 2,
+            rgba,
+        },
+        &dir.join("strip.png"),
+    )
+    .unwrap();
+    let source = r#"
+        version 1;
+        object panel (1, 1) {
+            box at (0, 0, 0) size (1, 1, 1) material dark;
+            decal "strip.png" at (0, 1, 0) size (1, 1) facing +y animation matrix;
+        }
+        render iso;
+        scale 32;
+        background transparent;
+        animation matrix (t) frames 2 duration 100;
+        place panel at (0, 0, 0);
+    "#;
+    let program = parse(source).expect("parse");
+    let first = compile_scene_frame(&program, &dir, &dir, "matrix", 0).expect("frame 0");
+    let second = compile_scene_frame(&program, &dir, &dir, "matrix", 1).expect("frame 1");
+    let has = |image: &scene_render::Image, color: [u8; 4]| {
+        image.rgba.chunks_exact(4).any(|pixel| pixel == color)
+    };
+    let first_image = render(&first).expect("render 0");
+    let second_image = render(&second).expect("render 1");
+    assert!(has(&first_image, [255, 0, 255, 255]), "frame 0");
+    assert!(has(&second_image, [0, 255, 255, 255]), "frame 1");
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]

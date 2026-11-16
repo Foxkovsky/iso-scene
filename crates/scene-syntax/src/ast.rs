@@ -147,6 +147,8 @@ pub struct Decal {
     pub facing: Facing,
     /// Optional bloom strength, 0..=1.
     pub glow: Option<Expr>,
+    /// Optional scene animation whose frames select a strip frame.
+    pub animation: Option<String>,
 }
 
 /// `object name (w, d) [origin center] { ... }`

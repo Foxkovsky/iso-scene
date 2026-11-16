@@ -52,5 +52,6 @@ pub fn model_scene(model: &scene_core::CompiledModel) -> Result<scene_core::Scen
         instances,
         bounds,
         animations: Vec::new(),
+        animation_frame: None,
     })
 }

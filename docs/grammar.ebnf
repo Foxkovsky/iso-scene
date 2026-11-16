@@ -93,7 +93,7 @@ shape_args      = "at", tuple3, "size", tuple3            (* box        *)
 
 decal           = "decal", string, "at", tuple3, "size", pair,
                   "facing", ( "+" | "-" ), ( "x" | "y" | "z" ),
-                  [ "glow", expr ], ";" ;
+                  [ "glow", expr ], [ "animation", ident ], ";" ;
 
 (* ---------------------------------------------------------------- expressions *)
 

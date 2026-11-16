@@ -82,6 +82,7 @@ fn build_demo() -> Option<scene_render::Image> {
         }],
         bounds: object.local_bounds(),
         animations: Vec::new(),
+        animation_frame: None,
     };
     scene_backend_iso::render(&graph).ok()
 }
