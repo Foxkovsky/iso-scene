@@ -275,7 +275,7 @@ fn collect_faces(
     let view = View::from_render(scene.render)
         .ok_or_else(|| error("E0604", "the ortho backend needs top, front or side"))?;
     let mut faces = Vec::new();
-    for instance in &scene.instances {
+    for (_, instance) in scene.ordered_instances() {
         for part in &instance.object.parts {
             if matches!(part.primitive, Primitive::Decal { .. }) {
                 continue;

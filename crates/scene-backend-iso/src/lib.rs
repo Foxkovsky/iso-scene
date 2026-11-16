@@ -923,7 +923,7 @@ fn collect_faces(
     images: Option<&BTreeMap<PathBuf, Arc<Image>>>,
 ) -> Result<Vec<Face>, Diagnostic> {
     let mut faces = Vec::new();
-    for (owner, instance) in scene.instances.iter().enumerate() {
+    for (owner, instance) in scene.ordered_instances() {
         for part in &instance.object.parts {
             if let Primitive::Decal {
                 corners,

@@ -57,6 +57,9 @@ Rules:
 
 - stable iteration order everywhere; no `HashMap` iteration in rendering;
 - total order for face sorting (depth, then z, then a stable tie-breaker);
+- instances are visited in a canonical order (object name, position, rotation,
+  `turn`), so a pixel where two faces have equal depth does not depend on the
+  order of the `place` statements; the Tiled importer relies on this;
 - no wall-clock, randomness or environment-dependent behavior in v1;
 - procedural textures use an explicit seed;
 - floating-point math is `f64`; rounding to pixels happens at one place per

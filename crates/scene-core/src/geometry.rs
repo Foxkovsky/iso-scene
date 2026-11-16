@@ -463,6 +463,26 @@ pub struct SceneGraph {
 }
 
 impl SceneGraph {
+    /// Each instance with its original index, in a canonical order: object
+    /// name, then position, rotation and extra yaw. Backends collect faces in
+    /// this order, so a pixel where two faces have exactly the same depth does
+    /// not depend on the order of the `place` statements.
+    #[must_use]
+    pub fn ordered_instances(&self) -> Vec<(usize, &Instance)> {
+        let mut items: Vec<(usize, &Instance)> = self.instances.iter().enumerate().collect();
+        items.sort_by(|(_, left), (_, right)| {
+            left.object
+                .name
+                .cmp(&right.object.name)
+                .then(left.at[0].total_cmp(&right.at[0]))
+                .then(left.at[1].total_cmp(&right.at[1]))
+                .then(left.at[2].total_cmp(&right.at[2]))
+                .then(left.rotation.cmp(&right.rotation))
+                .then(left.angle.total_cmp(&right.angle))
+        });
+        items
+    }
+
     /// Rotate the whole scene around the centre of its plan bounds.
     ///
     /// `degrees` must be a quarter turn: 0, 90, 180 or 270. Other values are

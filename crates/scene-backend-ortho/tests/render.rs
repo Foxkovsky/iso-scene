@@ -159,3 +159,25 @@ fn box_bounds_match_the_formula_in_every_view() {
         }
     }
 }
+
+#[test]
+fn the_order_of_equivalent_placements_does_not_change_pixels() {
+    let scene = |first: &str, second: &str| {
+        compile(&format!(
+            r"
+            version 1;
+            object a (1, 1) {{ box at (0, 0, 0) size (1, 1, 1) material wood; }}
+            object b (1, 1) {{ box at (0, 0, 0) size (1, 1, 1) material metal; }}
+            render top;
+            scale 16;
+            place {first} at (0, 0, 0);
+            place {second} at (0, 0, 0);
+            "
+        ))
+    };
+    let first = render(&scene("a", "b")).expect("render a b");
+    let second = render(&scene("b", "a")).expect("render b a");
+    assert_eq!(first.width, second.width);
+    assert_eq!(first.height, second.height);
+    assert_eq!(first.rgba, second.rgba);
+}
