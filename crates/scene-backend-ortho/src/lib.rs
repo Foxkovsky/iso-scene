@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use scene_core::{CompiledObject, Instance, SceneGraph};
+use scene_core::{CompiledObject, Instance, Primitive, SceneGraph};
 use scene_render::{Framebuffer, MeshFace, Palette, Shape, builtin, primitive_faces};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Background, RenderKind};
@@ -207,6 +207,8 @@ pub fn render_with_origin(scene: &SceneGraph) -> Result<(OrthoImage, [f64; 2]), 
                 points: [points[0], points[index], points[index + 1]],
                 color: face.color,
                 shade: None,
+                image: None,
+                bias: 0.0,
             });
         }
     }
@@ -273,6 +275,9 @@ fn collect_faces(
     let mut faces = Vec::new();
     for instance in &scene.instances {
         for part in &instance.object.parts {
+            if matches!(part.primitive, Primitive::Decal { .. }) {
+                continue;
+            }
             let palette = palette_for(part.material.as_deref(), scene, palettes)?;
             for MeshFace {
                 points,

@@ -40,6 +40,11 @@ screen_y = (x + y) * scale / 2 - z * scale
   its plan centre by a quarter turn (0, 90, 180 or 270). Rendering the four
   values shows all four isometric sides; the VS Code preview does this in a
   2×2 grid.
+- `decal` statements are flat RGBA PNGs sampled nearest-neighbour on top of
+  the geometry. They are drawn without lighting, alpha `0` is transparent, and
+  a small depth bias lifts them off the surface without moving them on screen.
+  Decals are rendered by the iso PNG, sprite-sheet and Tiled-sprite paths; SVG,
+  top/front/side and voxel backends skip them for now.
 
 ## top
 
@@ -172,8 +177,8 @@ turns a Tiled map back into a `.scene`:
   become a `place ...` line (the format `iso-scene tiled` writes);
 - tile layers: each tile's `model` property (or its `type`) names the model;
   `--cell` is the number of scene units per Tiled cell;
-- the referenced `.model` files and `materials/` are copied next to the
-  scene, so it renders without the original map.
+- the referenced `.model` files, `materials/` and `textures/` are copied next
+  to the scene, so it renders without the original map.
 
 Defaults are chosen for two common cases: an object-layer map uses
 `scale = map.tileheight`, `cell = 1` (model units are blocks); a tile-layer

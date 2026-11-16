@@ -53,6 +53,7 @@ statement       = let
                 | place
                 | use_stmt
                 | shape
+                | decal
                 | merge_stmt
                 | mirror ;
 
@@ -79,7 +80,6 @@ mirror          = "mirror", ( "x" | "y" ), ";" ;
 (* ---------------------------------------------------------------- shapes *)
 
 shape           = shape_kind, shape_args, [ "material", ident ], ";" ;
-
 shape_kind      = "box" | "cyl" | "sphere" | "slantbox" | "slantcyl" | "ramp" ;
 
 shape_args      = "at", tuple3, "size", tuple3            (* box        *)
@@ -90,6 +90,9 @@ shape_args      = "at", tuple3, "size", tuple3            (* box        *)
                 | "at", tuple3, "radius", expr, "height", expr,
                   "offset", pair                          (* slantcyl   *)
                 | "at", tuple3, "size", pair, "rise", pair ;      (* ramp  *)
+
+decal           = "decal", string, "at", tuple3, "size", pair,
+                  "facing", ( "+" | "-" ), ( "x" | "y" | "z" ), ";" ;
 
 (* ---------------------------------------------------------------- expressions *)
 
@@ -140,6 +143,8 @@ digit           = "0" | "1" | "2" | "3" | "4"
   * `include` is allowed only in .scene files; included files are .model.
   * `render` and `scale` are required in a .scene, exactly once.
   * `shape` and `mirror` are allowed only inside an object body.
+  * `decal` is allowed only inside an object body; its image path is relative
+    to the file that declares the object and must stay inside the project.
   * `object` bodies may not contain `place`, `include`, `render` or `scale`.
   * Loop bounds are evaluated once and must be integral.
   * `rot` must normalize to 0, 90, 180 or 270.

@@ -38,6 +38,11 @@ pub enum Primitive {
         size: [f64; 2],
         rise: [f64; 2],
     },
+    /// A flat PNG on a plane, stored as four corners with fixed UVs.
+    Decal {
+        corners: [[f64; 3]; 4],
+        path: PathBuf,
+    },
 }
 
 impl Primitive {
@@ -95,6 +100,13 @@ impl Primitive {
                     [at[0] + size[0], at[1] + size[1], z_max],
                 )
             }
+            Self::Decal { corners, .. } => {
+                let mut bounds = Bounds::empty();
+                for corner in corners {
+                    bounds.include(*corner);
+                }
+                bounds
+            }
         }
     }
 
@@ -138,6 +150,10 @@ impl Primitive {
                 } else {
                     *rise
                 },
+            },
+            Self::Decal { corners, path } => Self::Decal {
+                corners: corners.map(|point| mirror_point(point, axis, width, depth)),
+                path: path.clone(),
             },
         }
     }
@@ -216,6 +232,13 @@ impl Primitive {
                     rise: [dx, dy],
                 }
             }
+            Self::Decal { corners, path } => Self::Decal {
+                corners: corners.map(|corner| {
+                    let (x, y) = point(corner[0], corner[1]);
+                    [x, y, corner[2]]
+                }),
+                path: path.clone(),
+            },
         }
     }
 
@@ -261,6 +284,16 @@ impl Primitive {
                 at: shift(at),
                 size: *size,
                 rise: *rise,
+            },
+            Self::Decal { corners, path } => Self::Decal {
+                corners: corners.map(|corner| {
+                    [
+                        corner[0] + offset[0],
+                        corner[1] + offset[1],
+                        corner[2] + offset[2],
+                    ]
+                }),
+                path: path.clone(),
             },
         }
     }
@@ -584,6 +617,13 @@ fn mirror_offset(offset: [f64; 2], axis: Axis) -> [f64; 2] {
     match axis {
         Axis::X => [-offset[0], offset[1]],
         Axis::Y => [offset[0], -offset[1]],
+    }
+}
+
+fn mirror_point(point: [f64; 3], axis: Axis, width: f64, depth: f64) -> [f64; 3] {
+    match axis {
+        Axis::X => [width - point[0], point[1], point[2]],
+        Axis::Y => [point[0], depth - point[1], point[2]],
     }
 }
 

@@ -135,6 +135,18 @@ pub fn all() -> Vec<Limit> {
             "`animation`: кадров",
         ),
         limit(
+            "decal PNG side",
+            format!("{} px", grouped(u64::from(scene_core::MAX_DECAL_SIDE))),
+            "E0602",
+            "decal PNG: сторона",
+        ),
+        limit(
+            "decal PNG pixels",
+            format!("{} px", grouped(scene_core::MAX_DECAL_PIXELS)),
+            "E0602",
+            "decal PNG: пикселей",
+        ),
+        limit(
             "rendered image side",
             format!("{} px", count(scene_backend_iso::MAX_OUTPUT_SIDE)),
             "E0602",

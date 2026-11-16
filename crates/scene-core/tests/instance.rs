@@ -130,3 +130,52 @@ fn the_yaw_turns_the_same_way_after_a_quarter_turn() {
         assert!((cross - 1.0).abs() < 1e-9, "rot {rotation}: cross {cross}");
     }
 }
+
+#[test]
+fn a_decal_rotates_with_the_object_that_uses_it() {
+    let source = r#"
+        version 1;
+        object panel (2, 1) {
+            decal "decal.png" at (0, 1, 0) size (2, 2) facing +y;
+        }
+        object rotated (1, 2) {
+            use panel at (0, 0, 0) rot 90;
+        }
+        render iso;
+        scale 1;
+        place rotated at (0, 0, 0);
+    "#;
+    let program = scene_syntax::parse(source).expect("parse");
+    let here = std::path::Path::new(".");
+    let scene = scene_core::compile_scene(&program, here, here).expect("compile");
+    let decal = scene.instances[0]
+        .object
+        .parts
+        .iter()
+        .find_map(|part| match &part.primitive {
+            scene_core::Primitive::Decal { corners, .. } => Some(*corners),
+            _ => None,
+        })
+        .expect("decal");
+    assert!(
+        decal.iter().all(|corner| corner[0].abs() < 1e-9),
+        "{decal:?}"
+    );
+    assert!(
+        decal
+            .iter()
+            .all(|corner| corner[2] >= 0.0 && corner[2] <= 2.0)
+    );
+    let y_min = decal
+        .iter()
+        .map(|corner| corner[1])
+        .fold(f64::INFINITY, f64::min);
+    let y_max = decal
+        .iter()
+        .map(|corner| corner[1])
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!(
+        (y_min - 0.0).abs() < 1e-9 && (y_max - 2.0).abs() < 1e-9,
+        "{decal:?}"
+    );
+}

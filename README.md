@@ -140,8 +140,14 @@ place door at (-3, 2, 0) turn 80 * t;      // hinge at the door's local (0, 0)
 
 Solids: `box`, `cyl`, `sphere`, `slantbox`, `slantcyl`, `ramp`. Also `let` /
 `var`, `for`, `if`, `mirror`, reusable parts with `use`, and `merge` for
-seamless welded surfaces. `iso-scene help <topic>` prints the relevant
-section of the spec.
+seamless welded surfaces. `decal` puts a flat RGBA PNG on a face, so screen
+UI, chalk drawings and logos stay drawings instead of extruded boxes:
+
+```c
+decal "textures/atm_screen.png" at (0.2, 2, 3) size (3, 1.6) facing +y;
+```
+
+`iso-scene help <topic>` prints the relevant section of the spec.
 
 ## Outputs
 
@@ -166,7 +172,7 @@ completion, build, sprite-sheet and Tiled-import commands.
 
 ```bash
 cd editors/vscode && npx @vscode/vsce package
-code --install-extension iso-scene-0.5.0.vsix
+code --install-extension iso-scene-0.6.0.vsix
 ```
 
 **Any LSP editor.** `iso-scene lsp` speaks the Language Server Protocol over

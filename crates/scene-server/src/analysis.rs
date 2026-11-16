@@ -388,7 +388,7 @@ pub const BUILTIN_MATERIALS: [&str; 7] =
     ["wood", "metal", "light", "glass", "dark", "red", "white"];
 
 /// Snippets for the shapes, in the LSP snippet syntax.
-pub const SHAPE_SNIPPETS: [(&str, &str); 6] = [
+pub const SHAPE_SNIPPETS: [(&str, &str); 7] = [
     (
         "box",
         "box at (${1:0}, ${2:0}, ${3:0}) size (${4:1}, ${5:1}, ${6:1}) material ${7:wood};",
@@ -412,6 +412,10 @@ pub const SHAPE_SNIPPETS: [(&str, &str); 6] = [
     (
         "ramp",
         "ramp at (${1:0}, ${2:0}, ${3:0}) size (${4:1}, ${5:1}) rise (${6:0}, ${7:1}) material ${8:wood};",
+    ),
+    (
+        "decal",
+        "decal \"${1:textures/screen.png}\" at (${2:0}, ${3:1}, ${4:0}) size (${5:1}, ${6:1}) facing ${7:+y};",
     ),
 ];
 

@@ -16,9 +16,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rayon::prelude::*;
-use scene_core::{CompiledObject, Instance, SceneGraph, rotate_xy};
+use scene_core::{CompiledObject, Instance, Primitive, SceneGraph, rotate_xy};
 use scene_render::{
-    Framebuffer, MeshFace, Palette, Shape, Texture, builtin, primitive_faces, region_of,
+    Framebuffer, ImageMap, MeshFace, Palette, Shape, Texture, builtin, primitive_faces, read_png,
+    region_of,
 };
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::{Background, RenderKind};
@@ -32,6 +33,9 @@ pub const MAX_OUTPUT_SIDE: usize = 8_192;
 /// Most pixels in a rendered image (`docs/spec.md` §9).
 pub const MAX_OUTPUT_PIXELS: usize = 16_000_000;
 const MARGIN: f64 = 2.0;
+/// Depth lift for flat decals, in blocks. The decal sits exactly on its wall;
+/// the bias keeps the z-buffer from rejecting it as coplanar.
+const DECAL_BIAS: f64 = 0.01;
 
 /// Project a world point to isometric screen coordinates.
 ///
@@ -278,12 +282,22 @@ impl Prepared {
             .iter()
             .zip(&self.owners)
             .filter(|(_, owner)| **owner != instance)
-            .map(|(shape, _)| *shape)
+            .map(|(shape, _)| shape.clone())
             .collect()
     }
 }
 
 fn prepare(scene: &SceneGraph, margin: f64) -> Result<Prepared, Diagnostic> {
+    let mut images = BTreeMap::new();
+    preload_decals(scene, &mut images)?;
+    prepare_with(scene, margin, &images)
+}
+
+fn prepare_with(
+    scene: &SceneGraph,
+    margin: f64,
+    images: &BTreeMap<PathBuf, Arc<Image>>,
+) -> Result<Prepared, Diagnostic> {
     if scene.render != RenderKind::Iso {
         return Err(error(
             "E0604",
@@ -292,7 +306,7 @@ fn prepare(scene: &SceneGraph, margin: f64) -> Result<Prepared, Diagnostic> {
     }
 
     let palettes = load_palettes(scene)?;
-    let faces = collect_faces(scene, &palettes)?;
+    let faces = collect_faces(scene, &palettes, Some(images))?;
     let scale = f64::from(scene.scale);
     let (width, height, origin) = scene_size(scene, &faces, margin)?;
 
@@ -329,6 +343,15 @@ fn prepare(scene: &SceneGraph, margin: f64) -> Result<Prepared, Diagnostic> {
                         [face.points[0], face.points[index], face.points[index + 1]],
                     )
                 }),
+                image: face.image.as_ref().map(|decal| ImageMap {
+                    image: Arc::clone(&decal.image),
+                    uv: [decal.uv[0], decal.uv[index], decal.uv[index + 1]],
+                }),
+                bias: if face.image.is_some() {
+                    DECAL_BIAS
+                } else {
+                    0.0
+                },
             });
             owners.push(face.instance);
         }
@@ -457,12 +480,14 @@ pub fn prepare_frames(
     if index >= scene.instances.len() {
         return Err(error("E0604", format!("scene has no instance {index}")));
     }
+    let mut images = BTreeMap::new();
+    preload_decals(scene, &mut images)?;
     let prepared: Vec<Result<Prepared, Diagnostic>> = angles
         .par_iter()
         .map(|angle| {
             let mut frame = scene.clone();
             frame.instances[index].angle = *angle;
-            prepare(&frame, MARGIN)
+            prepare_with(&frame, MARGIN, &images)
         })
         .collect();
     Ok(Frames {
@@ -508,7 +533,7 @@ pub fn render_svg(scene: &SceneGraph) -> Result<String, Diagnostic> {
     }
 
     let palettes = load_palettes(scene)?;
-    let faces = collect_faces(scene, &palettes)?;
+    let faces = collect_faces(scene, &palettes, None)?;
     let scale = f64::from(scene.scale);
     let (width, height, origin) = scene_size(scene, &faces, MARGIN)?;
     let order = order_faces(&faces, scale);
@@ -526,6 +551,9 @@ pub fn render_svg(scene: &SceneGraph) -> Result<String, Diagnostic> {
     }
     for index in order {
         let face = &faces[index];
+        if face.image.is_some() {
+            continue;
+        }
         let mut points = String::new();
         for (position, point) in face.points.iter().enumerate() {
             let projected = project_point(*point, scale);
@@ -819,12 +847,19 @@ fn project_vertex(point: [f64; 3], scale: f64, origin: [f64; 2]) -> [f64; 3] {
     ]
 }
 
+#[derive(Clone)]
+struct DecalFace {
+    image: Arc<Image>,
+    uv: [[f64; 2]; 4],
+}
+
 struct Face {
     points: Vec<[f64; 3]>,
     color: [u8; 3],
     line: [u8; 3],
     outline: bool,
     texture: Option<Texture>,
+    image: Option<DecalFace>,
     /// Parts in one merge group are welded: internal faces and shared seams go.
     group: Option<u32>,
     hidden: Vec<bool>,
@@ -832,13 +867,61 @@ struct Face {
     instance: usize,
 }
 
+fn preload_decals(
+    scene: &SceneGraph,
+    cache: &mut BTreeMap<PathBuf, Arc<Image>>,
+) -> Result<(), Diagnostic> {
+    for instance in &scene.instances {
+        for part in &instance.object.parts {
+            if let Primitive::Decal { path, .. } = &part.primitive {
+                if !cache.contains_key(path) {
+                    let image = read_png(path).map_err(|message| error("E0601", message))?;
+                    cache.insert(path.clone(), Arc::new(image));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn collect_faces(
     scene: &SceneGraph,
     palettes: &BTreeMap<String, Palette>,
+    images: Option<&BTreeMap<PathBuf, Arc<Image>>>,
 ) -> Result<Vec<Face>, Diagnostic> {
     let mut faces = Vec::new();
     for (owner, instance) in scene.instances.iter().enumerate() {
         for part in &instance.object.parts {
+            if let Primitive::Decal { corners, path } = &part.primitive {
+                let Some(cache) = images else {
+                    continue;
+                };
+                let Some(image) = cache.get(path) else {
+                    return Err(error(
+                        "E0601",
+                        format!("decal `{}` was not loaded", path.display()),
+                    ));
+                };
+                let image = Arc::clone(image);
+                faces.push(Face {
+                    points: corners
+                        .iter()
+                        .map(|point| world_point(*point, instance))
+                        .collect(),
+                    color: [255, 255, 255],
+                    line: [0, 0, 0],
+                    outline: false,
+                    texture: None,
+                    image: Some(DecalFace {
+                        image,
+                        uv: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                    }),
+                    group: None,
+                    hidden: vec![false; 4],
+                    instance: owner,
+                });
+                continue;
+            }
             let palette = palette_for(part.material.as_deref(), scene, palettes)?;
             for MeshFace {
                 points,
@@ -857,6 +940,7 @@ fn collect_faces(
                     line: palette.line,
                     outline,
                     texture: palette.texture,
+                    image: None,
                     group: part.group,
                     hidden,
                     instance: owner,
@@ -1255,6 +1339,7 @@ mod tests {
             group: None,
             hidden,
             texture: None,
+            image: None,
             instance: 0,
         }
     }

@@ -1,8 +1,10 @@
 //! Shared raster image and PNG writer.
 
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufReader, BufWriter};
 use std::path::Path;
+
+use scene_core::{MAX_DECAL_PIXELS, MAX_DECAL_SIDE};
 
 /// Rendered RGBA image.
 #[derive(Clone, Debug, PartialEq)]
@@ -70,7 +72,7 @@ pub fn composite_over(dst: &mut Image, src: &Image, x: i64, y: i64, clip: Rect) 
 
 /// Straight-alpha `src` over `dst`.
 #[allow(clippy::cast_possible_truncation)]
-fn over(src: [u8; 4], dst: [u8; 4]) -> [u8; 4] {
+pub(crate) fn over(src: [u8; 4], dst: [u8; 4]) -> [u8; 4] {
     let sa = u32::from(src[3]);
     let da = u32::from(dst[3]);
     if sa == 0 {
@@ -89,6 +91,69 @@ fn over(src: [u8; 4], dst: [u8; 4]) -> [u8; 4] {
     }
     out[3] = ((out_a + 127) / 255) as u8;
     out
+}
+
+/// Decode an RGBA PNG, expanding palette and low-bit-depth images.
+///
+/// # Errors
+///
+/// Returns a human-readable message if the file is missing, malformed or
+/// larger than the decal limits in [`scene_core`].
+pub fn read_png(path: &Path) -> Result<Image, String> {
+    let file =
+        File::open(path).map_err(|cause| format!("cannot open `{}`: {cause}", path.display()))?;
+    let mut decoder = png::Decoder::new(BufReader::new(file));
+    decoder.set_transformations(
+        png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
+    );
+    let mut reader = decoder
+        .read_info()
+        .map_err(|cause| format!("cannot read PNG `{}`: {cause}", path.display()))?;
+    let (width, height) = reader.info().size();
+    if width > MAX_DECAL_SIDE
+        || height > MAX_DECAL_SIDE
+        || u64::from(width) * u64::from(height) > MAX_DECAL_PIXELS
+    {
+        return Err(format!(
+            "PNG `{}` is {width}x{height}; the decal limit is {MAX_DECAL_SIDE} per side and {MAX_DECAL_PIXELS} pixels",
+            path.display()
+        ));
+    }
+    let mut buffer = vec![0; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|cause| format!("cannot decode PNG `{}`: {cause}", path.display()))?;
+    let pixels = &buffer[..info.buffer_size()];
+    let mut rgba = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    match info.color_type {
+        png::ColorType::Rgba => rgba.extend_from_slice(pixels),
+        png::ColorType::Rgb => {
+            for pixel in pixels.chunks_exact(3) {
+                rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+            }
+        }
+        png::ColorType::GrayscaleAlpha => {
+            for pixel in pixels.chunks_exact(2) {
+                rgba.extend_from_slice(&[pixel[0], pixel[0], pixel[0], pixel[1]]);
+            }
+        }
+        png::ColorType::Grayscale => {
+            for &value in pixels {
+                rgba.extend_from_slice(&[value, value, value, 255]);
+            }
+        }
+        png::ColorType::Indexed => {
+            return Err(format!(
+                "PNG `{}` is still indexed after expansion",
+                path.display()
+            ));
+        }
+    }
+    Ok(Image {
+        width,
+        height,
+        rgba,
+    })
 }
 
 /// Encode an image as an RGBA PNG.

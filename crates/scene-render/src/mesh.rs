@@ -32,6 +32,11 @@ pub fn primitive_faces(primitive: &Primitive) -> Vec<MeshFace> {
             offset,
         } => slant_cylinder_faces(*at, *radius, *height, *offset),
         Primitive::Ramp { at, size, rise } => ramp_faces(*at, *size, *rise),
+        Primitive::Decal { corners, .. } => {
+            let mut faces = Vec::new();
+            add_face(&mut faces, corners.to_vec(), false);
+            faces
+        }
     }
 }
 

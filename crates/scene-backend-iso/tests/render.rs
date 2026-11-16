@@ -66,6 +66,54 @@ fn four_quarter_turns_render_the_original_pixels_again() {
 }
 
 #[test]
+fn a_decal_is_drawn_as_an_unlit_image_with_transparency() {
+    let dir = std::env::temp_dir().join(format!("iso-scene-decal-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let mut rgba = vec![0_u8; 4 * 4 * 4];
+    for y in 0..4 {
+        for x in 0..2 {
+            let index = (y * 4 + x) * 4;
+            rgba[index..index + 4].copy_from_slice(&[255, 0, 255, 255]);
+        }
+    }
+    scene_render::write_png(
+        &scene_render::Image {
+            width: 4,
+            height: 4,
+            rgba,
+        },
+        &dir.join("decal.png"),
+    )
+    .unwrap();
+    let source = r#"
+        version 1;
+        object panel (2, 1) {
+            box at (0, 0, 0) size (2, 1, 2) material red;
+            decal "decal.png" at (0, 1, 0) size (2, 2) facing +y;
+        }
+        render iso;
+        scale 32;
+        background transparent;
+        place panel at (0, 0, 0);
+    "#;
+    let program = parse(source).expect("parse");
+    let scene = compile_scene(&program, &dir, &dir).expect("compile");
+    let image = render(&scene).expect("render");
+    let has_magenta = image
+        .rgba
+        .chunks_exact(4)
+        .any(|pixel| pixel == [255, 0, 255, 255]);
+    let has_red_face = image
+        .rgba
+        .chunks_exact(4)
+        .any(|pixel| pixel == [0x6C, 0x10, 0x14, 255]);
+    assert!(has_magenta, "the decal colour was not drawn");
+    assert!(has_red_face, "the transparent half did not reveal the box");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn single_box_produces_faces_and_outline() {
     let image = render_source(
         r"

@@ -32,5 +32,9 @@ pub const MAX_LOOP_BOUND: f64 = 1_000_000_000.0;
 pub const MAX_CANVAS_BLOCKS: f64 = 8_192.0;
 /// Maximum pixels per block.
 pub const MAX_SCALE: u32 = 256;
+/// Longest side of a decal image, in pixels.
+pub const MAX_DECAL_SIDE: u32 = 4_096;
+/// Most pixels in a decal image.
+pub const MAX_DECAL_PIXELS: u64 = 16_000_000;
 /// Most frames in one `animation` directive.
 pub const MAX_ANIMATION_FRAMES: u32 = 1_024;

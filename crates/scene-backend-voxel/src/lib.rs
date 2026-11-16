@@ -497,6 +497,7 @@ fn contains(primitive: &Primitive, p: [f64; 3]) -> bool {
             };
             p[2] >= low - EPS && p[2] <= high + EPS
         }
+        Primitive::Decal { .. } => false,
     }
 }
 

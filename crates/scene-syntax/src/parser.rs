@@ -4,9 +4,9 @@
 //! AST in [`crate::ast`]. It reports the first error and never panics.
 
 use crate::ast::{
-    Ambient, Anchor, Animation, AssignOp, Axis, Background, BinaryOp, Block, Canvas, ElseBranch,
-    Expr, ExprKind, Include, Item, ItemKind, Material, Object, Origin, Program, Render, RenderKind,
-    Scale, Shape, Statement, StatementKind, Sun, UnaryOp,
+    Ambient, Anchor, Animation, AssignOp, Axis, Background, BinaryOp, Block, Canvas, Decal,
+    ElseBranch, Expr, ExprKind, Facing, Include, Item, ItemKind, Material, Object, Origin, Program,
+    Render, RenderKind, Scale, Shape, Statement, StatementKind, Sun, UnaryOp,
 };
 use crate::{Diagnostic, Span, Token, TokenKind, lex};
 
@@ -415,6 +415,7 @@ impl Parser {
             TokenKind::Use => self.parse_use()?,
             TokenKind::Merge => self.parse_merge()?,
             TokenKind::Mirror => self.parse_mirror()?,
+            TokenKind::Decal => StatementKind::Decal(self.parse_decal()?),
             TokenKind::Box
             | TokenKind::Cyl
             | TokenKind::Sphere
@@ -690,6 +691,51 @@ impl Parser {
         Ok(shape)
     }
 
+    fn parse_decal(&mut self) -> Result<Decal, Diagnostic> {
+        self.expect(&TokenKind::Decal, "`decal`")?;
+        let (path, path_span) = self.expect_string("decal path")?;
+        self.expect(&TokenKind::At, "`at`")?;
+        let (at, _) = self.parse_tuple3()?;
+        self.expect(&TokenKind::Size, "`size`")?;
+        let (size, _) = self.parse_pair()?;
+        self.expect_word("facing")?;
+        let facing = if self.eat(&TokenKind::Plus) {
+            self.parse_facing(true)?
+        } else if self.eat(&TokenKind::Minus) {
+            self.parse_facing(false)?
+        } else {
+            return Err(self.expected("`+` or `-` after `facing`"));
+        };
+        self.expect(&TokenKind::Semicolon, "`;`")?;
+        Ok(Decal {
+            path,
+            path_span,
+            at,
+            size,
+            facing,
+        })
+    }
+
+    fn parse_facing(&mut self, positive: bool) -> Result<Facing, Diagnostic> {
+        let (axis, span) = self.expect_ident("`x`, `y` or `z`")?;
+        let facing = match (positive, axis.as_str()) {
+            (true, "x") => Facing::PosX,
+            (false, "x") => Facing::NegX,
+            (true, "y") => Facing::PosY,
+            (false, "y") => Facing::NegY,
+            (true, "z") => Facing::PosZ,
+            (false, "z") => Facing::NegZ,
+            _ => {
+                return Err(Diagnostic::new(
+                    "E0202",
+                    format!("unknown decal facing `{axis}`; expected x, y or z"),
+                    span,
+                ));
+            }
+        };
+        Ok(facing)
+    }
+
     fn parse_shape_at(&mut self) -> Result<[Expr; 3], Diagnostic> {
         self.expect(&TokenKind::At, "`at`")?;
         let (at, _) = self.parse_tuple3()?;
@@ -947,6 +993,7 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::SlantBox => "`slantbox`".to_owned(),
         TokenKind::SlantCyl => "`slantcyl`".to_owned(),
         TokenKind::Ramp => "`ramp`".to_owned(),
+        TokenKind::Decal => "`decal`".to_owned(),
         TokenKind::At => "`at`".to_owned(),
         TokenKind::Size => "`size`".to_owned(),
         TokenKind::Radius => "`radius`".to_owned(),
@@ -994,8 +1041,8 @@ mod tests {
     use super::{MAX_EXPR_DEPTH, MAX_NESTING, parse};
     use crate::Diagnostic;
     use crate::ast::{
-        Anchor, AssignOp, Background, BinaryOp, ElseBranch, ExprKind, ItemKind, Origin, RenderKind,
-        Shape, StatementKind,
+        Anchor, AssignOp, Background, BinaryOp, ElseBranch, ExprKind, Facing, ItemKind, Origin,
+        RenderKind, Shape, StatementKind,
     };
 
     fn parse_ok(source: &str) -> crate::ast::Program {
@@ -1339,6 +1386,31 @@ mod tests {
         assert!(matches!(shapes[3], &Shape::SlantBox { .. }));
         assert!(matches!(shapes[4], &Shape::SlantCyl { .. }));
         assert!(matches!(shapes[5], &Shape::Ramp { .. }));
+    }
+
+    #[test]
+    fn a_decal_has_a_path_size_and_facing() {
+        let source = r#"
+            version 1;
+            decal "textures/screen.png" at (1, 2, 3) size (4, 5) facing +y;
+        "#;
+        let program = parse_ok(source);
+        let ItemKind::Statement(statement) = &program.items[0].kind else {
+            panic!("expected a statement");
+        };
+        let StatementKind::Decal(decal) = &statement.kind else {
+            panic!("expected a decal");
+        };
+        assert_eq!(decal.path, "textures/screen.png");
+        assert_eq!(decal.facing, Facing::PosY);
+        assert_eq!(decal.size.len(), 2);
+    }
+
+    #[test]
+    fn an_unknown_decal_facing_is_reported() {
+        let error = parse_err(r#"version 1; decal "x.png" at (0, 0, 0) size (1, 1) facing +w;"#);
+        assert_eq!(error.code, "E0202");
+        assert!(error.message.contains("expected x, y or z"));
     }
 
     #[test]

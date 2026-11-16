@@ -13,8 +13,11 @@
 //! in the same order as a sequential pass, so the result does not depend on
 //! the number of threads.
 
+use std::sync::Arc;
+
 use rayon::prelude::*;
 
+use crate::image::{Image, over};
 use crate::material::Texture;
 
 /// Rows per band below which splitting the image is not worth it.
@@ -32,16 +35,27 @@ pub struct Framebuffer {
     depth: Vec<f64>,
 }
 
+/// An image mapped onto one triangle, with nearest-neighbour sampling.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImageMap {
+    pub image: Arc<Image>,
+    /// UV coordinates of the triangle's three points, in image space.
+    pub uv: [[f64; 2]; 3],
+}
+
 /// One drawing command for [`Framebuffer::draw`]. Points are in pixels with
 /// the view depth (larger is closer) as the third coordinate.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Shape {
     /// A flat triangle, optionally shaded by a procedural texture evaluated at
-    /// the interpolated world position.
+    /// the interpolated world position, or covered by an image.
     Triangle {
         points: [[f64; 3]; 3],
         color: [u8; 3],
         shade: Option<(Texture, [[f64; 3]; 3])>,
+        image: Option<ImageMap>,
+        /// Added to the depth before testing; used to lift decals off a wall.
+        bias: f64,
     },
     /// A depth-tested line; `bias` is in world blocks.
     Line {
@@ -131,7 +145,7 @@ impl Framebuffer {
 
     /// Fill a triangle. The third coordinate is view depth (larger is closer).
     pub fn triangle(&mut self, a: [f64; 3], b: [f64; 3], c: [f64; 3], color: [u8; 3]) {
-        self.whole().triangle(a, b, c, color, None);
+        self.whole().triangle(a, b, c, color, None, None, 0.0);
     }
 
     /// Fill a triangle and shade every pixel with a procedural texture.
@@ -146,7 +160,7 @@ impl Framebuffer {
         texture: Texture,
     ) {
         self.whole()
-            .triangle(a, b, c, color, Some((texture, world)));
+            .triangle(a, b, c, color, Some((texture, world)), None, 0.0);
     }
 
     /// Draw a depth-tested line. `bias` is in world blocks.
@@ -249,16 +263,19 @@ struct Band<'a> {
 
 impl Band<'_> {
     fn shape(&mut self, shape: &Shape) {
-        match *shape {
+        match shape {
             Shape::Triangle {
                 points: [a, b, c],
                 color,
                 shade,
-            } => self.triangle(a, b, c, color, shade),
-            Shape::Line { a, b, color, bias } => self.line(a, b, color, bias),
+                image,
+                bias,
+            } => self.triangle(*a, *b, *c, *color, *shade, image.as_ref(), *bias),
+            Shape::Line { a, b, color, bias } => self.line(*a, *b, *color, *bias),
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn triangle(
         &mut self,
         a: [f64; 3],
@@ -266,6 +283,8 @@ impl Band<'_> {
         c: [f64; 3],
         base: [u8; 3],
         shade: Option<(Texture, [[f64; 3]; 3])>,
+        image: Option<&ImageMap>,
+        bias: f64,
     ) {
         let denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
         if denominator.abs() < 1e-12 || self.rows == 0 {
@@ -323,9 +342,22 @@ impl Band<'_> {
                 if u < -1e-9 || v < -1e-9 || w < -1e-9 {
                     continue;
                 }
-                let z = u * a[2] + v * b[2] + w * c[2];
+                let z = u * a[2] + v * b[2] + w * c[2] + bias;
                 let index = (y - self.top) * self.width + x;
                 if z > self.depth[index] + 1e-9 {
+                    if let Some(map) = image {
+                        let uv = [
+                            u * map.uv[0][0] + v * map.uv[1][0] + w * map.uv[2][0],
+                            u * map.uv[0][1] + v * map.uv[1][1] + w * map.uv[2][1],
+                        ];
+                        let pixel = sample(map, uv);
+                        if pixel[3] == 0 {
+                            continue;
+                        }
+                        self.depth[index] = z;
+                        self.write_rgba(index, pixel);
+                        continue;
+                    }
                     self.depth[index] = z;
                     let color = match &shade {
                         Some((texture, world)) => {
@@ -398,6 +430,29 @@ impl Band<'_> {
         self.pixels[base + 2] = color[2];
         self.pixels[base + 3] = 255;
     }
+
+    fn write_rgba(&mut self, index: usize, color: [u8; 4]) {
+        let base = index * 4;
+        if color[3] == 255 {
+            self.pixels[base..base + 4].copy_from_slice(&color);
+            return;
+        }
+        let dst = [
+            self.pixels[base],
+            self.pixels[base + 1],
+            self.pixels[base + 2],
+            self.pixels[base + 3],
+        ];
+        self.pixels[base..base + 4].copy_from_slice(&over(color, dst));
+    }
+}
+
+fn sample(map: &ImageMap, uv: [f64; 2]) -> [u8; 4] {
+    let width = map.image.width.max(1);
+    let height = map.image.height.max(1);
+    let x = (uv[0].clamp(0.0, 1.0) * f64::from(width - 1)).round() as u32;
+    let y = ((1.0 - uv[1].clamp(0.0, 1.0)) * f64::from(height - 1)).round() as u32;
+    map.image.pixel(x, y)
 }
 
 /// Columns `from..=to` of a row that may lie inside a triangle, given each
@@ -526,27 +581,31 @@ mod tests {
                     points: [a, b, c],
                     color: [(index % 255) as u8, 90, 160],
                     shade: (index % 3 == 0).then_some((texture, [a, b, c])),
+                    image: None,
+                    bias: 0.0,
                 }
             });
         }
         let mut sequential = Framebuffer::new(width, height, [0, 0, 0, 0]);
         for shape in &shapes {
-            match *shape {
+            match shape {
                 Shape::Triangle {
                     points: [a, b, c],
                     color,
                     shade: None,
+                    ..
                 } => {
-                    sequential.triangle(a, b, c, color);
+                    sequential.triangle(*a, *b, *c, *color);
                 }
                 Shape::Triangle {
                     points: [a, b, c],
                     color,
                     shade: Some((texture, world)),
+                    ..
                 } => {
-                    sequential.triangle_textured(a, b, c, world, color, texture);
+                    sequential.triangle_textured(*a, *b, *c, *world, *color, *texture);
                 }
-                Shape::Line { a, b, color, bias } => sequential.line(a, b, color, bias),
+                Shape::Line { a, b, color, bias } => sequential.line(*a, *b, *color, *bias),
             }
         }
         let mut parallel = Framebuffer::new(width, height, [0, 0, 0, 0]);
@@ -602,6 +661,8 @@ mod tests {
                         points: [a, b, c],
                         color: [(index * 2) as u8, 99, 7],
                         shade: None,
+                        image: None,
+                        bias: 0.0,
                     }
                 });
                 moving.push((40..50).contains(&index));
@@ -613,7 +674,7 @@ mod tests {
                 .iter()
                 .zip(&moving)
                 .filter(|(_, moving)| !**moving)
-                .map(|(shape, _)| *shape)
+                .map(|(shape, _)| shape.clone())
                 .collect();
             let mut base = Framebuffer::new(width, height, background);
             base.draw(&still);

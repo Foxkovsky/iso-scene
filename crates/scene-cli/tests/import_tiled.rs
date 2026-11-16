@@ -26,8 +26,9 @@ const MODEL: &str =
 fn an_object_layer_becomes_a_scene() {
     let dir = scratch("objects");
     let models = dir.join("models");
-    fs::create_dir_all(&models).unwrap();
+    fs::create_dir_all(models.join("textures")).unwrap();
     write(&models.join("thing.model"), MODEL);
+    write(&models.join("textures/screen.png"), "not decoded by import");
     write(
         &dir.join("map.tmj"),
         r#"{

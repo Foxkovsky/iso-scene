@@ -203,7 +203,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
             ))
         })?;
     }
-    copy_materials(&models, &output)?;
+    copy_assets(&models, &output)?;
     let scene_path = output.join(format!("{name}.scene"));
     fs::write(&scene_path, scene)
         .map_err(|error| usage(format!("cannot write `{}`: {error}", scene_path.display())))?;
@@ -355,21 +355,37 @@ fn number(value: f64) -> String {
     }
 }
 
-fn copy_materials(models: &Path, output: &Path) -> Parsed<()> {
-    let materials = models.join("materials");
-    if !materials.is_dir() {
-        return Ok(());
+fn copy_assets(models: &Path, output: &Path) -> Parsed<()> {
+    for folder in ["materials", "textures"] {
+        let source = models.join(folder);
+        if source.is_dir() {
+            copy_tree(&source, &output.join(folder))?;
+        }
     }
-    let target = output.join("materials");
-    fs::create_dir_all(&target)
+    Ok(())
+}
+
+fn copy_tree(source: &Path, target: &Path) -> Parsed<()> {
+    fs::create_dir_all(target)
         .map_err(|error| usage(format!("cannot create `{}`: {error}", target.display())))?;
-    for entry in fs::read_dir(&materials)
-        .map_err(|error| usage(format!("cannot read `{}`: {error}", materials.display())))?
-    {
-        let entry = entry.map_err(|error| usage(error.to_string()))?;
-        if entry.path().extension().and_then(|value| value.to_str()) == Some("toml") {
-            fs::copy(entry.path(), target.join(entry.file_name()))
-                .map_err(|error| usage(format!("cannot copy material: {error}")))?;
+    let mut entries: Vec<_> = fs::read_dir(source)
+        .map_err(|error| usage(format!("cannot read `{}`: {error}", source.display())))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .map_err(|error| usage(error.to_string()))?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let destination = target.join(entry.file_name());
+        if path.is_dir() {
+            copy_tree(&path, &destination)?;
+        } else if path.is_file() {
+            fs::copy(&path, &destination).map_err(|error| {
+                usage(format!(
+                    "cannot copy `{}` to `{}`: {error}",
+                    path.display(),
+                    destination.display()
+                ))
+            })?;
         }
     }
     Ok(())

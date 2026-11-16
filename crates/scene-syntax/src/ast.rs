@@ -126,6 +126,27 @@ pub enum Origin {
     Front,
 }
 
+/// The outward normal of a flat decal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Facing {
+    PosX,
+    NegX,
+    PosY,
+    NegY,
+    PosZ,
+    NegZ,
+}
+
+/// `decal "textures/screen.png" at (x, y, z) size (w, h) facing +y;`
+#[derive(Clone, Debug, PartialEq)]
+pub struct Decal {
+    pub path: String,
+    pub path_span: Span,
+    pub at: [Expr; 3],
+    pub size: [Expr; 2],
+    pub facing: Facing,
+}
+
 /// `object name (w, d) [origin center] { ... }`
 #[derive(Clone, Debug, PartialEq)]
 pub struct Object {
@@ -191,6 +212,8 @@ pub enum StatementKind {
     /// `merge { ... }`: the parts inside are welded into one solid.
     Merge(Block),
     Shape(Shape),
+    /// A flat PNG on a plane, with no thickness.
+    Decal(Decal),
     Mirror(Axis),
 }
 

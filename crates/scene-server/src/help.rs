@@ -84,6 +84,11 @@ const TOPICS: &[Topic] = &[
         source: Source::Spec("### 6.2 Типовые", true),
     },
     Topic {
+        name: "decal",
+        about: "flat PNG images on a face",
+        source: Source::Spec("### 6.3", true),
+    },
+    Topic {
         name: "expressions",
         about: "operators and their precedence",
         source: Source::Spec("### 7.1", true),

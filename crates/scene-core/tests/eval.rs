@@ -436,6 +436,33 @@ fn include_must_be_a_model() {
     assert_eq!(error.code, "E0503");
 }
 
+#[test]
+fn decal_paths_cannot_escape_the_root() {
+    let source = r#"
+        version 1;
+        object panel (1, 1) {
+            decal "../screen.png" at (0, 1, 0) size (1, 1) facing +y;
+        }
+        render iso;
+        scale 8;
+        place panel at (0, 0, 0);
+    "#;
+    let error = compile_error(source);
+    assert_eq!(error, "E0502");
+}
+
+#[test]
+fn decals_are_only_allowed_inside_objects() {
+    let source = r#"
+        version 1;
+        decal "screen.png" at (0, 0, 0) size (1, 1) facing +y;
+        render iso;
+        scale 8;
+    "#;
+    let error = compile_error(source);
+    assert_eq!(error, "E0302");
+}
+
 struct TempDir(PathBuf);
 
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);

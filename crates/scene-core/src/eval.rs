@@ -9,8 +9,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use scene_syntax::ast::{
-    Ambient, Anchor, Animation, AssignOp, Axis, Background, BinaryOp, Block, ElseBranch, Expr,
-    ExprKind, Include, ItemKind, Material, Object, Origin, Program, Shape, Statement,
+    Ambient, Anchor, Animation, AssignOp, Axis, Background, BinaryOp, Block, Decal, ElseBranch,
+    Expr, ExprKind, Facing, Include, ItemKind, Material, Object, Origin, Program, Shape, Statement,
     StatementKind, Sun, UnaryOp,
 };
 use scene_syntax::{Diagnostic, Span, parse};
@@ -241,7 +241,7 @@ impl Evaluator {
         for item in &program.items {
             match &item.kind {
                 ItemKind::Material(_) => {}
-                ItemKind::Object(object) => self.add_object(object, item.span)?,
+                ItemKind::Object(object) => self.add_object(object, item.span, base_dir)?,
                 _ => {
                     return Err(diag(
                         "E0302",
@@ -293,7 +293,7 @@ impl Evaluator {
                 ItemKind::Include(include) => {
                     self.load_include(include, base_dir, root, item.span)?;
                 }
-                ItemKind::Object(object) => self.add_object(object, item.span)?,
+                ItemKind::Object(object) => self.add_object(object, item.span, base_dir)?,
                 ItemKind::Render(value) => {
                     set_once(&mut render, value.kind, item.span, "render")?;
                 }
@@ -469,7 +469,12 @@ impl Evaluator {
         Ok(())
     }
 
-    fn add_object(&mut self, object: &Object, span: Span) -> Result<(), Diagnostic> {
+    fn add_object(
+        &mut self,
+        object: &Object,
+        span: Span,
+        base_dir: &Path,
+    ) -> Result<(), Diagnostic> {
         if self.objects.contains_key(&object.name) {
             return Err(diag(
                 "E0303",
@@ -484,7 +489,7 @@ impl Evaluator {
                 span,
             ));
         }
-        let compiled = self.compile_object(object, span)?;
+        let compiled = self.compile_object(object, span, base_dir)?;
         self.objects.insert(object.name.clone(), Arc::new(compiled));
         Ok(())
     }
@@ -493,6 +498,7 @@ impl Evaluator {
         &mut self,
         object: &Object,
         span: Span,
+        base_dir: &Path,
     ) -> Result<CompiledObject, Diagnostic> {
         let width = self.constant_number(&object.width, span, "object width")?;
         let depth = self.constant_number(&object.depth, span, "object depth")?;
@@ -503,7 +509,14 @@ impl Evaluator {
         scopes.declare("w", Value::Number(width), false, span)?;
         scopes.declare("d", Value::Number(depth), false, span)?;
         let mut parts = Vec::new();
-        self.object_block(&object.body, &mut scopes, &mut parts, width, depth)?;
+        self.object_block(
+            &object.body,
+            &mut scopes,
+            &mut parts,
+            width,
+            depth,
+            base_dir,
+        )?;
 
         // Authoring origin: shift the local coordinates into the footprint, so
         // the rest of the pipeline always works with `0..w`, `0..d`.
@@ -533,11 +546,14 @@ impl Evaluator {
         parts: &mut Vec<Part>,
         width: f64,
         depth: f64,
+        base_dir: &Path,
     ) -> Result<(), Diagnostic> {
         scopes.push();
         let mut result = Ok(());
         for statement in &block.statements {
-            if let Err(error) = self.object_statement(statement, scopes, parts, width, depth) {
+            if let Err(error) =
+                self.object_statement(statement, scopes, parts, width, depth, base_dir)
+            {
                 result = Err(error);
                 break;
             }
@@ -556,6 +572,7 @@ impl Evaluator {
         parts: &mut Vec<Part>,
         width: f64,
         depth: f64,
+        base_dir: &Path,
     ) -> Result<(), Diagnostic> {
         self.spend(statement.span)?;
 
@@ -630,7 +647,7 @@ impl Evaluator {
                     let mut result = Ok(());
                     for nested in &body.statements {
                         if let Err(error) =
-                            self.object_statement(nested, scopes, parts, width, depth)
+                            self.object_statement(nested, scopes, parts, width, depth, base_dir)
                         {
                             result = Err(error);
                             break;
@@ -647,14 +664,16 @@ impl Evaluator {
             } => {
                 let condition = self.boolean(condition, scopes)?;
                 if condition {
-                    self.object_block(then_block, scopes, parts, width, depth)?;
+                    self.object_block(then_block, scopes, parts, width, depth, base_dir)?;
                 } else {
                     match else_branch {
                         Some(ElseBranch::Block(block)) => {
-                            self.object_block(block, scopes, parts, width, depth)?;
+                            self.object_block(block, scopes, parts, width, depth, base_dir)?;
                         }
                         Some(ElseBranch::If(statement)) => {
-                            self.object_statement(statement, scopes, parts, width, depth)?;
+                            self.object_statement(
+                                statement, scopes, parts, width, depth, base_dir,
+                            )?;
                         }
                         None => {}
                     }
@@ -664,9 +683,13 @@ impl Evaluator {
                 let part = self.compile_shape(shape, scopes, statement.span)?;
                 self.push_part(parts, part, statement.span)?;
             }
+            StatementKind::Decal(decal) => {
+                let part = self.compile_decal(decal, scopes, statement.span, base_dir)?;
+                self.push_part(parts, part, statement.span)?;
+            }
             StatementKind::Merge(block) => {
                 let start = parts.len();
-                self.object_block(block, scopes, parts, width, depth)?;
+                self.object_block(block, scopes, parts, width, depth, base_dir)?;
                 self.merge_groups += 1;
                 let group = self.merge_groups;
                 for part in &mut parts[start..] {
@@ -918,6 +941,7 @@ impl Evaluator {
                 instances.push(instance);
             }
             StatementKind::Shape(_)
+            | StatementKind::Decal(_)
             | StatementKind::Mirror(_)
             | StatementKind::Use { .. }
             | StatementKind::Merge(_) => {
@@ -1008,6 +1032,35 @@ impl Evaluator {
         Ok(Part {
             primitive,
             material,
+            group: None,
+        })
+    }
+
+    fn compile_decal(
+        &self,
+        decal: &Decal,
+        scopes: &Scopes,
+        span: Span,
+        base_dir: &Path,
+    ) -> Result<Part, Diagnostic> {
+        if !safe_relative(&decal.path) {
+            return Err(diag(
+                "E0502",
+                format!(
+                    "decal path `{}` must be relative and stay inside the project",
+                    decal.path
+                ),
+                decal.path_span,
+            ));
+        }
+        let at = self.coordinates(&decal.at, scopes, span)?;
+        let size = self.positive_pair(&decal.size, scopes, span, "decal size")?;
+        Ok(Part {
+            primitive: Primitive::Decal {
+                corners: decal_corners(at, size, decal.facing),
+                path: base_dir.join(&decal.path),
+            },
+            material: None,
             group: None,
         })
     }
@@ -1370,7 +1423,9 @@ impl Evaluator {
         for item in &program.items {
             match &item.kind {
                 ItemKind::Material(_) => {}
-                ItemKind::Object(object) => self.add_object(object, item.span).map_err(here)?,
+                ItemKind::Object(object) => {
+                    self.add_object(object, item.span, base_dir).map_err(here)?;
+                }
                 _ => {
                     return Err(diag(
                         "E0503",
@@ -1381,6 +1436,25 @@ impl Evaluator {
             }
         }
         Ok(())
+    }
+}
+
+/// Four corners of a decal, in UV order `(0,0), (1,0), (1,1), (0,1)`.
+///
+/// `at` is the minimum corner in the plane; `size[0]` runs along the face's
+/// horizontal axis and `size[1]` up the vertical axis. The order is chosen so
+/// that the image is upright when seen from outside.
+#[allow(clippy::many_single_char_names)]
+fn decal_corners(at: [f64; 3], size: [f64; 2], facing: Facing) -> [[f64; 3]; 4] {
+    let [x, y, z] = at;
+    let [w, h] = size;
+    match facing {
+        Facing::PosY => [[x, y, z], [x + w, y, z], [x + w, y, z + h], [x, y, z + h]],
+        Facing::NegY => [[x + w, y, z], [x, y, z], [x, y, z + h], [x + w, y, z + h]],
+        Facing::PosX => [[x, y + w, z], [x, y, z], [x, y, z + h], [x, y + w, z + h]],
+        Facing::NegX => [[x, y, z], [x, y + w, z], [x, y + w, z + h], [x, y, z + h]],
+        Facing::PosZ => [[x, y + h, z], [x + w, y + h, z], [x + w, y, z], [x, y, z]],
+        Facing::NegZ => [[x, y, z], [x + w, y, z], [x + w, y + h, z], [x, y + h, z]],
     }
 }
 
