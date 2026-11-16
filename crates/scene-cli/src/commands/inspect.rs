@@ -9,8 +9,41 @@ pub(crate) fn check(path: &str) -> ExitCode {
     let Some(source) = read(path) else {
         return ExitCode::from(2);
     };
-    match scene_syntax::parse(&source) {
-        Ok(program) => {
+    let file = Path::new(path);
+    let base = file.parent().unwrap_or_else(|| Path::new("."));
+    let root = crate::common::project_root(None);
+    let extension = file.extension().and_then(|value| value.to_str());
+    if extension == Some("walls") {
+        return match scene_walls::parse(&source, base, &root) {
+            Ok(layout) => {
+                println!(
+                    "{path}: ok ({}x{} cells, {} walls)",
+                    layout.columns,
+                    layout.rows,
+                    layout.cells.len()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(diagnostic) => report(path, &source, &diagnostic),
+        };
+    }
+    let program = match scene_syntax::parse(&source) {
+        Ok(program) => program,
+        Err(diagnostic) => return report(path, &source, &diagnostic),
+    };
+    // `check` runs the same static and semantic checks as the renderers, so an
+    // unknown object or a missing `scale` is an error here too.
+    let compiled = match extension {
+        Some("model") => scene_core::compile_model(&program, base).map(drop),
+        Some("scene") => scene_core::compile_scene(&program, base, &root).map(drop),
+        _ => {
+            return usage(format!(
+                "`check` expects a .model, .scene or .walls file, got `{path}`"
+            ));
+        }
+    };
+    match compiled {
+        Ok(()) => {
             println!(
                 "{path}: ok (version {}, items: {})",
                 program.version,

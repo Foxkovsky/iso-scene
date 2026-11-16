@@ -57,12 +57,18 @@ pub(crate) fn print_help() {
     println!("Usage: iso-scene <command> [options]");
     println!();
     println!("Commands:");
-    println!("  check <file>    parse a .model or .scene file and report diagnostics");
+    println!("  check <file>    parse and evaluate a .model, .scene or .walls file");
     println!("  eval <file>     parse and evaluate to a scene graph");
     println!("  render <file>   render a .scene to PNG (iso or ortho); -o out.svg writes iso SVG");
     println!("                  --view iso|top|front|side, --rotate 0|90|180|270");
     println!("  voxel <file>    export a .scene as a MagicaVoxel .vox model");
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
+    println!("                  --walls <file> adds a 16-way wall tile layer with Wang set");
+    println!("                  (near walls above the objects, the rest below them;");
+    println!("                  --walls-behind puts all walls below, --walls-front above)");
+    println!(
+        "                  --tile-layer puts objects in a tile layer instead of an object layer"
+    );
     println!("  import-tiled <map>  turn a Tiled map back into a .scene + copied models");
     println!("                  --models <dir> --layers objects[,walls...] --scale --cell");
     println!("  animate <file>  render animations as sprite sheets, animated tiles and GIFs");
@@ -88,12 +94,6 @@ pub(crate) fn print_help() {
     );
     println!(
         "                  (repeatable; --durations a,b,.. --once --label <name> per animation)"
-    );
-    println!("                  --walls <file> adds a 16-way wall tile layer with Wang set");
-    println!("                  (near walls above the objects, the rest below them;");
-    println!("                  --walls-behind puts all walls below, --walls-front above)");
-    println!(
-        "                  --tile-layer puts objects in a tile layer instead of an object layer"
     );
     println!("  help [topic]    one section of the language spec (topics without one)");
     println!("  lsp             run the language server on stdin/stdout");
