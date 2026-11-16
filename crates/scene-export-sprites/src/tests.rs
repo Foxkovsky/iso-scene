@@ -1045,5 +1045,7 @@ fn scene_animation_frames_share_one_size_and_origin() {
         serde_json::from_str(&fs::read_to_string(&report.tileset).expect("tsj")).expect("json");
     assert_eq!(tileset["tiles"][0]["animation"][2]["duration"], 40);
     assert_eq!(tileset["tiles"][0]["properties"][0]["value"], false);
+    let gif = fs::read(&report.gif).expect("gif");
+    assert!(gif.starts_with(b"GIF89a"), "not a GIF: {:?}", &gif[..6]);
     let _ = fs::remove_dir_all(dir);
 }

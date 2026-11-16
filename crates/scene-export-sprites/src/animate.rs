@@ -2,7 +2,9 @@
 //! with a Tiled tileset whose first tile plays them and a one-tile map.
 
 use std::fs;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use rayon::prelude::*;
 use scene_core::SceneGraph;
@@ -33,6 +35,7 @@ pub struct AnimateOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnimateReport {
     pub image: PathBuf,
+    pub gif: PathBuf,
     pub tileset: PathBuf,
     pub map: PathBuf,
     pub frames: usize,
@@ -84,6 +87,16 @@ pub fn export_animation(
     let png_name = format!("{}.png", options.name);
     let image = out_dir.join(&png_name);
     write_png(&sheet, &image).map_err(|message| error("E0603", message))?;
+    let gif = out_dir.join(format!("{}.gif", options.name));
+    write_gif(
+        &gif,
+        &sheet,
+        [frame_w, frame_h],
+        rendered.len(),
+        options.duration,
+        true,
+    )
+    .map_err(|message| error("E0603", message))?;
 
     let (tileset, map) = write_tiled(
         &options.name,
@@ -95,6 +108,7 @@ pub fn export_animation(
     )?;
     Ok(AnimateReport {
         image,
+        gif,
         tileset,
         map,
         frames: rendered.len(),
@@ -157,9 +171,13 @@ pub fn export_scene_animation(
     })?;
     let image = out_dir.join(format!("{name}.png"));
     write_png(&sheet, &image).map_err(|message| error("E0603", message))?;
+    let gif = out_dir.join(format!("{name}.gif"));
+    write_gif(&gif, &sheet, size, rendered.len(), duration, looped)
+        .map_err(|message| error("E0603", message))?;
     let (tileset, map) = write_tiled(name, duration, looped, out_dir, rendered.len(), size)?;
     Ok(AnimateReport {
         image,
+        gif,
         tileset,
         map,
         frames: rendered.len(),
@@ -239,6 +257,90 @@ fn pack(
         composite_over(&mut sheet, image, x, y, [left, 0, frame_w, frame_h]);
     }
     sheet
+}
+
+/// Encode the packed strip as an animated GIF.
+fn write_gif(
+    path: &Path,
+    sheet: &Image,
+    [frame_w, frame_h]: [u32; 2],
+    frames: usize,
+    duration: u32,
+    looped: bool,
+) -> Result<(), String> {
+    let file = fs::File::create(path)
+        .map_err(|cause| format!("cannot create `{}`: {cause}", path.display()))?;
+    let mut encoder = gif::Encoder::new(
+        BufWriter::new(file),
+        u16::try_from(frame_w).map_err(|_| "GIF frame is too wide".to_owned())?,
+        u16::try_from(frame_h).map_err(|_| "GIF frame is too tall".to_owned())?,
+        &[],
+    )
+    .map_err(|cause| format!("cannot start GIF: {cause}"))?;
+    encoder
+        .set_repeat(if looped {
+            gif::Repeat::Infinite
+        } else {
+            gif::Repeat::Finite(1)
+        })
+        .map_err(|cause| format!("cannot set GIF repeat: {cause}"))?;
+    let delay = u16::try_from((duration / 10).max(1)).unwrap_or(u16::MAX);
+    let pixels_wide = frame_w as usize;
+    let pixels_high = frame_h as usize;
+    let sheet_pixels_wide = sheet.width as usize;
+    for index in 0..frames {
+        let mut rgba = Vec::with_capacity(pixels_wide * pixels_high * 4);
+        for y in 0..pixels_high {
+            let start = (y * sheet_pixels_wide + index * pixels_wide) * 4;
+            rgba.extend_from_slice(&sheet.rgba[start..start + pixels_wide * 4]);
+        }
+        let mut frame = gif::Frame::from_rgba_speed(
+            u16::try_from(frame_w).unwrap_or(u16::MAX),
+            u16::try_from(frame_h).unwrap_or(u16::MAX),
+            &mut rgba,
+            10,
+        );
+        frame.delay = delay;
+        frame.dispose = gif::DisposalMethod::Background;
+        encoder
+            .write_frame(&frame)
+            .map_err(|cause| format!("cannot write GIF frame: {cause}"))?;
+    }
+    Ok(())
+}
+
+/// Convert an exported GIF to MP4 with the system `ffmpeg`.
+///
+/// MP4 is optional because it needs an external encoder; the GIF is always
+/// written by the exporter. `ISO_SCENE_FFMPEG` overrides the executable.
+///
+/// # Errors
+///
+/// Returns a readable message when `ffmpeg` is missing or exits non-zero.
+pub fn gif_to_mp4(gif: &Path, mp4: &Path) -> Result<(), String> {
+    let ffmpeg = std::env::var("ISO_SCENE_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned());
+    let status = Command::new(&ffmpeg)
+        .args([
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            &gif.to_string_lossy(),
+            "-movflags",
+            "+faststart",
+            "-pix_fmt",
+            "yuv420p",
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            &mp4.to_string_lossy(),
+        ])
+        .status()
+        .map_err(|cause| format!("cannot run `{ffmpeg}`: {cause}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("`{ffmpeg}` failed with {status}"))
+    }
 }
 
 /// Write the tileset (its first tile plays every frame) and a one-tile map.

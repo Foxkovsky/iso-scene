@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use scene_export_sprites::animate::{AnimateOptions, export_animation, export_scene_animation};
+use scene_export_sprites::animate::{
+    AnimateOptions, export_animation, export_scene_animation, gif_to_mp4,
+};
 
 use crate::common::{Args, Parsed, failed, load_scene, usage};
 
@@ -13,6 +15,7 @@ fn scene_animations(
     loaded: &crate::common::Loaded,
     only: Option<&str>,
     output: &Path,
+    mp4: bool,
 ) -> Parsed<ExitCode> {
     let declared = &loaded.scene.animations;
     if declared.is_empty() {
@@ -44,7 +47,7 @@ fn scene_animations(
         )
         .map_err(|diagnostic| failed(&diagnostic))?;
         println!(
-            "wrote `{}`: {} frames {}x{} ({} ms each{}); open `{}` in Tiled",
+            "wrote `{}`: {} frames {}x{} ({} ms each{}); GIF: `{}`; open `{}` in Tiled",
             animation.name,
             report.frames,
             report.frame_size[0],
@@ -55,8 +58,14 @@ fn scene_animations(
             } else {
                 ", once"
             },
+            report.gif.display(),
             report.map.display()
         );
+        if mp4 {
+            let path = directory.join(format!("{}.mp4", animation.name));
+            gif_to_mp4(&report.gif, &path).map_err(usage)?;
+            println!("wrote {}", path.display());
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -67,6 +76,7 @@ pub(crate) fn animate_scene(args: Vec<String>) -> ExitCode {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let mut path: Option<String> = None;
     let mut object_name: Option<String> = None;
@@ -77,6 +87,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let mut duration = 120_u32;
     let mut output: Option<PathBuf> = None;
     let mut base: Option<PathBuf> = None;
+    let mut mp4 = false;
     let mut args = Args::new(args);
     let finite = |value: &f64| value.is_finite();
     while let Some(argument) = args.next() {
@@ -85,6 +96,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
             "--base" => base = Some(PathBuf::from(args.value("--base")?)),
             "--object" => object_name = Some(args.value("--object")?),
             "--animation" => animation_name = Some(args.value("--animation")?),
+            "--mp4" => mp4 = true,
             "--from" => from = args.parse("--from", finite, |v| format!("invalid angle `{v}`"))?,
             "--to" => to = args.parse("--to", finite, |v| format!("invalid angle `{v}`"))?,
             "--frames" => {
@@ -120,7 +132,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         PathBuf::from("out").join(stem)
     });
     if object_name.is_none() {
-        return scene_animations(&loaded, animation_name.as_deref(), &output_dir);
+        return scene_animations(&loaded, animation_name.as_deref(), &output_dir, mp4);
     }
     let index = loaded
         .scene
@@ -154,12 +166,18 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let report = export_animation(&loaded.scene, index, &options, &output)
         .map_err(|diagnostic| failed(&diagnostic))?;
     println!(
-        "wrote {} frames {}x{} ({} ms each); open `{}` in Tiled",
+        "wrote {} frames {}x{} ({} ms each); GIF: {}; open `{}` in Tiled",
         report.frames,
         report.frame_size[0],
         report.frame_size[1],
         duration,
+        report.gif.display(),
         report.map.display()
     );
+    if mp4 {
+        let path = output.join(format!("{}.mp4", options.name));
+        gif_to_mp4(&report.gif, &path).map_err(usage)?;
+        println!("wrote {}", path.display());
+    }
     Ok(ExitCode::SUCCESS)
 }

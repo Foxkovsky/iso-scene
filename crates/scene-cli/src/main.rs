@@ -65,9 +65,11 @@ pub(crate) fn print_help() {
     println!("  tiled <file>    export a .scene as an isometric Tiled map");
     println!("  import-tiled <map>  turn a Tiled map back into a .scene + copied models");
     println!("                  --models <dir> --layers objects[,walls...] --scale --cell");
-    println!("  animate <file>  render the scene's `animation`s as sprite sheets + animated tiles");
-    println!("                  (--animation <name> for one); or turn one object:");
-    println!("                  --object <name> --from --to --frames --duration [--base <dir>]");
+    println!("  animate <file>  render animations as sprite sheets, animated tiles and GIFs");
+    println!("                  (--animation <name> for one, --mp4 for an ffmpeg video);");
+    println!(
+        "                  or turn one object: --object <name> --from --to --frames --duration"
+    );
     println!(
         "  sprites <file>  pack objects from .scene/.model files into a sprite sheet + JSON/TSJ"
     );

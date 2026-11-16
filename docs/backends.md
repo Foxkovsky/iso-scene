@@ -451,15 +451,17 @@ directive of the scene (`--animation open` for one) into `out/room/<name>/`:
 the scene is evaluated once per frame with that animation's progress
 variable, and all frames are rendered with the bounds of all frames
 together, so they share one size and origin. `<name>.png` is the strip,
-`<name>.tsj` a tileset whose first tile plays it (with a `loop` property:
-`false` for `once`), and `scene.tmj` a one-tile map. Frames render in
+`<name>.gif` the same frames as an animated GIF, `<name>.tsj` a tileset
+whose first tile plays it (with a `loop` property: `false` for `once`), and
+`scene.tmj` a one-tile map. Add `--mp4` to also encode `<name>.mp4` with
+the system `ffmpeg` (`ISO_SCENE_FFMPEG` overrides the executable). Frames render in
 parallel after the first one has sized the strip against the limits.
 
 `iso-scene animate scene.scene --object leaf --from 0 --to 90 --frames 7 --duration 100 -o out/door`
 renders one frame per angle, packs them into a horizontal sheet and writes a
 tileset whose first tile carries a Tiled `animation` block. Open
 `out/door/scene.tmj` in Tiled and the tile animates in the editor and in the
-game. The rotating instance turns around its local origin, so a hinged part
+game; `out/door/leaf.gif` and `out/door/leaf.mp4` are ready to view or share. The rotating instance turns around its local origin, so a hinged part
 should be modelled with the hinge at `(0, 0)`.
 
 ### Contact shadows
