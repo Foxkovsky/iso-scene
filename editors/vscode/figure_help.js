@@ -36,6 +36,11 @@ module.exports = {
         description: 'Пандус: высота в начале и конце по оси X.',
         snippet: 'ramp at (${1:0}, ${2:0}, ${3:0}) size (${4:2}, ${5:1}) rise (${6:0}, ${7:1}) material ${8:wood}'
     },
+    decal: {
+        signature: 'decal "textures/image.png" at (x, y, z) size (w, h) facing +y',
+        description: 'Плоское PNG на грани: экран, мел на доске, логотип. Без толщины и без освещения.',
+        snippet: 'decal "${1:textures/screen.png}" at (${2:0}, ${3:1}, ${4:0}) size (${5:1}, ${6:1}) facing ${7:+y}'
+    },
     object: {
         signature: 'object name (w, d) [origin back|center|front] { ... }',
         description: 'Объект: план w × d и тело. origin center — локальный (0,0) в центре следа.',

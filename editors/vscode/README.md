@@ -10,6 +10,9 @@
 - **Три вкладки**: изометрия (2×2: 0°/90°/180°/270° — все четыре стороны),
   чертёж (XY/XZ/YZ на сетке 32 px, как в первой версии), воксели (вращение
   мышью, масштаб колесом, оси X/Y/Z).
+- **Плоские decal-текстуры**: `decal "textures/screen.png" ... facing +y`
+  рисует PNG прямо на грани — экран, мел и логотипы не нужно выдавливать
+  коробками.
 - **Статус-бар** `$(eye) Scene` — открыть предпросмотр одним кликом.
 - **Языковой сервер** `iso-scene lsp` (запускается сам, без зависимостей):
   ошибки в Problems при наборе — с кодом и точным диапазоном, в том числе
@@ -47,7 +50,7 @@
 ```bash
 cargo install --path crates/scene-cli
 cd editors/vscode && npx @vscode/vsce package
-code --install-extension iso-scene-0.5.0.vsix
+code --install-extension iso-scene-0.6.0.vsix
 ```
 
 CLI ищется в `PATH`, затем в `~/.cargo/bin/iso-scene`; путь задаётся
@@ -71,7 +74,7 @@ F12, автодополнение, символы, `.walls`, сборка, пр�
 ```bash
 make vscode-it                       # из исходников расширения
 VSCODE=/usr/share/code/code xvfb-run -a \
-    node editors/vscode/test/vscode/run.js --vsix iso-scene-0.5.0.vsix
+    node editors/vscode/test/vscode/run.js --vsix iso-scene-0.6.0.vsix
 ```
 
 `VSCODE` — исполняемый файл редактора (у Arch-пакета это

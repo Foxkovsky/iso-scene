@@ -470,7 +470,7 @@ async function restartLsp() {
 
 function fallbackHover(document, position) {
     const line = document.lineAt(position.line).text;
-    const match = /^\s*(box|cyl|sphere|slantbox|slantcyl|ramp|object|use|merge|place)\b/i.exec(line);
+    const match = /^\s*(box|cyl|sphere|slantbox|slantcyl|ramp|decal|object|use|merge|place)\b/i.exec(line);
     if (!match) return;
     let key = match[1].toLowerCase();
     if (key === 'box' && /^\s*box\s+from\b/i.test(line)) key = 'box from';
