@@ -121,6 +121,7 @@ keeps that true.
 | unit | `cargo test` | lexer/parser/evaluator cases |
 | property | `proptest` | parse/format round-trip, mirror involution, rotation composition, bbox containment |
 | fuzz | `cargo-fuzz` | no panic, no hang, no OOM on arbitrary bytes and ASTs |
+| corpus | `scene-core/tests/robustness.rs` | a fixed xorshift corpus of token soup and random UTF-8 through parse/eval in CI; no panic on any case |
 | golden | `insta` + PNG | pixel output does not regress |
 | differential | Python reference | Rust matches the reference implementation during the port |
 | bounded verification | `kani` | parser bounds, fuel decrease, rotation normalization |
