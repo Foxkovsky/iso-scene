@@ -261,3 +261,42 @@ fn an_agent_round_trips_a_map_back_into_a_scene() {
     assert!(root.join("back/back.walls").is_file());
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn an_agent_renders_several_sides_in_one_call() {
+    let root = scratch("rotations");
+    fs::write(root.join("room.scene"), ROOM).expect("scene");
+    let replies = session(
+        &root,
+        &[
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}}}),
+            call(
+                2,
+                "render",
+                &json!({"path": "room.scene", "rotations": [0, 90], "out": "rots"}),
+            ),
+            call(
+                3,
+                "render",
+                &json!({"path": "room.scene", "rotate": 90, "rotations": [0, 90]}),
+            ),
+            call(
+                4,
+                "render",
+                &json!({"path": "room.scene", "rotations": [0, 0]}),
+            ),
+        ],
+    );
+    let content = replies[1]["result"]["content"].as_array().expect("content");
+    let images = content
+        .iter()
+        .filter(|item| item["type"] == "image")
+        .count();
+    let texts = content.iter().filter(|item| item["type"] == "text").count();
+    assert_eq!((images, texts), (2, 2), "{content:?}");
+    assert!(root.join("rots/room-0.png").is_file());
+    assert!(root.join("rots/room-90.png").is_file());
+    assert_eq!(replies[2]["result"]["isError"], true);
+    assert_eq!(replies[3]["result"]["isError"], true);
+    let _ = fs::remove_dir_all(root);
+}

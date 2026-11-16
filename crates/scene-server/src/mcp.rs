@@ -115,6 +115,7 @@ fn tools() -> Value {
                     "path": path,
                     "view": {"type": "string", "enum": ["iso", "top", "front", "side"]},
                     "rotate": {"type": "integer", "enum": [0, 90, 180, 270], "description": "turn the whole scene before rendering"},
+                    "rotations": {"type": "array", "items": {"type": "integer", "enum": [0, 90, 180, 270]}, "description": "several sides in one call: one PNG per angle into `out` (a directory), each returned inline"},
                     "out": {"type": "string", "description": "PNG path; default out/<stem>.png"}
                 },
                 "required": ["path"]
@@ -372,6 +373,82 @@ fn check(arguments: &Value, root: &Path) -> Result<Value, String> {
     )))
 }
 
+#[allow(clippy::too_many_lines)]
+fn render_rotations(
+    source: &Source,
+    scene: &scene_core::SceneGraph,
+    arguments: &Value,
+    root: &Path,
+) -> Result<Value, String> {
+    if arguments["rotate"].as_u64().is_some() {
+        return Err("use `rotate` for one angle or `rotations` for several, not both".to_owned());
+    }
+    let rotations = arguments["rotations"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let mut angles = Vec::with_capacity(rotations.len());
+    for value in rotations {
+        let degrees = value
+            .as_u64()
+            .and_then(|degrees| u16::try_from(degrees).ok())
+            .filter(|degrees| matches!(degrees, 0 | 90 | 180 | 270))
+            .ok_or_else(|| "`rotations` takes 0, 90, 180 or 270".to_owned())?;
+        if angles.contains(&degrees) {
+            return Err(format!("duplicate rotation `{degrees}`"));
+        }
+        angles.push(degrees);
+    }
+    if angles.is_empty() {
+        return Err("`rotations` is empty".to_owned());
+    }
+    let stem = source.path.file_stem().map_or_else(
+        || "scene".to_owned(),
+        |stem| stem.to_string_lossy().into_owned(),
+    );
+    let directory = match arguments["out"].as_str() {
+        Some(out) => inside(root, Some(out), "out")?,
+        None => root.join("out").join(&stem),
+    };
+    if directory.is_file() {
+        return Err(format!(
+            "`out` must be a directory for several rotations, not `{}`",
+            directory.display()
+        ));
+    }
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("cannot create `{}`: {error}", directory.display()))?;
+    let mut content = Vec::new();
+    for degrees in angles {
+        let mut turned = scene.clone();
+        turned.rotate_z(degrees);
+        let image = match turned.render {
+            RenderKind::Iso => scene_backend_iso::render(&turned),
+            _ => scene_backend_ortho::render(&turned),
+        }
+        .map_err(|error| source.report(&error))?;
+        let out = directory.join(format!("{stem}-{degrees}.png"));
+        scene_render::write_png(&image, &out)?;
+        content.push(json!({
+            "type": "text",
+            "text": format!(
+                "wrote {} ({}x{}, {} instances, {degrees}°)",
+                out.strip_prefix(root).unwrap_or(&out).display(),
+                image.width,
+                image.height,
+                turned.instances.len()
+            )
+        }));
+        if u64::from(image.width) * u64::from(image.height) <= MAX_INLINE_PIXELS {
+            let png = fs::read(&out)
+                .map_err(|error| format!("cannot read `{}`: {error}", out.display()))?;
+            content.push(json!({
+                "type": "image", "data": base64(&png), "mimeType": "image/png"
+            }));
+        }
+    }
+    Ok(json!({"content": content}))
+}
+
 fn render(arguments: &Value, root: &Path) -> Result<Value, String> {
     let source = Source::load(root, arguments)?;
     let mut scene = source.scene(root)?;
@@ -387,6 +464,9 @@ fn render(arguments: &Value, root: &Path) -> Result<Value, String> {
                 ));
             }
         };
+    }
+    if arguments["rotations"].is_array() {
+        return render_rotations(&source, &scene, arguments, root);
     }
     if let Some(rotate) = arguments["rotate"].as_u64() {
         let degrees = u16::try_from(rotate)
