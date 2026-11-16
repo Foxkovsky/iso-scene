@@ -634,6 +634,16 @@ pub fn export_with(
             "value": format!("{width} {depth} {height}")
         }));
     }
+    if let Some(layout) = walls {
+        properties.push(json!({
+            "name": "iso_walls_layout", "type": "string",
+            "value": layout.layout.join("\n")
+        }));
+        properties.push(json!({
+            "name": "iso_walls_height", "type": "int",
+            "value": layout.wall_height
+        }));
+    }
     let map = json!({
         "type": "map",
         "version": "1.10",

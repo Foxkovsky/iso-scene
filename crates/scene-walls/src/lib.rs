@@ -58,6 +58,10 @@ pub struct WallLayout {
     pub wall_height: u32,
     pub palette: Palette,
     pub cells: Vec<WallCell>,
+    /// The layout rows, one string per row, with `#`, `.`, `D` and `W`.
+    /// The exporter stores them in the Tiled map, so a round trip keeps the
+    /// door and window gaps instead of flattening them to floor.
+    pub layout: Vec<String>,
 }
 
 /// A horizontal strip of 16 wall tiles.
@@ -239,6 +243,7 @@ pub fn parse(source: &str, base_dir: &Path, root: &Path) -> Result<WallLayout, D
         wall_height,
         palette,
         cells,
+        layout: layout_lines.into_iter().map(|(row, _)| row).collect(),
     })
 }
 

@@ -326,10 +326,12 @@ fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16, f64, O
 
 /// Wall cells rebuilt from the wall layers of a Tiled map.
 struct WallGrid {
-    columns: u32,
-    rows: u32,
     height: u32,
-    cells: Vec<bool>,
+    /// Layout rows with `#`, `.`, `D` and `W`.
+    layout: Vec<String>,
+    /// Whether `layout` came from the map's `iso_walls_layout` (so gaps are
+    /// exact) or was rebuilt from the wall layers as `#`/`.`.
+    exact: bool,
 }
 
 /// Layer names `iso-scene tiled` uses for walls.
@@ -371,6 +373,16 @@ fn has_wall_tiles(map: &Value, tilesets: &[(u32, Value)]) -> bool {
 /// or which gap was a door and which a window; those stay in the header of the
 /// generated `.walls` file as a note.
 fn collect_walls(map: &Value, tilesets: &[(u32, Value)]) -> Option<WallGrid> {
+    if let Some(text) = property(map, "iso_walls_layout").and_then(Value::as_str) {
+        if let Some(grid) = property(map, "iso_walls_height")
+            .and_then(Value::as_u64)
+            .and_then(|height| u32::try_from(height).ok())
+            .filter(|height| (1..=8).contains(height))
+            .and_then(|height| layout_grid(text, height))
+        {
+            return Some(grid);
+        }
+    }
     let columns = u32::try_from(map["width"].as_u64()?).ok()?;
     let rows = u32::try_from(map["height"].as_u64()?).ok()?;
     if columns == 0 || rows == 0 {
@@ -417,11 +429,49 @@ fn collect_walls(map: &Value, tilesets: &[(u32, Value)]) -> Option<WallGrid> {
     }
     // A `.walls` height is `1..=8`; a taller autotile cannot be represented.
     let height = height.flatten()?;
+    let layout: Vec<String> = (0..rows)
+        .map(|y| {
+            (0..columns)
+                .map(|x| {
+                    if cells[(y * columns + x) as usize] {
+                        '#'
+                    } else {
+                        '.'
+                    }
+                })
+                .collect()
+        })
+        .collect();
     Some(WallGrid {
-        columns,
-        rows,
         height,
-        cells,
+        layout,
+        exact: false,
+    })
+}
+
+/// A layout stored by `iso-scene tiled`; rejects anything a `.walls` parser
+/// would reject instead of writing a broken file.
+fn layout_grid(text: &str, height: u32) -> Option<WallGrid> {
+    let layout: Vec<String> = text
+        .lines()
+        .map(|line| line.trim_end_matches('\r').to_owned())
+        .collect();
+    let columns = layout.first()?.chars().count();
+    if columns == 0
+        || layout.iter().any(|row| {
+            row.chars().count() != columns
+                || !row
+                    .chars()
+                    .all(|character| matches!(character, '#' | '.' | 'D' | 'W'))
+        })
+        || !layout.iter().any(|row| row.contains('#'))
+    {
+        return None;
+    }
+    Some(WallGrid {
+        height,
+        layout,
+        exact: true,
     })
 }
 
@@ -449,23 +499,20 @@ fn render_walls(map_path: &str, grid: &WallGrid) -> String {
         text,
         "// rebuilt from {map_path} by `iso-scene import-tiled`"
     );
-    text.push_str(
-        "// Door and window gaps are plain floor: a Tiled map does not record which was which,\n",
-    );
-    text.push_str(
-        "// so a re-export can move a wall between the back and the front layer near a gap.\n",
-    );
+    if !grid.exact {
+        text.push_str(
+            "// Door and window gaps are plain floor: this map does not record which was which,\n",
+        );
+        text.push_str(
+            "// so a re-export can move a wall between the back and the front layer near a gap.\n",
+        );
+    }
     text.push_str("// The wall palette is baked into the tileset; add `material` to restore it.\n");
     text.push_str("version 1;\n");
     let _ = writeln!(text, "height {};", grid.height);
     text.push_str("layout {\n");
-    for y in 0..grid.rows {
-        text.push_str("    \"");
-        for x in 0..grid.columns {
-            let wall = grid.cells[(y * grid.columns + x) as usize];
-            text.push(if wall { '#' } else { '.' });
-        }
-        text.push_str("\"\n");
+    for row in &grid.layout {
+        let _ = writeln!(text, "    \"{row}\"");
     }
     text.push_str("}\n");
     text

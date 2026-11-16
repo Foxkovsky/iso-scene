@@ -118,18 +118,21 @@ Occupancy sampling of the same `SceneGraph`:
   `--walls`;
 - `preview.png` — the normal iso render;
 - map properties `iso_scale` (pixels per block), `iso_units = "blocks"`,
-  `iso_background`, `iso_sun`, `iso_ambient` and, when the scene sets one,
-  `iso_canvas`; plus per-tile `origin_x`/`origin_y` in `objects.tsj`. That is
-  what `import-tiled` needs to restore the scene settings, the scale and the
-  exact placements of a `--tile-layer` map. Object layers carry the positions
-  in `footprint_*` properties.
+  `iso_background`, `iso_sun`, `iso_ambient`, when the scene sets one
+  `iso_canvas`, and with `--walls` the exact `iso_walls_layout` /
+  `iso_walls_height`; plus per-tile `origin_x`/`origin_y` in `objects.tsj`.
+  That is what `import-tiled` needs to restore the scene settings, the scale,
+  the exact placements of a `--tile-layer` map and the wall gaps. Object
+  layers carry the positions in `footprint_*` properties.
 
-`import-tiled` also rebuilds `<name>.walls` from the `walls`, `walls-back`
-and `walls-front` layers (the height comes from the wall tileset). A Tiled map
-does not record the original wall material or which gap was a door and which
-a window, so the generated file keeps the default palette and plain floor in
-the gaps; both are noted in its header. A map with walls but no objects imports
-as an empty scene plus `.walls`.
+`import-tiled` rebuilds `<name>.walls` from the map. A map written by
+`iso-scene tiled` carries the exact layout in `iso_walls_layout` and
+`iso_walls_height`, so door (`D`) and window (`W`) gaps and the
+back/front wall layers survive a round trip. A foreign map has only the wall
+layers: the cells are recovered from them and the gaps become plain floor
+(the header says so). A map with walls but no objects imports as an empty
+scene plus `.walls`. The wall *material* is never in the map, so the generated
+file uses the default palette and notes it in its header.
 
 If the map looks semi-transparent when opened in Tiled, that is the editor,
 not the export: **View → Highlight Current Layer** draws layers above the

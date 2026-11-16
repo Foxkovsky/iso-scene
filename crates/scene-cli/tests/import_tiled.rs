@@ -404,3 +404,92 @@ fn a_walls_only_map_still_restores_walls() {
     assert!(scene.contains("scale 16;"), "{scene}");
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_door_gap_survives_the_round_trip() {
+    let dir = scratch("door-gap");
+    write(
+        &dir.join("empty.scene"),
+        "version 1;\nrender iso;\nscale 16;\n",
+    );
+    write(
+        &dir.join("room.walls"),
+        "version 1;\nheight 1;\nlayout {\n\"#D#\"\n\"###\"\n}\n",
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "tiled",
+            "empty.scene",
+            "--walls",
+            "room.walls",
+            "-o",
+            "mapA",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "import-tiled",
+            "mapA/scene.tmj",
+            "--layers",
+            "all",
+            "-o",
+            "back",
+            "--name",
+            "back",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let walls = fs::read_to_string(dir.join("back/back.walls")).expect("rebuilt walls");
+    assert!(walls.contains("\"#D#\""), "{walls}");
+    // Exporting the restored layout reproduces the original wall layers.
+    let output = binary()
+        .current_dir(&dir)
+        .args([
+            "tiled",
+            "back/back.scene",
+            "--walls",
+            "back/back.walls",
+            "-o",
+            "mapB",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let first: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("mapA/scene.tmj")).unwrap()).unwrap();
+    let second: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(dir.join("mapB/scene.tmj")).unwrap()).unwrap();
+    let layers = |map: &serde_json::Value| {
+        map["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|layer| {
+                matches!(
+                    layer["name"].as_str(),
+                    Some("walls" | "walls-back" | "walls-front")
+                )
+            })
+            .map(|layer| layer["data"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(layers(&first), layers(&second));
+    let _ = fs::remove_dir_all(dir);
+}
