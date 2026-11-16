@@ -32,10 +32,6 @@ use scene_render::{Framebuffer, Image, Palette, builtin};
 use scene_syntax::Diagnostic;
 use scene_syntax::Span;
 
-/// Tallest wall a `.walls` layout can declare. Real floors use 10 blocks
-/// (2.5 m at 25 cm per block), so the limit is not the old 8.
-pub const MAX_WALL_HEIGHT: u32 = 32;
-
 pub const BIT_TOP: u8 = 1;
 pub const BIT_RIGHT: u8 = 2;
 pub const BIT_BOTTOM: u8 = 4;
@@ -67,6 +63,11 @@ pub struct WallLayout {
     /// door and window gaps instead of flattening them to floor.
     pub layout: Vec<String>,
 }
+
+/// Most pixels on one side of the wall tileset (`docs/spec.md` §9, output image).
+pub const MAX_TILESET_SIDE: u64 = 8_192;
+/// Most pixels in the wall tileset (`docs/spec.md` §9, output image).
+pub const MAX_TILESET_PIXELS: u64 = 16_000_000;
 
 /// A horizontal strip of 16 wall tiles.
 #[derive(Clone, Debug)]
@@ -146,12 +147,8 @@ pub fn parse(source: &str, base_dir: &Path, root: &Path) -> Result<WallLayout, D
             version = true;
         } else if lower.starts_with("height") {
             wall_height = parse_u32_directive(line, "height", span)?;
-            if !(1..=MAX_WALL_HEIGHT).contains(&wall_height) {
-                return Err(diag(
-                    "E0304",
-                    format!("wall height must be in 1..={MAX_WALL_HEIGHT}"),
-                    span,
-                ));
+            if wall_height == 0 {
+                return Err(diag("E0304", "wall height must be at least 1", span));
             }
         } else if lower.starts_with("thickness") {
             let thickness = parse_u32_directive(line, "thickness", span)?;
@@ -256,12 +253,34 @@ pub fn parse(source: &str, base_dir: &Path, root: &Path) -> Result<WallLayout, D
 }
 
 /// Build the 16-tile horizontal strip for a layout at `scale` pixels/block.
-#[must_use]
-pub fn render_tiles(layout: &WallLayout, scale: u32) -> WallTiles {
+///
+/// # Errors
+///
+/// Returns `E0602` when the strip would exceed the output image limits
+/// (8192 px per side, 16 000 000 px). The wall height itself has no style
+/// cap; the image size is the only limit.
+pub fn render_tiles(layout: &WallLayout, scale: u32) -> Result<WallTiles, Diagnostic> {
+    let width = u64::from(scale) * 2 * 16;
+    let height = (u64::from(layout.wall_height) + 1) * u64::from(scale);
+    let pixels = width.saturating_mul(height);
+    if width == 0
+        || height == 0
+        || width > MAX_TILESET_SIDE
+        || height > MAX_TILESET_SIDE
+        || pixels > MAX_TILESET_PIXELS
+    {
+        return Err(diag(
+            "E0602",
+            format!(
+                "wall tileset {width}x{height} exceeds the image limit; lower the wall height or the scene scale"
+            ),
+            Span::new(0, 0),
+        ));
+    }
     let s = f64::from(scale);
     let body = f64::from(layout.wall_height) * s;
-    let tile_width = (2 * scale).max(1);
-    let tile_height = ((layout.wall_height + 1) * scale).max(1);
+    let tile_width = u32::try_from(u64::from(scale) * 2).unwrap_or(u32::MAX);
+    let tile_height = u32::try_from(height).unwrap_or(u32::MAX);
     let mut strip = Image {
         width: tile_width * 16,
         height: tile_height,
@@ -280,11 +299,11 @@ pub fn render_tiles(layout: &WallLayout, scale: u32) -> WallTiles {
         }
     }
 
-    WallTiles {
+    Ok(WallTiles {
         image: strip,
         tile_width,
         tile_height,
-    }
+    })
 }
 
 /// How far the contact shadow at a wall's base reaches into the floor cell.

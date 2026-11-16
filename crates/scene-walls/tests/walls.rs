@@ -49,7 +49,7 @@ fn door_and_window_are_gaps() {
 #[test]
 fn tiles_have_the_expected_size_and_sixteen_variants() {
     let walls = layout("version 1;\nheight 2;\nlayout {\n\"#\"\n}\n");
-    let tiles = render_tiles(&walls, 16);
+    let tiles = render_tiles(&walls, 16).expect("wall tiles");
     assert_eq!(tiles.tile_width, 32);
     assert_eq!(tiles.tile_height, 48);
     assert_eq!(tiles.image.width, 32 * 16);
@@ -228,16 +228,22 @@ fn shadow_tiles_darken_only_the_walled_sides() {
 }
 
 #[test]
-fn a_ten_block_wall_fits_the_limit() {
+fn wall_height_has_no_style_cap_but_its_image_does() {
+    // 10 blocks (2.5 m at 25 cm/block) is a normal floor wall.
     let walls = layout("version 1;\nheight 10;\nlayout {\n\"#\"\n}\n");
     assert_eq!(walls.wall_height, 10);
-    let tiles = render_tiles(&walls, 16);
+    let tiles = render_tiles(&walls, 16).expect("wall tiles");
     assert_eq!(tiles.tile_height, 11 * 16);
+
+    // The parser takes any positive height; the tileset image sets the limit.
+    let tall = layout("version 1;\nheight 1000;\nlayout {\n\"#\"\n}\n");
+    let error = render_tiles(&tall, 32).expect_err("tileset too tall");
+    assert_eq!(error.code, "E0602");
     let error = parse(
-        "version 1;\nheight 33;\nlayout {\n\"#\"\n}\n",
+        "version 1;\nheight 0;\nlayout {\n\"#\"\n}\n",
         Path::new("."),
         Path::new("."),
     )
-    .expect_err("too tall");
+    .expect_err("zero height");
     assert_eq!(error.code, "E0304");
 }

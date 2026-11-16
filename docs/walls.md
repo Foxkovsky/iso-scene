@@ -29,8 +29,10 @@ layout {
 - `D` and `W` do not draw a wall tile; put a door/window object in the scene.
 
 Material paths are relative to the `.walls` file. If no material is given,
-the built-in `light` palette is used. `height` is 1..32 blocks (default 2). A real 2.5 m wall at 25 cm per block is
-10 blocks.
+the built-in `light` palette is used. `height` is at least 1 block (default 2); it has no style cap. The wall
+tileset is an image and must fit the output limits (8192 px per side,
+16 000 000 px), otherwise `iso-scene tiled` reports `E0602` and asks for a
+lower wall or scene scale. A real 2.5 m wall at 25 cm per block is 10 blocks.
 
 ## Masks and Wang set
 

@@ -175,7 +175,7 @@ pub fn export_with(
     let tile_h = scale;
 
     let wall_tileset_path = if let Some(layout) = walls {
-        let tiles = render_tiles(layout, scale);
+        let tiles = render_tiles(layout, scale)?;
         let image_path = out_dir.join("walls.png");
         write_png(&tiles.image, &image_path).map_err(|message| error("E0603", message))?;
         let tileset = json!({

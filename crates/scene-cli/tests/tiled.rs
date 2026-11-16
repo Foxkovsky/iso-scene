@@ -58,3 +58,38 @@ fn a_small_scene_still_writes_the_preview() {
     assert!(!String::from_utf8_lossy(&output.stderr).contains("preview skipped"));
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_tall_wall_stops_at_the_tileset_image_limit() {
+    let dir = scratch("tall-wall");
+    fs::write(
+        dir.join("room.scene"),
+        "version 1;\nobject a (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; }\nrender iso;\nscale 32;\nplace a at (0, 0, 0);\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("room.walls"),
+        "version 1;\nheight 1000;\nlayout {\n\"#\"\n}\n",
+    )
+    .unwrap();
+    let output = binary()
+        .current_dir(&dir)
+        .args(["tiled", "room.scene", "--walls", "room.walls", "-o", "map"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("E0602"), "{stderr}");
+    // The format itself takes the height; check validates it without rendering.
+    let output = binary()
+        .current_dir(&dir)
+        .args(["check", "room.walls"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = fs::remove_dir_all(dir);
+}

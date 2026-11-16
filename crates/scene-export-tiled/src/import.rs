@@ -8,7 +8,6 @@ use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use scene_walls::MAX_WALL_HEIGHT;
 use serde_json::Value;
 
 /// What to restore from a Tiled map.
@@ -198,7 +197,7 @@ pub fn import(options: &ImportOptions) -> Parsed<ImportReport> {
     let walls = collect_walls(&map, &tilesets);
     if walls.is_none() && has_wall_tiles(&map, &tilesets) {
         notes.push(
-            "wall layers found, but the wall height does not fit `1..={MAX_WALL_HEIGHT}`; no .walls written"
+            "wall layers found, but their height could not be derived; no .walls written"
                 .to_owned(),
         );
     }
@@ -378,7 +377,7 @@ fn collect_walls(map: &Value, tilesets: &[(u32, Value)]) -> Option<WallGrid> {
         if let Some(grid) = property(map, "iso_walls_height")
             .and_then(Value::as_u64)
             .and_then(|height| u32::try_from(height).ok())
-            .filter(|height| (1..=MAX_WALL_HEIGHT).contains(height))
+            .filter(|height| *height >= 1)
             .and_then(|height| layout_grid(text, height))
         {
             return Some(grid);
@@ -428,8 +427,8 @@ fn collect_walls(map: &Value, tilesets: &[(u32, Value)]) -> Option<WallGrid> {
     if !cells.iter().any(|&wall| wall) {
         return None;
     }
-    // A `.walls` height is `1..=MAX_WALL_HEIGHT`; a taller autotile cannot be
-    // represented.
+    // A `.walls` height is at least 1; the wall tileset image is the only
+    // size limit, checked when it is rendered.
     let height = height.flatten()?;
     let layout: Vec<String> = (0..rows)
         .map(|y| {
@@ -489,9 +488,7 @@ fn wall_height(tilesets: &[(u32, Value)], gid: u32, map_height: f64) -> Option<u
     }
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let walls = (tile_height / map_height).round() as i64 - 1;
-    u32::try_from(walls)
-        .ok()
-        .filter(|value| (1..=MAX_WALL_HEIGHT).contains(value))
+    u32::try_from(walls).ok().filter(|value| *value >= 1)
 }
 
 fn render_walls(map_path: &str, grid: &WallGrid) -> String {

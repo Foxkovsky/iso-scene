@@ -46,7 +46,6 @@ pub fn all() -> Vec<Limit> {
     };
     use scene_syntax::lexer::{MAX_SOURCE_BYTES, MAX_STRING_BYTES, MAX_TOKENS};
     use scene_syntax::parser::{MAX_EXPR_DEPTH, MAX_NESTING};
-    use scene_walls::MAX_WALL_HEIGHT;
     let limit = |what, value, code, spec_row| Limit {
         what,
         value,
@@ -227,12 +226,6 @@ pub fn all() -> Vec<Limit> {
             count(scene_export_tiled::MAX_OBJECT_TILE_LAYERS),
             "E0602",
             "карта Tiled, `--tile-layer`: объектов в одной клетке",
-        ),
-        limit(
-            "wall height in .walls",
-            format!("1..{MAX_WALL_HEIGHT}"),
-            "E0304",
-            "высота стены в `.walls`",
         ),
     ]
 }
