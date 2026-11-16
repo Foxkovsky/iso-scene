@@ -145,6 +145,8 @@ pub struct Decal {
     pub at: [Expr; 3],
     pub size: [Expr; 2],
     pub facing: Facing,
+    /// Optional bloom strength, 0..=1.
+    pub glow: Option<Expr>,
 }
 
 /// `object name (w, d) [origin center] { ... }`

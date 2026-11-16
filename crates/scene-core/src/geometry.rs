@@ -42,6 +42,8 @@ pub enum Primitive {
     Decal {
         corners: [[f64; 3]; 4],
         path: PathBuf,
+        /// Bloom mask, 0..=255.
+        glow: u8,
     },
 }
 
@@ -151,9 +153,14 @@ impl Primitive {
                     *rise
                 },
             },
-            Self::Decal { corners, path } => Self::Decal {
+            Self::Decal {
+                corners,
+                path,
+                glow,
+            } => Self::Decal {
                 corners: corners.map(|point| mirror_point(point, axis, width, depth)),
                 path: path.clone(),
+                glow: *glow,
             },
         }
     }
@@ -232,12 +239,17 @@ impl Primitive {
                     rise: [dx, dy],
                 }
             }
-            Self::Decal { corners, path } => Self::Decal {
+            Self::Decal {
+                corners,
+                path,
+                glow,
+            } => Self::Decal {
                 corners: corners.map(|corner| {
                     let (x, y) = point(corner[0], corner[1]);
                     [x, y, corner[2]]
                 }),
                 path: path.clone(),
+                glow: *glow,
             },
         }
     }
@@ -285,7 +297,11 @@ impl Primitive {
                 size: *size,
                 rise: *rise,
             },
-            Self::Decal { corners, path } => Self::Decal {
+            Self::Decal {
+                corners,
+                path,
+                glow,
+            } => Self::Decal {
                 corners: corners.map(|corner| {
                     [
                         corner[0] + offset[0],
@@ -294,6 +310,7 @@ impl Primitive {
                     ]
                 }),
                 path: path.clone(),
+                glow: *glow,
             },
         }
     }

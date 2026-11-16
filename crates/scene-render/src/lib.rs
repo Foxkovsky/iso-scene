@@ -1,5 +1,6 @@
 //! Shared rendering primitives: rasterizer, image, materials and meshes.
 
+pub mod bloom;
 pub mod image;
 pub mod material;
 pub mod mesh;

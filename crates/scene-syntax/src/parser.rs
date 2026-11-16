@@ -706,6 +706,11 @@ impl Parser {
         } else {
             return Err(self.expected("`+` or `-` after `facing`"));
         };
+        let glow = if self.eat_word("glow") {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
         self.expect(&TokenKind::Semicolon, "`;`")?;
         Ok(Decal {
             path,
@@ -713,6 +718,7 @@ impl Parser {
             at,
             size,
             facing,
+            glow,
         })
     }
 
@@ -1392,7 +1398,7 @@ mod tests {
     fn a_decal_has_a_path_size_and_facing() {
         let source = r#"
             version 1;
-            decal "textures/screen.png" at (1, 2, 3) size (4, 5) facing +y;
+            decal "textures/screen.png" at (1, 2, 3) size (4, 5) facing +y glow 0.5;
         "#;
         let program = parse_ok(source);
         let ItemKind::Statement(statement) = &program.items[0].kind else {
@@ -1403,6 +1409,7 @@ mod tests {
         };
         assert_eq!(decal.path, "textures/screen.png");
         assert_eq!(decal.facing, Facing::PosY);
+        assert!(decal.glow.is_some());
         assert_eq!(decal.size.len(), 2);
     }
 

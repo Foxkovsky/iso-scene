@@ -66,6 +66,10 @@ pub struct Palette {
     pub left: [u8; 3],
     pub line: [u8; 3],
     pub texture: Option<Texture>,
+    /// When set, visible faces use this colour instead of the shaded tones.
+    pub emission: Option<[u8; 3]>,
+    /// Bloom mask written with the face, 0..=255.
+    pub glow: u8,
 }
 
 fn palette(top: [u8; 3], right: [u8; 3], left: [u8; 3], line: [u8; 3]) -> Palette {
@@ -75,6 +79,8 @@ fn palette(top: [u8; 3], right: [u8; 3], left: [u8; 3], line: [u8; 3]) -> Palett
         left,
         line,
         texture: None,
+        emission: None,
+        glow: 0,
     }
 }
 
@@ -139,6 +145,11 @@ pub fn builtin(name: &str) -> Option<Palette> {
 ///
 /// Returns a human-readable message for missing files, invalid TOML, bad
 /// colours or out-of-range material properties.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
 pub fn load(path: &Path) -> Result<Palette, String> {
     let text = fs::read_to_string(path)
         .map_err(|cause| format!("cannot read `{}`: {cause}", path.display()))?;
@@ -172,6 +183,23 @@ pub fn load(path: &Path) -> Result<Palette, String> {
 
     let mut palette = tone_pair(base, outline);
     palette.texture = parse_texture(table.get("texture"))?;
+    palette.emission = match table.get("emission").and_then(toml::Value::as_str) {
+        Some(value) => Some(parse_hex(value)?),
+        None => None,
+    };
+    palette.glow = match table.get("glow") {
+        Some(value) => {
+            let number = value
+                .as_float()
+                .or_else(|| value.as_integer().map(|value| value as f64))
+                .ok_or_else(|| "`glow` must be a number".to_owned())?;
+            if !(0.0..=1.0).contains(&number) {
+                return Err("`glow` must be in 0..=1".to_owned());
+            }
+            (number * 255.0).round() as u8
+        }
+        None => u8::from(palette.emission.is_some()) * 153,
+    };
     Ok(palette)
 }
 
@@ -273,6 +301,8 @@ fn tone_pair(base: [u8; 3], line: [u8; 3]) -> Palette {
         ],
         line,
         texture: None,
+        emission: None,
+        glow: 0,
     }
 }
 
@@ -314,6 +344,38 @@ mod tests {
         ));
         std::fs::write(&path, "name = \"Bad\"\n").expect("write material");
         assert!(load(&path).is_err());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_emission_and_glow_are_parsed() {
+        let path = std::env::temp_dir().join(format!(
+            "iso-scene-material-glow-{}-{}.toml",
+            std::process::id(),
+            std::line!()
+        ));
+        std::fs::write(
+            &path,
+            "color = \"#BD8953\"\nemission = \"#FFD9A0\"\nglow = 0.8\n",
+        )
+        .expect("write material");
+        let palette = load(&path).expect("load material");
+        assert_eq!(palette.emission, Some([0xFF, 0xD9, 0xA0]));
+        assert_eq!(palette.glow, 204);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn an_emission_without_glow_gets_a_default_halo() {
+        let path = std::env::temp_dir().join(format!(
+            "iso-scene-material-glow-default-{}-{}.toml",
+            std::process::id(),
+            std::line!()
+        ));
+        std::fs::write(&path, "color = \"#BD8953\"\nemission = \"#FFD9A0\"\n")
+            .expect("write material");
+        let palette = load(&path).expect("load material");
+        assert_eq!(palette.glow, 153);
         let _ = std::fs::remove_file(path);
     }
 

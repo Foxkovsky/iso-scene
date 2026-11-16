@@ -10,7 +10,8 @@ material alias; the renderer loads the file once per render. Flat tones are
 derived from `color`: `top = color`, `right = 0.78 * color`,
 `left = 0.59 * color`; `outline` is used as-is. `roughness`, `metallic` and
 `specular` are validated but not used by flat shading yet, and texture blocks
-are accepted but ignored.
+are accepted but ignored. `emission` replaces the visible face colour with a
+fixed glow colour; `glow` (0..=1) feeds the screen-space bloom mask.
 
 Used when a shape omits `material`. Values are RGB, one tone per visible face
 plus an outline. A project should normally declare `.toml` materials instead.
@@ -44,7 +45,8 @@ screen_y = (x + y) * scale / 2 - z * scale
   the geometry. They are drawn without lighting, alpha `0` is transparent, and
   a small depth bias lifts them off the surface without moving them on screen.
   Decals are rendered by the iso PNG, sprite-sheet and Tiled-sprite paths; SVG,
-  top/front/side and voxel backends skip them for now.
+  top/front/side and voxel backends skip them for now. `glow` on a decal or
+  material adds a deterministic box-blur halo around the emissive pixels.
 
 ## top
 

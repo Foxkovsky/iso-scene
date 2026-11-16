@@ -33,6 +33,8 @@ pub struct Framebuffer {
     height: usize,
     pixels: Vec<u8>,
     depth: Vec<f64>,
+    /// Per-pixel bloom mask, 0..=255.
+    glow: Vec<u8>,
 }
 
 /// An image mapped onto one triangle, with nearest-neighbour sampling.
@@ -41,6 +43,8 @@ pub struct ImageMap {
     pub image: Arc<Image>,
     /// UV coordinates of the triangle's three points, in image space.
     pub uv: [[f64; 2]; 3],
+    /// Bloom mask for the image, 0..=255.
+    pub glow: u8,
 }
 
 /// One drawing command for [`Framebuffer::draw`]. Points are in pixels with
@@ -56,6 +60,8 @@ pub enum Shape {
         image: Option<ImageMap>,
         /// Added to the depth before testing; used to lift decals off a wall.
         bias: f64,
+        /// Bloom mask written with the triangle, 0..=255.
+        glow: u8,
     },
     /// A depth-tested line; `bias` is in world blocks.
     Line {
@@ -135,6 +141,7 @@ impl Framebuffer {
             height,
             pixels: background.repeat(width * height),
             depth: vec![f64::NEG_INFINITY; width * height],
+            glow: vec![0; width * height],
         }
     }
 
@@ -143,9 +150,15 @@ impl Framebuffer {
         self.pixels
     }
 
+    /// Consume the framebuffer into RGBA pixels and the glow mask.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<u8>, Vec<u8>) {
+        (self.pixels, self.glow)
+    }
+
     /// Fill a triangle. The third coordinate is view depth (larger is closer).
     pub fn triangle(&mut self, a: [f64; 3], b: [f64; 3], c: [f64; 3], color: [u8; 3]) {
-        self.whole().triangle(a, b, c, color, None, None, 0.0);
+        self.whole().triangle(a, b, c, color, None, None, 0.0, 0);
     }
 
     /// Fill a triangle and shade every pixel with a procedural texture.
@@ -160,7 +173,7 @@ impl Framebuffer {
         texture: Texture,
     ) {
         self.whole()
-            .triangle(a, b, c, color, Some((texture, world)), None, 0.0);
+            .triangle(a, b, c, color, Some((texture, world)), None, 0.0, 0);
     }
 
     /// Draw a depth-tested line. `bias` is in world blocks.
@@ -185,11 +198,13 @@ impl Framebuffer {
             }
             return;
         }
+        let glow = &mut self.glow;
         self.pixels
             .par_chunks_mut(rows * width * 4)
             .zip(self.depth.par_chunks_mut(rows * width))
+            .zip(glow.par_chunks_mut(rows * width))
             .enumerate()
-            .for_each(|(index, (pixels, depth))| {
+            .for_each(|(index, ((pixels, depth), glow))| {
                 let mut band = Band {
                     width,
                     top: index * rows,
@@ -198,6 +213,7 @@ impl Framebuffer {
                     right: width,
                     pixels,
                     depth,
+                    glow,
                 };
                 for shape in shapes {
                     band.shape(shape);
@@ -218,6 +234,7 @@ impl Framebuffer {
             let row = y * self.width;
             for x in left..right {
                 self.depth[row + x] = f64::NEG_INFINITY;
+                self.glow[row + x] = 0;
                 self.pixels[(row + x) * 4..(row + x) * 4 + 4].copy_from_slice(&background);
             }
         }
@@ -230,6 +247,7 @@ impl Framebuffer {
             right,
             pixels: &mut self.pixels[top * width * 4..bottom * width * 4],
             depth: &mut self.depth[top * width..bottom * width],
+            glow: &mut self.glow[top * width..bottom * width],
         };
         for shape in shapes {
             band.shape(shape);
@@ -245,6 +263,7 @@ impl Framebuffer {
             right: self.width,
             pixels: &mut self.pixels,
             depth: &mut self.depth,
+            glow: &mut self.glow,
         }
     }
 }
@@ -259,6 +278,7 @@ struct Band<'a> {
     right: usize,
     pixels: &'a mut [u8],
     depth: &'a mut [f64],
+    glow: &'a mut [u8],
 }
 
 impl Band<'_> {
@@ -270,7 +290,8 @@ impl Band<'_> {
                 shade,
                 image,
                 bias,
-            } => self.triangle(*a, *b, *c, *color, *shade, image.as_ref(), *bias),
+                glow,
+            } => self.triangle(*a, *b, *c, *color, *shade, image.as_ref(), *bias, *glow),
             Shape::Line { a, b, color, bias } => self.line(*a, *b, *color, *bias),
         }
     }
@@ -285,6 +306,7 @@ impl Band<'_> {
         shade: Option<(Texture, [[f64; 3]; 3])>,
         image: Option<&ImageMap>,
         bias: f64,
+        glow: u8,
     ) {
         let denominator = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
         if denominator.abs() < 1e-12 || self.rows == 0 {
@@ -356,6 +378,7 @@ impl Band<'_> {
                         }
                         self.depth[index] = z;
                         self.write_rgba(index, pixel);
+                        self.glow[index] = scale_glow(glow, pixel[3]);
                         continue;
                     }
                     self.depth[index] = z;
@@ -371,6 +394,7 @@ impl Band<'_> {
                         None => base,
                     };
                     self.write(index, color);
+                    self.glow[index] = glow;
                 }
             }
         }
@@ -419,6 +443,7 @@ impl Band<'_> {
             let index = (py - self.top) * self.width + px;
             if z >= self.depth[index] - bias {
                 self.write(index, color);
+                self.glow[index] = 0;
             }
         }
     }
@@ -445,6 +470,10 @@ impl Band<'_> {
         ];
         self.pixels[base..base + 4].copy_from_slice(&over(color, dst));
     }
+}
+
+fn scale_glow(glow: u8, alpha: u8) -> u8 {
+    ((u16::from(glow) * u16::from(alpha) + 127) / 255) as u8
 }
 
 fn sample(map: &ImageMap, uv: [f64; 2]) -> [u8; 4] {
@@ -583,6 +612,7 @@ mod tests {
                     shade: (index % 3 == 0).then_some((texture, [a, b, c])),
                     image: None,
                     bias: 0.0,
+                    glow: 0,
                 }
             });
         }
@@ -663,6 +693,7 @@ mod tests {
                         shade: None,
                         image: None,
                         bias: 0.0,
+                        glow: 0,
                     }
                 });
                 moving.push((40..50).contains(&index));

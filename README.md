@@ -144,8 +144,12 @@ seamless welded surfaces. `decal` puts a flat RGBA PNG on a face, so screen
 UI, chalk drawings and logos stay drawings instead of extruded boxes:
 
 ```c
-decal "textures/atm_screen.png" at (0.2, 2, 3) size (3, 1.6) facing +y;
+decal "textures/atm_screen.png" at (0.2, 2, 3) size (3, 1.6) facing +y glow 0.6;
 ```
+
+Materials and decals can glow: `emission = "#FFD9A0"` plus `glow = 0..1` in
+TOML, or `glow 0..1` on a decal. The iso backend adds a deterministic bloom
+halo around those pixels; SVG and orthographic views keep the flat image.
 
 `iso-scene help <topic>` prints the relevant section of the spec.
 

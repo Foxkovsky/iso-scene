@@ -36,6 +36,9 @@ const MARGIN: f64 = 2.0;
 /// Depth lift for flat decals, in blocks. The decal sits exactly on its wall;
 /// the bias keeps the z-buffer from rejecting it as coplanar.
 const DECAL_BIAS: f64 = 0.01;
+/// Blur radius and strength of the screen-space glow.
+const GLOW_RADIUS: usize = 6;
+const GLOW_STRENGTH: f64 = 1.6;
 
 /// Project a world point to isometric screen coordinates.
 ///
@@ -257,12 +260,15 @@ struct Prepared {
 
 impl Prepared {
     fn finish(&self, framebuffer: Framebuffer) -> Rendered {
+        let (rgba, glow) = framebuffer.into_parts();
+        let mut image = Image {
+            width: u32::try_from(self.width).unwrap_or(0),
+            height: u32::try_from(self.height).unwrap_or(0),
+            rgba,
+        };
+        scene_render::bloom::apply(&mut image, &glow, GLOW_RADIUS, GLOW_STRENGTH);
         Rendered {
-            image: Image {
-                width: u32::try_from(self.width).unwrap_or(0),
-                height: u32::try_from(self.height).unwrap_or(0),
-                rgba: framebuffer.into_rgba(),
-            },
+            image,
             origin: self.origin,
         }
     }
@@ -308,7 +314,12 @@ fn prepare_with(
     let palettes = load_palettes(scene)?;
     let faces = collect_faces(scene, &palettes, Some(images))?;
     let scale = f64::from(scene.scale);
-    let (width, height, origin) = scene_size(scene, &faces, margin)?;
+    let glow_margin = if faces.iter().any(|face| face.glow > 0) {
+        GLOW_RADIUS as f64
+    } else {
+        0.0
+    };
+    let (width, height, origin) = scene_size(scene, &faces, margin + glow_margin)?;
 
     let background = match scene.background {
         Background::Transparent => [0, 0, 0, 0],
@@ -346,12 +357,14 @@ fn prepare_with(
                 image: face.image.as_ref().map(|decal| ImageMap {
                     image: Arc::clone(&decal.image),
                     uv: [decal.uv[0], decal.uv[index], decal.uv[index + 1]],
+                    glow: decal.glow,
                 }),
                 bias: if face.image.is_some() {
                     DECAL_BIAS
                 } else {
                     0.0
                 },
+                glow: face.glow,
             });
             owners.push(face.instance);
         }
@@ -851,6 +864,7 @@ fn project_vertex(point: [f64; 3], scale: f64, origin: [f64; 2]) -> [f64; 3] {
 struct DecalFace {
     image: Arc<Image>,
     uv: [[f64; 2]; 4],
+    glow: u8,
 }
 
 struct Face {
@@ -860,6 +874,8 @@ struct Face {
     outline: bool,
     texture: Option<Texture>,
     image: Option<DecalFace>,
+    /// Bloom mask, 0..=255.
+    glow: u8,
     /// Parts in one merge group are welded: internal faces and shared seams go.
     group: Option<u32>,
     hidden: Vec<bool>,
@@ -892,7 +908,12 @@ fn collect_faces(
     let mut faces = Vec::new();
     for (owner, instance) in scene.instances.iter().enumerate() {
         for part in &instance.object.parts {
-            if let Primitive::Decal { corners, path } = &part.primitive {
+            if let Primitive::Decal {
+                corners,
+                path,
+                glow,
+            } = &part.primitive
+            {
                 let Some(cache) = images else {
                     continue;
                 };
@@ -915,7 +936,9 @@ fn collect_faces(
                     image: Some(DecalFace {
                         image,
                         uv: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        glow: *glow,
                     }),
+                    glow: *glow,
                     group: None,
                     hidden: vec![false; 4],
                     instance: owner,
@@ -941,6 +964,7 @@ fn collect_faces(
                     outline,
                     texture: palette.texture,
                     image: None,
+                    glow: palette.glow,
                     group: part.group,
                     hidden,
                     instance: owner,
@@ -1267,6 +1291,9 @@ fn weld_groups(faces: &mut Vec<Face>) {
 }
 
 fn iso_color(normal: &[f64; 3], palette: Palette) -> [u8; 3] {
+    if let Some(color) = palette.emission {
+        return color;
+    }
     if normal[2] > normal[0].abs() + normal[1].abs() {
         palette.top
     } else if normal[0] > normal[1] {
@@ -1340,6 +1367,7 @@ mod tests {
             hidden,
             texture: None,
             image: None,
+            glow: 0,
             instance: 0,
         }
     }

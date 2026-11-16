@@ -209,6 +209,7 @@ pub fn render_with_origin(scene: &SceneGraph) -> Result<(OrthoImage, [f64; 2]), 
                 shade: None,
                 image: None,
                 bias: 0.0,
+                glow: 0,
             });
         }
     }

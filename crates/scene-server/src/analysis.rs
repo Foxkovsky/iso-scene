@@ -379,7 +379,15 @@ pub fn keywords() -> Vec<&'static str> {
         .step_by(2)
         .flat_map(str::split_whitespace)
         .collect();
-    words.extend(["animation", "frames", "duration", "once", "turn"]);
+    words.extend([
+        "animation",
+        "frames",
+        "duration",
+        "once",
+        "turn",
+        "facing",
+        "glow",
+    ]);
     words
 }
 

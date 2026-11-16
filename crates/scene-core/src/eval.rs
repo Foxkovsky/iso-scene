@@ -1055,10 +1055,23 @@ impl Evaluator {
         }
         let at = self.coordinates(&decal.at, scopes, span)?;
         let size = self.positive_pair(&decal.size, scopes, span, "decal size")?;
+        let glow = match &decal.glow {
+            Some(expr) => {
+                let value = self.number(expr, scopes, "glow")?;
+                if !(0.0..=1.0).contains(&value) {
+                    return Err(diag("E0304", "decal glow must be in 0..=1", span));
+                }
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let glow = (value * 255.0).round() as u8;
+                glow
+            }
+            None => 0,
+        };
         Ok(Part {
             primitive: Primitive::Decal {
                 corners: decal_corners(at, size, decal.facing),
                 path: base_dir.join(&decal.path),
+                glow,
             },
             material: None,
             group: None,
