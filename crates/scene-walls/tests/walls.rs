@@ -226,3 +226,18 @@ fn shadow_tiles_darken_only_the_walled_sides() {
             .all(|pixel| pixel[..3] == [0, 0, 0])
     );
 }
+
+#[test]
+fn a_ten_block_wall_fits_the_limit() {
+    let walls = layout("version 1;\nheight 10;\nlayout {\n\"#\"\n}\n");
+    assert_eq!(walls.wall_height, 10);
+    let tiles = render_tiles(&walls, 16);
+    assert_eq!(tiles.tile_height, 11 * 16);
+    let error = parse(
+        "version 1;\nheight 33;\nlayout {\n\"#\"\n}\n",
+        Path::new("."),
+        Path::new("."),
+    )
+    .expect_err("too tall");
+    assert_eq!(error.code, "E0304");
+}

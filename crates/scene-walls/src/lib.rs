@@ -32,6 +32,10 @@ use scene_render::{Framebuffer, Image, Palette, builtin};
 use scene_syntax::Diagnostic;
 use scene_syntax::Span;
 
+/// Tallest wall a `.walls` layout can declare. Real floors use 10 blocks
+/// (2.5 m at 25 cm per block), so the limit is not the old 8.
+pub const MAX_WALL_HEIGHT: u32 = 32;
+
 pub const BIT_TOP: u8 = 1;
 pub const BIT_RIGHT: u8 = 2;
 pub const BIT_BOTTOM: u8 = 4;
@@ -142,8 +146,12 @@ pub fn parse(source: &str, base_dir: &Path, root: &Path) -> Result<WallLayout, D
             version = true;
         } else if lower.starts_with("height") {
             wall_height = parse_u32_directive(line, "height", span)?;
-            if !(1..=8).contains(&wall_height) {
-                return Err(diag("E0304", "wall height must be in 1..=8", span));
+            if !(1..=MAX_WALL_HEIGHT).contains(&wall_height) {
+                return Err(diag(
+                    "E0304",
+                    format!("wall height must be in 1..={MAX_WALL_HEIGHT}"),
+                    span,
+                ));
             }
         } else if lower.starts_with("thickness") {
             let thickness = parse_u32_directive(line, "thickness", span)?;

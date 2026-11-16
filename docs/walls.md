@@ -29,7 +29,8 @@ layout {
 - `D` and `W` do not draw a wall tile; put a door/window object in the scene.
 
 Material paths are relative to the `.walls` file. If no material is given,
-the built-in `light` palette is used. `height` is 1..8 blocks.
+the built-in `light` palette is used. `height` is 1..32 blocks (default 2). A real 2.5 m wall at 25 cm per block is
+10 blocks.
 
 ## Masks and Wang set
 
