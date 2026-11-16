@@ -13,7 +13,8 @@
 - **Плоские decal-текстуры**: `decal "textures/screen.png" ... facing +y`
   рисует PNG прямо на грани — экран, мел и логотипы не нужно выдавливать
   коробками. `glow` у decal и `emission`/`glow` в материале добавляют
-  экранный ореол вокруг светящихся пикселей.
+  экранный ореол вокруг светящихся пикселей. `animation <имя>` превращает
+  PNG в горизонтальную полосу кадров; `iso-scene animate` рендерит кадры.
 - **Статус-бар** `$(eye) Scene` — открыть предпросмотр одним кликом.
 - **Языковой сервер** `iso-scene lsp` (запускается сам, без зависимостей):
   ошибки в Problems при наборе — с кодом и точным диапазоном, в том числе
@@ -51,7 +52,7 @@
 ```bash
 cargo install --path crates/scene-cli
 cd editors/vscode && npx @vscode/vsce package
-code --install-extension iso-scene-0.6.1.vsix
+code --install-extension iso-scene-0.7.0.vsix
 ```
 
 CLI ищется в `PATH`, затем в `~/.cargo/bin/iso-scene`; путь задаётся
@@ -75,7 +76,7 @@ F12, автодополнение, символы, `.walls`, сборка, пр�
 ```bash
 make vscode-it                       # из исходников расширения
 VSCODE=/usr/share/code/code xvfb-run -a \
-    node editors/vscode/test/vscode/run.js --vsix iso-scene-0.6.1.vsix
+    node editors/vscode/test/vscode/run.js --vsix iso-scene-0.7.0.vsix
 ```
 
 `VSCODE` — исполняемый файл редактора (у Arch-пакета это

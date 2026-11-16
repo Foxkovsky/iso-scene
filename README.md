@@ -179,7 +179,7 @@ completion, build, sprite-sheet and Tiled-import commands.
 
 ```bash
 cd editors/vscode && npx @vscode/vsce package
-code --install-extension iso-scene-0.6.1.vsix
+code --install-extension iso-scene-0.7.0.vsix
 ```
 
 **Any LSP editor.** `iso-scene lsp` speaks the Language Server Protocol over
