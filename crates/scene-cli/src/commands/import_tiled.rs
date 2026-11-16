@@ -170,7 +170,8 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
                     if gid == 0 {
                         continue;
                     }
-                    let Some((model, rotation, origin)) = tile_info(&tilesets, gid as u32) else {
+                    let Some((model, rotation, turn, origin)) = tile_info(&tilesets, gid as u32)
+                    else {
                         continue;
                     };
                     let width = map["width"].as_u64().unwrap_or(1) as usize;
@@ -190,7 +191,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
                         y,
                         z: 0.0,
                         rotation,
-                        turn: 0.0,
+                        turn,
                     });
                 }
             }
@@ -267,7 +268,7 @@ fn property<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
         .and_then(|property| property.get("value"))
 }
 
-fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16, Option<[f64; 2]>)> {
+fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16, f64, Option<[f64; 2]>)> {
     let (firstgid, tileset) = tilesets
         .iter()
         .rev()
@@ -290,6 +291,9 @@ fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16, Option
     let rotation = property(tile, "rotation")
         .and_then(Value::as_u64)
         .unwrap_or(0) as u16;
+    let turn = property(tile, "turn")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
     let origin = match (
         property(tile, "origin_x").and_then(Value::as_f64),
         property(tile, "origin_y").and_then(Value::as_f64),
@@ -297,7 +301,7 @@ fn tile_info(tilesets: &[(u32, Value)], gid: u32) -> Option<(String, u16, Option
         (Some(x), Some(y)) => Some([x, y]),
         _ => None,
     };
-    Some((model, rotation, origin))
+    Some((model, rotation, turn, origin))
 }
 
 fn object_model(object: &Value) -> Option<String> {

@@ -138,7 +138,7 @@ fn tiled_export_round_trips_through_import_in_both_layouts() {
     );
     write(
         &dir.join("exact.scene"),
-        "version 1;\ninclude \"models/desk.model\";\nrender iso; scale 32;\nplace desk at (1, 1, 0);\nplace desk at (5, 5, 0) rot 90;\nplace desk at (9, 1, 0) rot 180;\n",
+        "version 1;\ninclude \"models/desk.model\";\nrender iso; scale 32;\nplace desk at (1, 1, 0);\nplace desk at (5, 5, 0) rot 90;\nplace desk at (9, 1, 0) rot 180;\nplace desk at (13, 5, 0) turn 30;\n",
     );
     let render = |scene: &str, out: &str| {
         let output = binary()
@@ -193,6 +193,7 @@ fn tiled_export_round_trips_through_import_in_both_layouts() {
             "place desk at (1, 1, 0) rot 0;",
             "place desk at (5, 5, 0) rot 90;",
             "place desk at (9, 1, 0) rot 180;",
+            "place desk at (13, 5, 0) rot 0 turn 30;",
         ] {
             assert!(scene.contains(placement), "{tile_layer}: {scene}");
         }
