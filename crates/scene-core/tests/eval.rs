@@ -329,6 +329,33 @@ fn a_centered_origin_maps_local_coordinates_into_the_footprint() {
 }
 
 #[test]
+fn mirror_follows_the_origin_shift() {
+    // The authored footprint is `-w/2..w/2` (center) or `-w..0` (front); the
+    // mirror plane must move with it, or copies land outside the object.
+    for (origin, at) in [("center", -0.9), ("front", -1.9)] {
+        let source = format!(
+            r"
+            version 1;
+            object b (2, 2) origin {origin} {{
+                box at ({at}, {at}, 0) size (0.5, 0.5, 1) material wood;
+                mirror x;
+                mirror y;
+            }}
+            render iso;
+            scale 8;
+            place b at (0, 0, 0);
+            "
+        );
+        let scene = compile_scene_ok(&source);
+        let bounds = scene.instances[0].world_bounds();
+        for axis in 0..2 {
+            assert!((bounds.min[axis] - 0.1).abs() < 1e-9, "{origin} min {axis}");
+            assert!((bounds.max[axis] - 1.9).abs() < 1e-9, "{origin} max {axis}");
+        }
+    }
+}
+
+#[test]
 fn invalid_rotation_is_reported() {
     assert_eq!(
         compile_error(
@@ -426,6 +453,44 @@ fn include_cannot_escape_the_root() {
     assert_eq!(error.code, "E0502");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_symlinked_material_cannot_escape_the_root() {
+    use std::os::unix::fs::symlink;
+    let temp = TempDir::new();
+    let root = temp.path().join("root");
+    fs::create_dir_all(root.join("materials")).expect("create materials");
+    fs::write(
+        temp.path().join("secret.toml"),
+        "name = \"Secret\"\ncolor = \"#112233\"\n",
+    )
+    .expect("write secret");
+    symlink(
+        temp.path().join("secret.toml"),
+        root.join("materials/oak.toml"),
+    )
+    .expect("symlink");
+    let source = "version 1; material oak = \"materials/oak.toml\"; object a (1, 1) { box at (0, 0, 0) size (1, 1, 1) material oak; } render iso; scale 8; place a at (0, 0, 0);";
+    let program = parse_ok(source);
+    let error = compile_scene(&program, &root, &root).expect_err("symlink must escape");
+    assert_eq!(error.code, "E0502");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_decal_cannot_escape_the_root() {
+    use std::os::unix::fs::symlink;
+    let temp = TempDir::new();
+    let root = temp.path().join("root");
+    fs::create_dir_all(&root).expect("create root");
+    fs::write(temp.path().join("secret.png"), "not a png").expect("write secret");
+    symlink(temp.path().join("secret.png"), root.join("screen.png")).expect("symlink");
+    let source = "version 1; object a (1, 1) { decal \"screen.png\" at (0, 0, 0) size (1, 1) facing +y; } render iso; scale 8; place a at (0, 0, 0);";
+    let program = parse_ok(source);
+    let error = compile_scene(&program, &root, &root).expect_err("symlink must escape");
+    assert_eq!(error.code, "E0502");
+}
+
 #[test]
 fn include_must_be_a_model() {
     let temp = TempDir::new();
@@ -469,6 +534,39 @@ fn decal_paths_cannot_escape_the_root() {
     "#;
     let error = compile_error(source);
     assert_eq!(error, "E0502");
+}
+
+#[test]
+fn a_decal_animation_must_be_declared_in_the_scene() {
+    let source = r#"
+        version 1;
+        object panel (1, 1) {
+            decal "strip.png" at (0, 1, 0) size (1, 1) facing +y animation nope;
+        }
+        render iso;
+        scale 8;
+        animation matrix (t) frames 3 duration 100;
+        place panel at (0, 0, 0);
+    "#;
+    assert_eq!(compile_error(source), "E0301");
+    // A model preview has no scene to declare the animation; the name is kept
+    // for whoever includes the model.
+    let program = parse_ok(
+        "version 1; object p (1, 1) { decal \"s.png\" at (0, 0, 0) size (1, 1) facing +y animation nope; }",
+    );
+    assert!(compile_model(&program, Path::new(".")).is_ok());
+    // An object the scene never places does not need its animation.
+    let unplaced = r#"
+        version 1;
+        object animated (1, 1) {
+            decal "s.png" at (0, 0, 0) size (1, 1) facing +y animation matrix;
+        }
+        object plain (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; }
+        render iso;
+        scale 8;
+        place plain at (0, 0, 0);
+    "#;
+    assert_eq!(compile_scene_ok(unplaced).instances.len(), 1);
 }
 
 #[test]

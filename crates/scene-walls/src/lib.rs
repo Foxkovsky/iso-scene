@@ -195,7 +195,7 @@ pub fn parse(source: &str, base_dir: &Path, root: &Path) -> Result<WallLayout, D
     }
 
     let palette = match material {
-        Some(path) => load_palette(&path, base_dir)?,
+        Some(path) => load_palette(&path, base_dir, root)?,
         None => builtin("light")
             .ok_or_else(|| diag("E0305", "missing default material", Span::new(0, 0)))?,
     };
@@ -233,7 +233,6 @@ pub fn parse(source: &str, base_dir: &Path, root: &Path) -> Result<WallLayout, D
         }
     }
 
-    let _ = root;
     Ok(WallLayout {
         columns,
         rows,
@@ -571,7 +570,7 @@ fn grid_char(lines: &[(String, Span)], x: u32, y: u32) -> char {
         .unwrap_or('.')
 }
 
-fn load_palette(path: &str, base_dir: &Path) -> Result<Palette, Diagnostic> {
+fn load_palette(path: &str, base_dir: &Path, root: &Path) -> Result<Palette, Diagnostic> {
     let path = Path::new(path);
     if path.is_absolute()
         || path.components().any(|component| {
@@ -587,7 +586,19 @@ fn load_palette(path: &str, base_dir: &Path) -> Result<Palette, Diagnostic> {
             Span::new(0, 0),
         ));
     }
-    scene_render::material::load(&base_dir.join(path)).map_err(|message| {
+    let file = base_dir.join(path);
+    // The lexical check above cannot see a symlink; canonicalize the existing
+    // file and keep it inside the project root.
+    if let Ok(root) = root.canonicalize() {
+        if matches!(file.canonicalize(), Ok(canonical) if !canonical.starts_with(&root)) {
+            return Err(diag(
+                "E0502",
+                "wall material path resolves outside the project",
+                Span::new(0, 0),
+            ));
+        }
+    }
+    scene_render::material::load(&file).map_err(|message| {
         diag(
             "E0601",
             format!("wall material: {message}"),

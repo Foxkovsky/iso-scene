@@ -95,6 +95,31 @@ fn material_colour_is_loaded() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn a_symlinked_material_cannot_escape_the_root() {
+    use std::os::unix::fs::symlink;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let temp = std::env::temp_dir().join(format!(
+        "iso-scene-walls-link-{}-{nanos}",
+        std::process::id()
+    ));
+    let root = temp.join("root");
+    fs::create_dir_all(&root).expect("create root");
+    fs::write(
+        temp.join("secret.toml"),
+        "name = \"Secret\"\ncolor = \"#3366CC\"\n",
+    )
+    .expect("write secret");
+    symlink(temp.join("secret.toml"), root.join("wall.toml")).expect("symlink");
+    let source = "version 1;\nmaterial wall = \"wall.toml\";\nlayout {\n\"#\"\n}\n";
+    let error = parse(source, &root, &root).expect_err("symlink must escape");
+    assert_eq!(error.code, "E0502");
+    let _ = fs::remove_dir_all(temp);
+}
+
 #[test]
 fn uneven_rows_are_rejected() {
     let error = parse(

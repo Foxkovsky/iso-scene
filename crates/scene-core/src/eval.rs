@@ -3,7 +3,7 @@
 //! The evaluator is the only place that knows about scopes, fuel and limits.
 //! It never panics on user input; every failure is a [`Diagnostic`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -204,6 +204,10 @@ struct Evaluator {
     included_bytes: usize,
     /// The animation and frame being compiled, if any.
     frame: Option<(String, u32)>,
+    /// Animation names declared by the scene being compiled, for decal strips.
+    declared_animations: BTreeSet<String>,
+    /// Placed objects whose decal animations were already checked.
+    validated_decals: BTreeSet<String>,
 }
 
 impl Evaluator {
@@ -218,6 +222,8 @@ impl Evaluator {
             include_stack: Vec::new(),
             included_bytes: 0,
             frame: None,
+            declared_animations: BTreeSet::new(),
+            validated_decals: BTreeSet::new(),
         }
     }
 
@@ -266,6 +272,7 @@ impl Evaluator {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn scene(
         &mut self,
         program: &Program,
@@ -287,6 +294,7 @@ impl Evaluator {
         let mut ambient = 0.35;
         let mut background = Background::Transparent;
         let mut animations: Vec<SceneAnimation> = Vec::new();
+        self.declare_animations(program);
 
         for item in &program.items {
             match &item.kind {
@@ -379,6 +387,46 @@ impl Evaluator {
         })
     }
 
+    /// Collect the animation names of the scene before compiling its body, so
+    /// a decal may name an animation declared later in the file.
+    fn declare_animations(&mut self, program: &Program) {
+        for item in &program.items {
+            if let ItemKind::Animation(animation) = &item.kind {
+                self.declared_animations.insert(animation.name.clone());
+            }
+        }
+    }
+
+    /// A placed object may draw an animated decal strip; every animation it
+    /// names must be declared by the scene. An object the scene never places
+    /// is not checked, so a model can keep an animated part for elsewhere.
+    fn check_decal_animations(
+        &mut self,
+        object: &CompiledObject,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        if self.validated_decals.contains(&object.name) {
+            return Ok(());
+        }
+        for part in &object.parts {
+            if let Primitive::Decal {
+                animation: Some(name),
+                ..
+            } = &part.primitive
+            {
+                if !self.declared_animations.contains(name) {
+                    return Err(diag(
+                        "E0301",
+                        format!("decal animation `{name}` is not declared in the scene"),
+                        span,
+                    ));
+                }
+            }
+        }
+        self.validated_decals.insert(object.name.clone());
+        Ok(())
+    }
+
     fn animation(
         animation: &Animation,
         declared: &[SceneAnimation],
@@ -457,6 +505,16 @@ impl Evaluator {
             ));
         }
         let path = base_dir.join(&material.path);
+        if escapes_base(base_dir, &path) {
+            return Err(diag(
+                "E0502",
+                format!(
+                    "material path `{}` resolves outside the project",
+                    material.path
+                ),
+                span,
+            ));
+        }
         if let Some(existing) = self.materials.get(&material.name) {
             if existing == &path {
                 return Ok(());
@@ -507,19 +565,6 @@ impl Evaluator {
         check_positive(width, span, "object width")?;
         check_positive(depth, span, "object depth")?;
 
-        let mut scopes = Scopes::new();
-        scopes.declare("w", Value::Number(width), false, span)?;
-        scopes.declare("d", Value::Number(depth), false, span)?;
-        let mut parts = Vec::new();
-        self.object_block(
-            &object.body,
-            &mut scopes,
-            &mut parts,
-            width,
-            depth,
-            base_dir,
-        )?;
-
         // Authoring origin: shift the local coordinates into the footprint, so
         // the rest of the pipeline always works with `0..w`, `0..d`.
         let shift = match object.origin {
@@ -527,6 +572,23 @@ impl Evaluator {
             Origin::Center => [width / 2.0, depth / 2.0, 0.0],
             Origin::Front => [width, depth, 0.0],
         };
+
+        let mut scopes = Scopes::new();
+        scopes.declare("w", Value::Number(width), false, span)?;
+        scopes.declare("d", Value::Number(depth), false, span)?;
+        let mut parts = Vec::new();
+        // `mirror` reflects around `width / 2` in authored coordinates. An
+        // origin moves those coordinates, so the plane is `width / 2 - shift`:
+        // the span handed down is twice the plane, `width - 2 * shift`.
+        self.object_block(
+            &object.body,
+            &mut scopes,
+            &mut parts,
+            width - 2.0 * shift[0],
+            depth - 2.0 * shift[1],
+            base_dir,
+        )?;
+
         if shift[0] != 0.0 || shift[1] != 0.0 {
             for part in &mut parts {
                 *part = part.translated(shift);
@@ -546,16 +608,21 @@ impl Evaluator {
         block: &Block,
         scopes: &mut Scopes,
         parts: &mut Vec<Part>,
-        width: f64,
-        depth: f64,
+        mirror_width: f64,
+        mirror_depth: f64,
         base_dir: &Path,
     ) -> Result<(), Diagnostic> {
         scopes.push();
         let mut result = Ok(());
         for statement in &block.statements {
-            if let Err(error) =
-                self.object_statement(statement, scopes, parts, width, depth, base_dir)
-            {
+            if let Err(error) = self.object_statement(
+                statement,
+                scopes,
+                parts,
+                mirror_width,
+                mirror_depth,
+                base_dir,
+            ) {
                 result = Err(error);
                 break;
             }
@@ -572,8 +639,8 @@ impl Evaluator {
         statement: &Statement,
         scopes: &mut Scopes,
         parts: &mut Vec<Part>,
-        width: f64,
-        depth: f64,
+        mirror_width: f64,
+        mirror_depth: f64,
         base_dir: &Path,
     ) -> Result<(), Diagnostic> {
         self.spend(statement.span)?;
@@ -648,9 +715,14 @@ impl Evaluator {
                     scopes.declare(variable, Value::Number(index as f64), false, statement.span)?;
                     let mut result = Ok(());
                     for nested in &body.statements {
-                        if let Err(error) =
-                            self.object_statement(nested, scopes, parts, width, depth, base_dir)
-                        {
+                        if let Err(error) = self.object_statement(
+                            nested,
+                            scopes,
+                            parts,
+                            mirror_width,
+                            mirror_depth,
+                            base_dir,
+                        ) {
                             result = Err(error);
                             break;
                         }
@@ -666,15 +738,34 @@ impl Evaluator {
             } => {
                 let condition = self.boolean(condition, scopes)?;
                 if condition {
-                    self.object_block(then_block, scopes, parts, width, depth, base_dir)?;
+                    self.object_block(
+                        then_block,
+                        scopes,
+                        parts,
+                        mirror_width,
+                        mirror_depth,
+                        base_dir,
+                    )?;
                 } else {
                     match else_branch {
                         Some(ElseBranch::Block(block)) => {
-                            self.object_block(block, scopes, parts, width, depth, base_dir)?;
+                            self.object_block(
+                                block,
+                                scopes,
+                                parts,
+                                mirror_width,
+                                mirror_depth,
+                                base_dir,
+                            )?;
                         }
                         Some(ElseBranch::If(statement)) => {
                             self.object_statement(
-                                statement, scopes, parts, width, depth, base_dir,
+                                statement,
+                                scopes,
+                                parts,
+                                mirror_width,
+                                mirror_depth,
+                                base_dir,
                             )?;
                         }
                         None => {}
@@ -691,7 +782,7 @@ impl Evaluator {
             }
             StatementKind::Merge(block) => {
                 let start = parts.len();
-                self.object_block(block, scopes, parts, width, depth, base_dir)?;
+                self.object_block(block, scopes, parts, mirror_width, mirror_depth, base_dir)?;
                 self.merge_groups += 1;
                 let group = self.merge_groups;
                 for part in &mut parts[start..] {
@@ -701,7 +792,7 @@ impl Evaluator {
                 }
             }
             StatementKind::Mirror(axis) => {
-                self.mirror(parts, *axis, width, depth, statement.span)?;
+                self.mirror(parts, *axis, mirror_width, mirror_depth, statement.span)?;
             }
             StatementKind::Use {
                 object,
@@ -894,6 +985,7 @@ impl Evaluator {
                         statement.span,
                     )
                 })?;
+                self.check_decal_animations(&object, statement.span)?;
                 let at = self.coordinates(at, scopes, statement.span)?;
                 let rotation = match rotation {
                     Some(expr) => {
@@ -1055,6 +1147,14 @@ impl Evaluator {
                 decal.path_span,
             ));
         }
+        let path = base_dir.join(&decal.path);
+        if escapes_base(base_dir, &path) {
+            return Err(diag(
+                "E0502",
+                format!("decal path `{}` resolves outside the project", decal.path),
+                decal.path_span,
+            ));
+        }
         let at = self.coordinates(&decal.at, scopes, span)?;
         let size = self.positive_pair(&decal.size, scopes, span, "decal size")?;
         let glow = match &decal.glow {
@@ -1072,7 +1172,7 @@ impl Evaluator {
         Ok(Part {
             primitive: Primitive::Decal {
                 corners: decal_corners(at, size, decal.facing),
-                path: base_dir.join(&decal.path),
+                path,
                 glow,
                 animation: decal.animation.clone(),
             },
@@ -1555,6 +1655,24 @@ fn safe_relative(path: &str) -> bool {
                 Component::ParentDir | Component::RootDir | Component::Prefix(_)
             )
         })
+}
+
+/// Whether an existing file of `base_dir` resolves outside it through a
+/// symlink. `safe_relative` sees only the text of the path; a link inside the
+/// project could still point at any file on disk. A file that does not exist
+/// yet is left to the backend, which reports `E0601`.
+fn escapes_base(base_dir: &Path, path: &Path) -> bool {
+    // A bare file name has an empty parent; the project is the working
+    // directory then, not a path that cannot be canonicalized.
+    let base_dir = if base_dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        base_dir
+    };
+    let Ok(base) = base_dir.canonicalize() else {
+        return false;
+    };
+    matches!(path.canonicalize(), Ok(canonical) if !canonical.starts_with(&base))
 }
 
 fn resolve_include(
