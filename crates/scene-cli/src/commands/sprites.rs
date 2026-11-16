@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use scene_export_sprites::{AnimationSpec, Pivot, Projection, SheetObject, SheetOptions};
 
-use crate::common::{Args, Parsed, failed, project_root, read, report, usage};
+use crate::common::{Args, Parsed, failed, project_root_for, read, report, usage};
 
 pub(crate) fn sprites_scene(args: Vec<String>) -> ExitCode {
     match run(args) {
@@ -340,7 +340,7 @@ fn load(flags: &Flags) -> Parsed<Inputs> {
         let file = Path::new(path);
         let fallback_base = file.parent().unwrap_or_else(|| Path::new("."));
         let base = flags.base.as_deref().unwrap_or(fallback_base);
-        let root = project_root(flags.base.as_deref());
+        let root = project_root_for(file, flags.base.as_deref());
         match file.extension().and_then(|value| value.to_str()) {
             Some("scene") => {
                 let scene = scene_core::compile_scene(&program, base, &root)

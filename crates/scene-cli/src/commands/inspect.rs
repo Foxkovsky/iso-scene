@@ -1,6 +1,6 @@
 //! `check` and `eval`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
 use crate::common::{Args, format_bounds, read, report, usage};
@@ -11,7 +11,7 @@ pub(crate) fn check(path: &str) -> ExitCode {
     };
     let file = Path::new(path);
     let base = file.parent().unwrap_or_else(|| Path::new("."));
-    let root = crate::common::project_root(None);
+    let root = crate::common::project_root_for(file, None);
     let extension = file.extension().and_then(|value| value.to_str());
     if extension == Some("walls") {
         return match scene_walls::parse(&source, base, &root) {
@@ -89,7 +89,7 @@ pub(crate) fn eval(args: Vec<String>) -> ExitCode {
 
     let file = Path::new(&path);
     let base = file.parent().unwrap_or_else(|| Path::new("."));
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(base));
+    let root = crate::common::project_root_for(file, None);
 
     match file.extension().and_then(|value| value.to_str()) {
         Some("model") => match scene_core::compile_model(&program, base) {

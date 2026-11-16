@@ -171,7 +171,7 @@ pub(crate) fn load_scene(
         scene_syntax::parse(&source).map_err(|diagnostic| report(path, &source, &diagnostic))?;
     let fallback = file.parent().unwrap_or_else(|| Path::new("."));
     let directory = base.unwrap_or(fallback);
-    let root = project_root(base);
+    let root = project_root_for(file, base);
     let scene = if is_model {
         let model = scene_core::compile_model(&program, directory)
             .map_err(|diagnostic| report(path, &source, &diagnostic))?;
@@ -205,6 +205,20 @@ pub(crate) fn create_parent(output: &Path) -> Parsed<()> {
 /// directory is kept when it contains the base (so includes may still reach
 /// siblings of the base), otherwise the base itself is the root, so a project
 /// can be built from anywhere.
+pub(crate) fn project_root_for(file: &Path, base_override: Option<&Path>) -> PathBuf {
+    if base_override.is_some() {
+        return project_root(base_override);
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = cwd.canonicalize().unwrap_or(cwd);
+    let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+    if file.starts_with(&cwd) {
+        cwd
+    } else {
+        file.parent().map_or_else(|| cwd.clone(), Path::to_path_buf)
+    }
+}
+
 pub(crate) fn project_root(base_override: Option<&Path>) -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let Some(base) = base_override else {

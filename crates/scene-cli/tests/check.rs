@@ -112,3 +112,56 @@ fn check_rejects_other_files() {
     assert_eq!(output.status.code(), Some(2));
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn an_absolute_path_resolves_its_own_project_root() {
+    let project = scratch("absolute-project");
+    fs::create_dir_all(project.join("materials")).unwrap();
+    fs::write(
+        project.join("materials/oak.toml"),
+        "name = \"oak\"\ncolor = \"#BD8953\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("thing.model"),
+        "version 1;\nmaterial oak = \"materials/oak.toml\";\nobject thing (1, 1) { box at (0, 0, 0) size (1, 1, 1) material oak; }\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("room.scene"),
+        "version 1;\ninclude \"thing.model\";\nrender iso;\nscale 8;\nplace thing at (0, 0, 0);\n",
+    )
+    .unwrap();
+    // Run from a different directory: the scene's own directory is the root,
+    // so its include and material resolve, and the symlink sandbox still
+    // applies relative to that root.
+    let elsewhere = scratch("absolute-cwd");
+    let scene = project.join("room.scene");
+    let scene = scene.to_str().unwrap();
+    for command in ["check", "eval"] {
+        let output = binary()
+            .current_dir(&elsewhere)
+            .args([command, scene])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{command}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let png = elsewhere.join("room.png");
+    let output = binary()
+        .current_dir(&elsewhere)
+        .args(["render", scene, "-o", png.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "render: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(png.is_file());
+    let _ = fs::remove_dir_all(project);
+    let _ = fs::remove_dir_all(elsewhere);
+}
