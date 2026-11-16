@@ -108,7 +108,9 @@ fn an_agent_checks_renders_exports_and_reads_the_spec() {
         .collect();
     assert_eq!(
         tools,
-        ["check", "render", "export", "sprites", "help", "limits"]
+        [
+            "check", "render", "export", "sprites", "import", "help", "limits"
+        ]
     );
     assert!(
         text(reply(3)).starts_with("ok: 1 instances"),
@@ -210,5 +212,52 @@ fn an_agent_packs_a_sprite_sheet() {
     assert!(root.join("out/sprites/room/room.json").is_file());
     assert!(root.join("out/sprites/room/room.atlas.json").is_file());
     assert_eq!(replies[2]["result"]["isError"], true);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn an_agent_round_trips_a_map_back_into_a_scene() {
+    let root = scratch("import");
+    fs::create_dir_all(root.join("models")).expect("models");
+    fs::write(
+        root.join("models/thing.model"),
+        "version 1;\nobject thing (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; }\n",
+    )
+    .expect("model");
+    fs::write(
+        root.join("room.scene"),
+        "version 1;\ninclude \"models/thing.model\";\nrender iso;\nscale 8;\nplace thing at (1, 1, 0);\n",
+    )
+    .expect("scene");
+    fs::write(
+        root.join("room.walls"),
+        "version 1;\nheight 1;\nlayout {\n\"##\"\n\"##\"\n}\n",
+    )
+    .expect("walls");
+    let replies = session(
+        &root,
+        &[
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}}}),
+            call(
+                2,
+                "export",
+                &json!({"path": "room.scene", "format": "tiled", "walls": "room.walls"}),
+            ),
+            call(
+                3,
+                "import",
+                &json!({"path": "out/room/scene.tmj", "models": "models", "out": "back", "name": "back"}),
+            ),
+        ],
+    );
+    assert!(text(&replies[1]).contains("wrote"), "{}", text(&replies[1]));
+    assert!(text(&replies[2]).contains("wrote"), "{}", text(&replies[2]));
+    assert!(
+        text(&replies[2]).contains("restored walls"),
+        "{}",
+        text(&replies[2])
+    );
+    assert!(root.join("back/back.scene").is_file());
+    assert!(root.join("back/back.walls").is_file());
     let _ = fs::remove_dir_all(root);
 }

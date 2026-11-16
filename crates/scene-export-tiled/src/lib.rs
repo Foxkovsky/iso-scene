@@ -8,6 +8,7 @@
 )]
 
 mod collision;
+pub mod import;
 
 use std::collections::BTreeMap;
 use std::fs;

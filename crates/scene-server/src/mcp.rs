@@ -157,6 +157,23 @@ fn tools() -> Value {
             }
         },
         {
+            "name": "import",
+            "description": "Restore a Tiled map as a `.scene`, its wall layout and the `.model` files it references.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "a .tmj or Tiled JSON map, relative to the project root"},
+                    "models": {"type": "string", "description": "directory with the .model files the map references"},
+                    "layers": {"type": "array", "items": {"type": "string"}, "description": "layers to import; default [\"objects\"]"},
+                    "scale": {"type": "integer", "minimum": 1, "maximum": 256, "description": "pixels per block; inferred from the map when omitted"},
+                    "cell": {"type": "number", "description": "scene units per Tiled cell; inferred from the map when omitted"},
+                    "out": {"type": "string", "description": "output directory; default out/<stem>-scene"},
+                    "name": {"type": "string", "description": "scene name; default the map stem"}
+                },
+                "required": ["path"]
+            }
+        },
+        {
             "name": "help",
             "description": "One section of the language spec. Without `topic`, the list of topics and a minimal scene.",
             "inputSchema": {"type": "object", "properties": {"topic": {"type": "string", "enum": help::names()}}}
@@ -176,6 +193,7 @@ fn call(name: &str, arguments: &Value, root: &Path) -> Option<Value> {
         "render" => render(arguments, root),
         "export" => export(arguments, root),
         "sprites" => sprites(arguments, root),
+        "import" => import_map(arguments, root),
         "help" => match arguments["topic"].as_str() {
             None => Ok(text(help::index())),
             Some(topic) => match help::topic(topic) {
@@ -703,6 +721,90 @@ fn sprites(arguments: &Value, root: &Path) -> Result<Value, String> {
             "note: a .model has no scale; used {scale} px per block (pass `scale`)"
         ));
     }
+    Ok(text(lines.join("\n")))
+}
+
+fn import_map(arguments: &Value, root: &Path) -> Result<Value, String> {
+    let map = inside(root, arguments["path"].as_str(), "path")?;
+    let models = match arguments["models"].as_str() {
+        Some(models) => Some(inside(root, Some(models), "models")?),
+        None => None,
+    };
+    let layers = match arguments["layers"].as_array() {
+        Some(layers) => {
+            let mut names = Vec::with_capacity(layers.len());
+            for layer in layers {
+                let name = layer
+                    .as_str()
+                    .ok_or_else(|| "`layers` must be strings".to_owned())?;
+                names.push(name.to_owned());
+            }
+            if names.is_empty() {
+                return Err("`layers` is empty".to_owned());
+            }
+            Some(names)
+        }
+        None => None,
+    };
+    let scale = match arguments["scale"].as_u64() {
+        Some(scale) => Some(
+            u32::try_from(scale)
+                .ok()
+                .filter(|scale| (1..=scene_core::MAX_SCALE).contains(scale))
+                .ok_or_else(|| format!("`scale` must be in 1..={}", scene_core::MAX_SCALE))?,
+        ),
+        None => None,
+    };
+    let cell = match arguments["cell"].as_f64() {
+        Some(cell) if cell.is_finite() && cell > 0.0 => Some(cell),
+        Some(_) => return Err("`cell` must be a positive number".to_owned()),
+        None => None,
+    };
+    let stem = arguments["name"].as_str().map_or_else(
+        || {
+            map.file_stem().map_or_else(
+                || "scene".to_owned(),
+                |stem| stem.to_string_lossy().into_owned(),
+            )
+        },
+        str::to_owned,
+    );
+    let out = match arguments["out"].as_str() {
+        Some(out) => inside(root, Some(out), "out")?,
+        None => root.join("out").join(format!("{stem}-scene")),
+    };
+    let report = scene_export_tiled::import::import(&scene_export_tiled::import::ImportOptions {
+        map,
+        models,
+        layers,
+        scale,
+        cell,
+        output: out,
+        name: stem,
+    })
+    .map_err(|message| format!("error: {message}"))?;
+    let shown = |path: &Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string()
+    };
+    let mut lines = vec![format!(
+        "wrote {} ({} placements, {} models, scale {}, cell {})",
+        shown(&report.scene),
+        report.placements,
+        report.models,
+        report.scale,
+        report.cell
+    )];
+    if let (Some(walls), Some(height)) = (&report.walls, report.wall_height) {
+        lines.push(format!(
+            "restored walls: {} (height {}; see its header for material and gaps)",
+            shown(walls),
+            height
+        ));
+    }
+    lines.extend(report.notes.iter().map(|note| format!("warning: {note}")));
     Ok(text(lines.join("\n")))
 }
 

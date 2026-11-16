@@ -66,8 +66,10 @@ JSON-RPC message per line). Tools:
 | Tool | Does |
 |---|---|
 | `check` | parse and evaluate a `.scene`, `.model` or `.walls`; `ok` with a summary (instances, bounds, animations) or the first error as `file:line:column: error[CODE]: message` |
-| `render` | render to PNG (`view`: iso, top, front, side) and **return the image**, so the agent looks at what it built |
-| `export` | `tiled` (with optional `walls`), `voxel` or `animate` |
+| `render` | render to PNG (`view`: iso, top, front, side; `rotate`: 0/90/180/270) and **return the image**, so the agent looks at what it built |
+| `export` | `tiled` (with optional `walls`, `tile_layer`, `wall_order`), `voxel` or `animate` |
+| `sprites` | pack the objects of one `.scene`/`.model`: `views` or `angles`, `scale`, `projection`, `pivot`, `atlas`, `shadow`, `out`, `name` |
+| `import` | restore a Tiled map as a `.scene`, its `.walls` and the `.model` files: `models`, `layers`, `scale`, `cell`, `out`, `name` |
 | `help` | one section of the spec by topic; without one, the topic list |
 | `limits` | every limit and its error code |
 
