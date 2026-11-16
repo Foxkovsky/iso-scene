@@ -110,6 +110,7 @@ fn tools() -> Value {
                 "properties": {
                     "path": path,
                     "view": {"type": "string", "enum": ["iso", "top", "front", "side"]},
+                    "rotate": {"type": "integer", "enum": [0, 90, 180, 270], "description": "turn the whole scene before rendering"},
                     "out": {"type": "string", "description": "PNG path; default out/<stem>.png"}
                 },
                 "required": ["path"]
@@ -124,7 +125,9 @@ fn tools() -> Value {
                     "path": path,
                     "format": {"type": "string", "enum": ["tiled", "voxel", "animate"]},
                     "out": {"type": "string", "description": "output directory (tiled, animate) or .vox file; default under out/"},
-                    "walls": {"type": "string", "description": "tiled: a .walls file"}
+                    "walls": {"type": "string", "description": "tiled: a .walls file"},
+                    "tile_layer": {"type": "boolean", "description": "tiled: write objects as a tile layer instead of an object layer"},
+                    "wall_order": {"type": "string", "enum": ["split", "behind", "front"], "description": "tiled: where the wall layers go relative to the objects"}
                 },
                 "required": ["path", "format"]
             }
@@ -342,6 +345,13 @@ fn render(arguments: &Value, root: &Path) -> Result<Value, String> {
             }
         };
     }
+    if let Some(rotate) = arguments["rotate"].as_u64() {
+        let degrees = u16::try_from(rotate)
+            .ok()
+            .filter(|degrees| matches!(degrees, 0 | 90 | 180 | 270))
+            .ok_or_else(|| "rotate must be 0, 90, 180 or 270".to_owned())?;
+        scene.rotate_z(degrees);
+    }
     let out = match arguments["out"].as_str() {
         Some(out) => inside(root, Some(out), "out")?,
         None => source.default_output(root, "png"),
@@ -397,12 +407,23 @@ fn export(arguments: &Value, root: &Path) -> Result<Value, String> {
                 }
                 None => None,
             };
+            let tile_layer = arguments["tile_layer"].as_bool().unwrap_or(false);
+            let wall_order = match arguments["wall_order"].as_str() {
+                None | Some("split") => scene_export_tiled::WallOrder::default(),
+                Some("behind") => scene_export_tiled::WallOrder::Behind,
+                Some("front") => scene_export_tiled::WallOrder::Front,
+                Some(other) => {
+                    return Err(format!(
+                        "unknown wall order `{other}`; use split, behind or front"
+                    ));
+                }
+            };
             let directory = out("")?;
             let report = scene_export_tiled::export_with(
                 &scene,
                 walls.as_ref(),
-                false,
-                scene_export_tiled::WallOrder::default(),
+                tile_layer,
+                wall_order,
                 &directory,
             )
             .map_err(|error| source.report(&error))?;

@@ -150,3 +150,37 @@ fn an_agent_checks_renders_exports_and_reads_the_spec() {
     assert_eq!(reply(14)["result"], json!({}));
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn an_agent_rotates_and_writes_a_tile_layer_map() {
+    let root = scratch("options");
+    fs::write(root.join("room.scene"), ROOM).expect("scene");
+    let replies = session(
+        &root,
+        &[
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}}}),
+            call(2, "render", &json!({"path": "room.scene", "rotate": 90})),
+            call(
+                3,
+                "export",
+                &json!({"path": "room.scene", "format": "tiled", "tile_layer": true}),
+            ),
+            call(4, "render", &json!({"path": "room.scene", "rotate": 45})),
+        ],
+    );
+    let image = replies[1]["result"]["content"].as_array().expect("content");
+    assert_eq!(image.len(), 2, "summary and PNG");
+    assert!(text(&replies[2]).contains("wrote"), "{}", text(&replies[2]));
+    let map: Value =
+        serde_json::from_str(&fs::read_to_string(root.join("out/room/scene.tmj")).expect("map"))
+            .expect("map json");
+    let objects = map["layers"]
+        .as_array()
+        .expect("layers")
+        .iter()
+        .find(|layer| layer["name"] == "objects")
+        .expect("objects layer");
+    assert_eq!(objects["type"], "tilelayer");
+    assert_eq!(replies[3]["result"]["isError"], true);
+    let _ = fs::remove_dir_all(root);
+}
