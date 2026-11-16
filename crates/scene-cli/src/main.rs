@@ -79,6 +79,9 @@ pub(crate) fn print_help() {
         "  sprites <file>  pack objects from .scene/.model files into a sprite sheet + JSON/TSJ"
     );
     println!("                  --views 1|2|4|8|16 or --angles 0,45,90,...");
+    println!(
+        "                  --scale <px> pixels per block (a scene sets it; a model defaults to 16)"
+    );
     println!("                  --object <name> keeps, --exclude <name> drops objects");
     println!("                  --file <path> uses only this input file (resolves name clashes)");
     println!("                  --pivot front|back|left|right|center anchors static views");

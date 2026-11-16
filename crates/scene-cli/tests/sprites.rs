@@ -497,3 +497,40 @@ fn animate_accepts_a_base_outside_the_working_directory() {
     assert!(elsewhere.join("out/out.png").exists());
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn a_model_without_a_scene_reports_the_default_scale() {
+    let dir = scratch("model-scale");
+    write(
+        &dir,
+        "thing.model",
+        "version 1;\nobject thing (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; }\n",
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args(["sprites", "thing.model", "--views", "1", "-o", "out"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("scale 16"), "{stdout}");
+    assert!(stdout.contains("pass --scale"), "{stdout}");
+    // A scene carries its own scale; no note then.
+    write(
+        &dir,
+        "thing.scene",
+        "version 1;\ninclude \"thing.model\";\nrender iso;\nscale 8;\nplace thing at (0, 0, 0);\n",
+    );
+    let output = binary()
+        .current_dir(&dir)
+        .args(["sprites", "thing.scene", "--views", "1", "-o", "scene-out"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("pass --scale"));
+    let _ = fs::remove_dir_all(dir);
+}

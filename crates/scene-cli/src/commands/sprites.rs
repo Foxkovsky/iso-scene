@@ -18,6 +18,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let flags = parse(args)?;
     let mut inputs = load(&flags)?;
     let objects = select(&flags, std::mem::take(&mut inputs.objects))?;
+    let scale_inferred = flags.scale.is_none() && inputs.scale.is_none();
     let scale = flags.scale.or(inputs.scale).unwrap_or(16);
     let projection = flags.projection.or(inputs.projection).unwrap_or_default();
     // Iso cells are twice as wide as they are tall; orthographic top/front/side
@@ -47,7 +48,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let report = scene_export_sprites::export(&objects, &inputs.materials, &options, &flags.output)
         .map_err(|diagnostic| failed(&diagnostic))?;
     println!(
-        "wrote {} ({}x{} cells of {}x{}, {} sprites, {} frames); {} and {}",
+        "wrote {} ({}x{} cells of {}x{}, {} sprites, {} frames, scale {scale}); {} and {}",
         report.image.display(),
         report.columns,
         report.rows,
@@ -58,6 +59,9 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         report.manifest.display(),
         report.tileset.display()
     );
+    if scale_inferred {
+        println!("note: a .model has no scale; used {scale} px per block (pass --scale)");
+    }
     for extra in report.debug.iter().chain(&report.atlas) {
         println!("wrote {}", extra.display());
     }
