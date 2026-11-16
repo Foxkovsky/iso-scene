@@ -1,6 +1,6 @@
 'use strict';
 const vscode = acquireVsCodeApi();
-const img = document.querySelector('#image');
+const iso = document.querySelector('#iso');
 const views = document.querySelector('#views');
 const canvas = document.querySelector('#canvas');
 const ctx = canvas.getContext('2d');
@@ -20,14 +20,16 @@ function switchTab(next) {
     tab = next;
     if (changed) vscode.postMessage({ type: 'tab', tab: next });
     buttons.forEach((b) => b.classList.toggle('active', b.dataset.tab === next));
-    img.style.display = next === 'iso' ? 'block' : 'none';
+    iso.style.display = next === 'iso' ? 'grid' : 'none';
     views.style.display = next === 'drawing' ? 'grid' : 'none';
     canvas.style.display = next === 'voxel' ? 'block' : 'none';
     hint.textContent = next === 'voxel'
         ? 'Вращение: перетаскивание мышью. Масштаб: колесо. Оси X/Y/Z — от начала сетки.'
         : '';
     if (next === 'iso' && data && data.iso) {
-        img.src = 'data:image/png;base64,' + data.iso;
+        document.querySelectorAll('#iso img').forEach((el, index) => {
+            if (data.iso[index]) el.src = 'data:image/png;base64,' + data.iso[index];
+        });
     }
     if (next === 'drawing' && data && data.drawing) {
         document.querySelectorAll('#views img').forEach((el, index) => {
@@ -166,6 +168,9 @@ window.addEventListener('message', (event) => {
     } else if (m.kind === 'drawing') {
         data.drawing = m.images;
         info.textContent = 'Обновлено';
+    } else if (m.kind === 'iso') {
+        data.iso = m.images || [m.image];
+        info.textContent = 'Изометрия: 0°, 90°, 180°, 270°';
     } else {
         data[m.kind] = m.image;
         info.textContent = 'Обновлено';

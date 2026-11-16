@@ -7,8 +7,9 @@
 
 - **Живое обновление**: предпросмотр пересобирается при наборе (задержка
   настраивается, по умолчанию 150 мс).
-- **Три вкладки**: изометрия, чертёж (XY/XZ/YZ на сетке 32 px, как в первой
-  версии), воксели (вращение мышью, масштаб колесом, оси X/Y/Z).
+- **Три вкладки**: изометрия (2×2: 0°/90°/180°/270° — все четыре стороны),
+  чертёж (XY/XZ/YZ на сетке 32 px, как в первой версии), воксели (вращение
+  мышью, масштаб колесом, оси X/Y/Z).
 - **Статус-бар** `$(eye) Scene` — открыть предпросмотр одним кликом.
 - **Языковой сервер** `iso-scene lsp` (запускается сам, без зависимостей):
   ошибки в Problems при наборе — с кодом и точным диапазоном, в том числе
@@ -26,6 +27,13 @@
   `out/<имя>-sprites/` `<имя>.png`, `.json`, `.tsj`, `.atlas.json` для
   Phaser/PixiJS и `<имя>.debug.png` с рамками клеток и якорями — его
   расширение сразу открывает рядом.
+- **Tiled → scene** (`Scene: импортировать Tiled-карту`, также в заголовке
+  `.tmj` и контекстном меню): запускает `iso-scene import-tiled`, складывает
+  `.scene`, модели и материалы в `out/<имя>-scene/` (рядом, если карта уже
+  лежит в `out/`), открывает сцену и её предпросмотр. Папка моделей —
+  настройка `isoScene.models` (по умолчанию `objects`), слои —
+  `isoScene.tiledLayers` (по умолчанию `objects`, можно `all` или список
+  через запятую).
 - Если CLI старый и не знает `lsp`, расширение пишет об этом в канал
   «Iso Scene» и работает со встроенными подсказками (`box`, `cyl`,
   `object`, `use`, `merge`, `place`) и ошибками от предпросмотра.
@@ -39,7 +47,7 @@
 ```bash
 cargo install --path crates/scene-cli
 cd editors/vscode && npx @vscode/vsce package
-code --install-extension iso-scene-0.4.0.vsix
+code --install-extension iso-scene-0.5.0.vsix
 ```
 
 CLI ищется в `PATH`, затем в `~/.cargo/bin/iso-scene`; путь задаётся
@@ -63,7 +71,7 @@ F12, автодополнение, символы, `.walls`, сборка, пр�
 ```bash
 make vscode-it                       # из исходников расширения
 VSCODE=/usr/share/code/code xvfb-run -a \
-    node editors/vscode/test/vscode/run.js --vsix iso-scene-0.4.0.vsix
+    node editors/vscode/test/vscode/run.js --vsix iso-scene-0.5.0.vsix
 ```
 
 `VSCODE` — исполняемый файл редактора (у Arch-пакета это

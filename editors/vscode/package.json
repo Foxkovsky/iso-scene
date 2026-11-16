@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/Foxkovsky/iso-scene"
   },
-  "version": "0.4.0",
+  "version": "0.5.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -18,7 +18,8 @@
   "activationEvents": [
     "onLanguage:iso-scene",
     "onCommand:isoScene.preview",
-    "onCommand:isoScene.sprites"
+    "onCommand:isoScene.sprites",
+    "onCommand:isoScene.importTiled"
   ],
   "main": "./extension.js",
   "scripts": {
@@ -59,6 +60,10 @@
       {
         "command": "isoScene.sprites",
         "title": "Scene: экспорт листа спрайтов"
+      },
+      {
+        "command": "isoScene.importTiled",
+        "title": "Scene: импортировать Tiled-карту"
       }
     ],
     "menus": {
@@ -72,6 +77,11 @@
           "command": "isoScene.build",
           "when": "editorLangId == iso-scene",
           "group": "navigation"
+        },
+        {
+          "command": "isoScene.importTiled",
+          "when": "resourceExtname == .tmj",
+          "group": "navigation"
         }
       ],
       "editor/context": [
@@ -79,6 +89,18 @@
           "command": "isoScene.sprites",
           "when": "resourceExtname == .scene || resourceExtname == .model",
           "group": "iso-scene"
+        },
+        {
+          "command": "isoScene.importTiled",
+          "when": "resourceExtname == .tmj || resourceExtname == .json",
+          "group": "iso-scene"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "isoScene.importTiled",
+          "when": "resourceExtname == .tmj",
+          "group": "navigation"
         }
       ]
     },
@@ -95,6 +117,16 @@
           "default": 150,
           "minimum": 0,
           "description": "Задержка живого обновления, мс."
+        },
+        "isoScene.models": {
+          "type": "string",
+          "default": "objects",
+          "description": "Папка с .model для импорта Tiled-карт: абсолютный путь или путь относительно рабочей папки."
+        },
+        "isoScene.tiledLayers": {
+          "type": "string",
+          "default": "objects",
+          "description": "Слои Tiled, которые попадают в .scene при импорте: имена через запятую или all."
         }
       }
     }

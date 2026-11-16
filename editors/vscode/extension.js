@@ -102,10 +102,13 @@ async function render(document, tab, token) {
         const source = liveFile(document);
         const dir = path.dirname(source);
         if (tab === 'iso') {
-            const out = path.join(dir, 'iso.png');
-            await runCli(['render', source, '--base', base, '-o', out], base);
+            const images = await Promise.all([0, 90, 180, 270].map(async (degrees) => {
+                const out = path.join(dir, `iso-${degrees}.png`);
+                await runCli(['render', source, '--base', base, '--rotate', String(degrees), '-o', out], base);
+                return imageData(out);
+            }));
             if (token !== version) return;
-            panel.webview.postMessage({ type: 'render', kind: 'iso', image: imageData(out) });
+            panel.webview.postMessage({ type: 'render', kind: 'iso', images });
         } else if (tab === 'drawing') {
             const images = [];
             for (const view of ['top', 'front', 'side']) {
@@ -152,12 +155,20 @@ button{background:var(--vscode-button-secondaryBackground);color:var(--vscode-bu
 button.active{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}
 #info{padding:8px;white-space:pre-wrap;color:#9aa0a8}
 img{max-width:100%;image-rendering:pixelated;display:none}
-#image{display:block}
+#iso{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:8px;border-radius:8px;
+  background-color:#202226;
+  background-image:linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px);
+  background-size:32px 32px}
+#iso figure{margin:0;padding:8px}
+#iso img{display:block;margin:0 auto}
+#iso figcaption{text-align:center;color:#9aa0a8;font-size:12px;margin-top:4px}
 #views{display:none;grid-template-columns:repeat(3,1fr);gap:8px;padding:8px;border-radius:8px;
   background-color:#202226;
   background-image:linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),
                    linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px);
   background-size:32px 32px}
+#views img{display:block;margin:0 auto}
 #views figure{margin:0;padding:8px}
 #views figcaption{text-align:center;color:#9aa0a8;font-size:12px;margin-top:4px}
 canvas{width:100%;height:70vh;touch-action:none;display:none;background:#202226;border-radius:8px}
@@ -169,7 +180,12 @@ canvas{width:100%;height:70vh;touch-action:none;display:none;background:#202226;
   <button data-tab="voxel">Воксели</button>
 </nav>
 <div id="info">Загрузка…</div>
-<img id="image" alt="Предпросмотр">
+<div id="iso">
+  <figure><img alt="Изометрия 0°"><figcaption>0°</figcaption></figure>
+  <figure><img alt="Изометрия 90°"><figcaption>90°</figcaption></figure>
+  <figure><img alt="Изометрия 180°"><figcaption>180°</figcaption></figure>
+  <figure><img alt="Изометрия 270°"><figcaption>270°</figcaption></figure>
+</div>
 <div id="views">
   <figure><img alt="top"><figcaption>сверху (XY)</figcaption></figure>
   <figure><img alt="front"><figcaption>спереди (XZ)</figcaption></figure>
@@ -301,6 +317,99 @@ async function sprites(document) {
 
 function isScene(document) {
     return document.languageId === 'iso-scene' && document.uri.scheme === 'file';
+}
+
+function hasModels(dir) {
+    try {
+        return fs.readdirSync(dir).some((name) => name.endsWith('.model'));
+    } catch {
+        return false;
+    }
+}
+
+function modelCandidates(base) {
+    const configured = vscode.workspace.getConfiguration('isoScene').get('models') || 'objects';
+    const folders = (vscode.workspace.workspaceFolders || []).map((folder) => folder.uri.fsPath);
+    const candidates = [];
+    if (path.isAbsolute(configured)) {
+        candidates.push(configured);
+    } else {
+        for (const folder of folders) candidates.push(path.join(folder, configured));
+        candidates.push(path.join(base, configured));
+    }
+    candidates.push(
+        path.join(base, 'objects'),
+        path.join(base, '..', 'objects'),
+        path.join(base, '..', '..', 'objects')
+    );
+    // Walk up from the map so `game/.../out/map.json` finds the shared
+    // `objects/` folder at the repository root without extra settings.
+    let dir = path.resolve(base);
+    for (let level = 0; level < 6; level += 1) {
+        candidates.push(path.join(dir, 'objects'));
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
+}
+
+async function chooseModels(base) {
+    const found = modelCandidates(base).find(hasModels);
+    if (found) return found;
+    const value = await vscode.window.showInputBox({
+        title: 'Tiled → scene: папка с .model',
+        prompt: 'Где лежат модели, на которые ссылаются тайлы и объекты карты?',
+        value: modelCandidates(base)[0] || '',
+        validateInput: (text) => hasModels(text) ? '' : 'В папке нет файлов .model'
+    });
+    return value || undefined;
+}
+
+async function importTiled(arg) {
+    if (!vscode.workspace.isTrusted) {
+        vscode.window.showWarningMessage('Для импорта нужно доверенное рабочее пространство.');
+        return;
+    }
+    let uri = arg instanceof vscode.Uri ? arg : arg?.uri;
+    if (!uri) uri = vscode.window.activeTextEditor?.document.uri;
+    if (!uri || uri.scheme !== 'file') {
+        const picked = await vscode.window.showOpenDialog({
+            title: 'Tiled-карта (JSON)',
+            filters: { Tiled: ['tmj', 'json'] },
+            canSelectMany: false
+        });
+        if (!picked?.length) return;
+        uri = picked[0];
+    }
+    const source = uri.fsPath;
+    const base = path.dirname(source);
+    const stem = path.basename(source, path.extname(source));
+    const models = await chooseModels(base);
+    if (!models) return;
+    const layers = vscode.workspace.getConfiguration('isoScene').get('tiledLayers') || 'objects';
+    // A map that already lives in `out/` should not get `out/out/...`.
+    const parent = path.basename(base).toLowerCase() === 'out' ? base : path.join(base, 'out');
+    const outDir = path.join(parent, `${stem}-scene`);
+    output.show(true);
+    output.appendLine(`Tiled → scene: ${source}`);
+    output.appendLine(`модели: ${models}; слои: ${layers}`);
+    try {
+        const result = await runCli([
+            'import-tiled', source, '--models', models, '--layers', layers,
+            '--out', outDir, '--name', stem
+        ], base);
+        output.appendLine(result.stdout.trim());
+        const scenePath = path.join(outDir, `${stem}.scene`);
+        const document = await vscode.workspace.openTextDocument(scenePath);
+        await vscode.window.showTextDocument(document, vscode.ViewColumn.One);
+        start(document);
+        vscode.window.showInformationMessage('iso-scene: карта импортирована в ' + scenePath);
+    } catch (error) {
+        const text = String(error.message || error);
+        output.appendLine(text);
+        vscode.window.showErrorMessage('Не удалось импортировать Tiled-карту: ' + text);
+    }
 }
 
 function toRange(range) {
@@ -484,6 +593,7 @@ function activate(context) {
             if (doc.isDirty && !await doc.save()) return;
             sprites(doc);
         }),
+        vscode.commands.registerCommand('isoScene.importTiled', importTiled),
         vscode.workspace.onDidChangeTextDocument((e) => {
             if (lsp && isScene(e.document) && e.contentChanges.length > 0) {
                 lsp.notify('textDocument/didChange', {
