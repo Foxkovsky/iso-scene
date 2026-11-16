@@ -317,21 +317,35 @@ fn write_gif(
 /// # Errors
 ///
 /// Returns a readable message when `ffmpeg` is missing or exits non-zero.
-pub fn gif_to_mp4(gif: &Path, mp4: &Path) -> Result<(), String> {
+pub fn gif_to_mp4(gif: &Path, mp4: &Path, scale: u32, loops: u32) -> Result<(), String> {
+    if !(1..=16).contains(&scale) {
+        return Err(format!("MP4 scale must be in 1..=16, got {scale}"));
+    }
+    if !(1..=100).contains(&loops) {
+        return Err(format!("MP4 loops must be in 1..=100, got {loops}"));
+    }
     let ffmpeg = std::env::var("ISO_SCENE_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned());
+    let repeat = (loops - 1).to_string();
+    let filter = format!(
+        "scale=iw*{scale}:ih*{scale}:flags=neighbor,pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0:color=black"
+    );
     let status = Command::new(&ffmpeg)
         .args([
             "-y",
             "-loglevel",
             "error",
+            "-stream_loop",
+            &repeat,
             "-i",
             &gif.to_string_lossy(),
             "-movflags",
             "+faststart",
             "-pix_fmt",
             "yuv420p",
+            "-q:v",
+            "2",
             "-vf",
-            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            &filter,
             &mp4.to_string_lossy(),
         ])
         .status()

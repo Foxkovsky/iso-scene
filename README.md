@@ -163,7 +163,7 @@ halo around those pixels; SVG and orthographic views keep the flat image.
 | `render scene -o out.png` / `out.svg` | iso or orthographic PNG, iso SVG |
 | `voxel scene -o out.vox` | MagicaVoxel model, split into chunks past 256 per axis |
 | `sprites a.model b.scene --views 8 --atlas` | sprite sheet, `sheet.json`, Tiled tilesets, Phaser/PixiJS atlas |
-| `animate scene` | each `animation` as a strip, GIF, animated Tiled tile and a map; `--mp4` via ffmpeg |
+| `animate scene` | each `animation` as a strip, GIF, animated Tiled tile and a map; `--mp4 --mp4-scale 3 --mp4-loops 3` via ffmpeg |
 | `tiled scene --walls room.walls` | isometric Tiled map with floor, walls, shadows, objects, collisions |
 | `check` / `eval` | diagnostics / the evaluated scene graph |
 | `help [topic]` / `limits` | one section of the spec / every limit with its error code |

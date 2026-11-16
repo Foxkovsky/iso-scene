@@ -454,7 +454,9 @@ together, so they share one size and origin. `<name>.png` is the strip,
 `<name>.gif` the same frames as an animated GIF, `<name>.tsj` a tileset
 whose first tile plays it (with a `loop` property: `false` for `once`), and
 `scene.tmj` a one-tile map. Add `--mp4` to also encode `<name>.mp4` with
-the system `ffmpeg` (`ISO_SCENE_FFMPEG` overrides the executable). Frames render in
+the system `ffmpeg` (`ISO_SCENE_FFMPEG` overrides the executable).
+`--mp4-scale 3` upscales with nearest-neighbour (crisp pixel art), and
+`--mp4-loops 3` repeats the animation three times in the video. Frames render in
 parallel after the first one has sized the strip against the limits.
 
 `iso-scene animate scene.scene --object leaf --from 0 --to 90 --frames 7 --duration 100 -o out/door`

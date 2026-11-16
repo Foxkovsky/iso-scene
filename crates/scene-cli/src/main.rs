@@ -67,9 +67,8 @@ pub(crate) fn print_help() {
     println!("                  --models <dir> --layers objects[,walls...] --scale --cell");
     println!("  animate <file>  render animations as sprite sheets, animated tiles and GIFs");
     println!("                  (--animation <name> for one, --mp4 for an ffmpeg video);");
-    println!(
-        "                  or turn one object: --object <name> --from --to --frames --duration"
-    );
+    println!("                  --mp4-scale <k> --mp4-loops <n>; or turn one object:");
+    println!("                  --object <name> --from --to --frames --duration");
     println!(
         "  sprites <file>  pack objects from .scene/.model files into a sprite sheet + JSON/TSJ"
     );

@@ -16,6 +16,8 @@ fn scene_animations(
     only: Option<&str>,
     output: &Path,
     mp4: bool,
+    mp4_scale: u32,
+    mp4_loops: u32,
 ) -> Parsed<ExitCode> {
     let declared = &loaded.scene.animations;
     if declared.is_empty() {
@@ -63,7 +65,7 @@ fn scene_animations(
         );
         if mp4 {
             let path = directory.join(format!("{}.mp4", animation.name));
-            gif_to_mp4(&report.gif, &path).map_err(usage)?;
+            gif_to_mp4(&report.gif, &path, mp4_scale, mp4_loops).map_err(usage)?;
             println!("wrote {}", path.display());
         }
     }
@@ -88,6 +90,8 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
     let mut output: Option<PathBuf> = None;
     let mut base: Option<PathBuf> = None;
     let mut mp4 = false;
+    let mut mp4_scale = 1_u32;
+    let mut mp4_loops = 1_u32;
     let mut args = Args::new(args);
     let finite = |value: &f64| value.is_finite();
     while let Some(argument) = args.next() {
@@ -97,6 +101,22 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
             "--object" => object_name = Some(args.value("--object")?),
             "--animation" => animation_name = Some(args.value("--animation")?),
             "--mp4" => mp4 = true,
+            "--mp4-scale" => {
+                mp4_scale = args.parse(
+                    "--mp4-scale",
+                    |n: &u32| (1..=16).contains(n),
+                    |v| format!("invalid MP4 scale `{v}`; use 1..=16"),
+                )?;
+                mp4 = true;
+            }
+            "--mp4-loops" => {
+                mp4_loops = args.parse(
+                    "--mp4-loops",
+                    |n: &u32| (1..=100).contains(n),
+                    |v| format!("invalid MP4 loop count `{v}`; use 1..=100"),
+                )?;
+                mp4 = true;
+            }
             "--from" => from = args.parse("--from", finite, |v| format!("invalid angle `{v}`"))?,
             "--to" => to = args.parse("--to", finite, |v| format!("invalid angle `{v}`"))?,
             "--frames" => {
@@ -132,7 +152,14 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
         PathBuf::from("out").join(stem)
     });
     if object_name.is_none() {
-        return scene_animations(&loaded, animation_name.as_deref(), &output_dir, mp4);
+        return scene_animations(
+            &loaded,
+            animation_name.as_deref(),
+            &output_dir,
+            mp4,
+            mp4_scale,
+            mp4_loops,
+        );
     }
     let index = loaded
         .scene
@@ -176,7 +203,7 @@ fn run(args: Vec<String>) -> Parsed<ExitCode> {
     );
     if mp4 {
         let path = output.join(format!("{}.mp4", options.name));
-        gif_to_mp4(&report.gif, &path).map_err(usage)?;
+        gif_to_mp4(&report.gif, &path, mp4_scale, mp4_loops).map_err(usage)?;
         println!("wrote {}", path.display());
     }
     Ok(ExitCode::SUCCESS)
