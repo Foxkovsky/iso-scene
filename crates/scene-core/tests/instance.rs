@@ -49,6 +49,74 @@ fn to_local_inverts_to_world() {
 }
 
 #[test]
+fn rotating_a_scene_is_a_rigid_quarter_turn_around_its_centre() {
+    let source = r"
+        version 1;
+        object leaf (2, 1) { box at (0, 0, 0) size (2, 1, 1); }
+        render iso;
+        scale 1;
+        place leaf at (0, 0, 0);
+    ";
+    let program = scene_syntax::parse(source).expect("parse");
+    let here = std::path::Path::new(".");
+    let mut scene = scene_core::compile_scene(&program, here, here).expect("compile");
+    scene.rotate_z(90);
+    let placed = &scene.instances[0];
+    assert!((placed.at[0] - 0.5).abs() < 1e-9, "at {:?}", placed.at);
+    assert!((placed.at[1] + 0.5).abs() < 1e-9, "at {:?}", placed.at);
+    assert_eq!(placed.rotation, 90);
+    assert!(
+        (scene.bounds.min[0] - 0.5).abs() < 1e-9,
+        "{:?}",
+        scene.bounds
+    );
+    assert!(
+        (scene.bounds.min[1] + 0.5).abs() < 1e-9,
+        "{:?}",
+        scene.bounds
+    );
+    assert!(
+        (scene.bounds.max[1] - 1.5).abs() < 1e-9,
+        "{:?}",
+        scene.bounds
+    );
+}
+
+#[test]
+fn four_quarter_turns_restore_positions_and_rotations() {
+    let source = r"
+        version 1;
+        object leaf (2, 1) { box at (0, 0, 0) size (2, 1, 1); }
+        render iso;
+        scale 1;
+        place leaf at (0, 0, 0);
+        place leaf at (10, 0, 0) rot 90;
+        place leaf at (5, 8, 2) rot 180 turn 30;
+    ";
+    let program = scene_syntax::parse(source).expect("parse");
+    let here = std::path::Path::new(".");
+    let mut scene = scene_core::compile_scene(&program, here, here).expect("compile");
+    let before: Vec<_> = scene
+        .instances
+        .iter()
+        .map(|instance| (instance.at, instance.rotation, instance.angle))
+        .collect();
+    for _ in 0..4 {
+        scene.rotate_z(90);
+    }
+    for (before, after) in before.iter().zip(&scene.instances) {
+        assert!(
+            close(before.0, after.at),
+            "{:?} != {:?}",
+            before.0,
+            after.at
+        );
+        assert_eq!(before.1, after.rotation);
+        assert!((before.2 - after.angle).abs() < 1e-9);
+    }
+}
+
+#[test]
 fn the_yaw_turns_the_same_way_after_a_quarter_turn() {
     // A point one block along local x swings by the same screen-independent
     // angle around the hinge whatever the quarter turn is.

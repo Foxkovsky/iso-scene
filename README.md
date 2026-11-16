@@ -91,6 +91,7 @@ place crate at (1.2, 0, 0) rot 90;
 iso-scene render crate.scene -o crate.png          # PNG
 iso-scene render crate.scene -o crate.svg          # SVG
 iso-scene render crate.scene --view top -o top.png # orthographic view
+iso-scene render crate.scene --rotate 90 -o side.png # another isometric side
 ```
 
 Then look at the image, change one thing, and render again.
@@ -159,13 +160,13 @@ codes are listed in the spec.
 
 ## Editors and agents
 
-**VS Code.** `editors/vscode`: live preview (iso, drawing, voxels), errors in
-Problems as you type, hover, go to definition, outline, completion, build and
-sprite-sheet commands.
+**VS Code.** `editors/vscode`: live preview (four isometric sides, drawing,
+voxels), errors in Problems as you type, hover, go to definition, outline,
+completion, build, sprite-sheet and Tiled-import commands.
 
 ```bash
 cd editors/vscode && npx @vscode/vsce package
-code --install-extension iso-scene-0.4.0.vsix
+code --install-extension iso-scene-0.5.0.vsix
 ```
 
 **Any LSP editor.** `iso-scene lsp` speaks the Language Server Protocol over

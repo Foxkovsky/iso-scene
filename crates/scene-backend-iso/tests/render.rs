@@ -7,16 +7,62 @@ use scene_backend_iso::{IsoImage, render, write_png};
 use scene_core::compile_scene;
 use scene_syntax::parse;
 
-fn render_source(source: &str) -> Result<IsoImage, scene_syntax::Diagnostic> {
+fn compile_source(source: &str) -> scene_core::SceneGraph {
     let program = parse(source).unwrap_or_else(|error| panic!("{}: {}", error.code, error.message));
     let here = Path::new(".");
-    let scene = compile_scene(&program, here, here)
-        .unwrap_or_else(|error| panic!("{}: {}", error.code, error.message));
-    render(&scene)
+    compile_scene(&program, here, here)
+        .unwrap_or_else(|error| panic!("{}: {}", error.code, error.message))
+}
+
+fn render_source(source: &str) -> Result<IsoImage, scene_syntax::Diagnostic> {
+    render(&compile_source(source))
 }
 
 fn examples() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")
+}
+
+#[test]
+fn rotating_the_scene_shows_another_side() {
+    let mut scene = compile_source(
+        r"
+        version 1;
+        object room (4, 4) { box at (0, 0, 0) size (4, 4, 1) material wood; }
+        object mark (1, 1) { box at (0, 0, 1) size (1, 1, 1) material red; }
+        render iso;
+        scale 16;
+        place room at (0, 0, 0);
+        place mark at (0, 0, 0);
+        ",
+    );
+    let front = render(&scene).expect("render front");
+    scene.rotate_z(90);
+    let side = render(&scene).expect("render side");
+    assert!(
+        (front.width, front.height, &front.rgba) != (side.width, side.height, &side.rgba),
+        "90 degrees looks the same as 0"
+    );
+}
+
+#[test]
+fn four_quarter_turns_render_the_original_pixels_again() {
+    let mut scene = compile_source(
+        r"
+        version 1;
+        object room (4, 4) { box at (0, 0, 0) size (4, 4, 1) material wood; }
+        object mark (1, 1) { box at (0, 0, 1) size (1, 1, 1) material red; }
+        render iso;
+        scale 16;
+        place room at (0, 0, 0);
+        place mark at (0, 0, 0);
+        ",
+    );
+    let front = render(&scene).expect("render");
+    for _ in 0..4 {
+        scene.rotate_z(90);
+    }
+    let again = render(&scene).expect("render again");
+    assert_eq!(front.rgba, again.rgba);
 }
 
 #[test]

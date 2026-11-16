@@ -402,6 +402,69 @@ pub struct SceneGraph {
     pub animations: Vec<SceneAnimation>,
 }
 
+impl SceneGraph {
+    /// Rotate the whole scene around the centre of its plan bounds.
+    ///
+    /// `degrees` must be a quarter turn: 0, 90, 180 or 270. Other values are
+    /// ignored, so callers can validate their own input first. The scene's
+    /// instances, their quarter turns and the bounds are updated together, so
+    /// the result is a rigid rotation: distances, heights and z-order in the
+    /// world are preserved.
+    pub fn rotate_z(&mut self, degrees: u16) {
+        let degrees = degrees % 360;
+        if !matches!(degrees, 0 | 90 | 180 | 270) || self.instances.is_empty() {
+            return;
+        }
+        let center = [
+            self.bounds.min[0].midpoint(self.bounds.max[0]),
+            self.bounds.min[1].midpoint(self.bounds.max[1]),
+        ];
+        for instance in &mut self.instances {
+            // `at` is the corner of the footprint after the quarter turn, so
+            // track the footprint's local origin through the rotation.
+            let before = anchor_offset(
+                instance.rotation,
+                instance.object.width,
+                instance.object.depth,
+            );
+            let origin = [instance.at[0] + before[0], instance.at[1] + before[1]];
+            let rotation = (instance.rotation + degrees) % 360;
+            let after = anchor_offset(rotation, instance.object.width, instance.object.depth);
+            let (x, y) = quarter_turn(origin[0] - center[0], origin[1] - center[1], degrees);
+            instance.rotation = rotation;
+            instance.at[0] = center[0] + x - after[0];
+            instance.at[1] = center[1] + y - after[1];
+        }
+        self.bounds = self
+            .instances
+            .iter()
+            .fold(Bounds::empty(), |bounds, instance| {
+                bounds.union(instance.world_bounds())
+            })
+            .or_zero();
+    }
+}
+
+/// Local origin offset produced by `rotate_xy(0, 0, width, depth, rotation)`.
+fn anchor_offset(rotation: u16, width: f64, depth: f64) -> [f64; 2] {
+    match rotation {
+        90 => [depth, 0.0],
+        180 => [width, depth],
+        270 => [0.0, width],
+        _ => [0.0, 0.0],
+    }
+}
+
+/// Exact quarter turn around the origin, keeping integer coordinates integral.
+fn quarter_turn(x: f64, y: f64, degrees: u16) -> (f64, f64) {
+    match degrees {
+        90 => (-y, x),
+        180 => (-x, -y),
+        270 => (y, -x),
+        _ => (x, y),
+    }
+}
+
 /// An `animation name (v) frames N duration D [once];` directive.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SceneAnimation {
