@@ -39,7 +39,7 @@ module.exports = {
     decal: {
         signature: 'decal "textures/image.png" at (x, y, z) size (w, h) facing +y',
         description: 'Плоское PNG на грани: экран, мел на доске, логотип. Без толщины и без освещения.',
-        snippet: 'decal "${1:textures/screen.png}" at (${2:0}, ${3:1}, ${4:0}) size (${5:1}, ${6:1}) facing ${7:+y}'
+        snippet: 'decal "${1:textures/screen.png}" at (${2:0}, ${3:1}, ${4:0}) size (${5:1}, ${6:1}) facing ${7:+y} glow ${8:0.5}'
     },
     object: {
         signature: 'object name (w, d) [origin back|center|front] { ... }',

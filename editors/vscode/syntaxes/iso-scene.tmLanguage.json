@@ -29,7 +29,7 @@
     "keywords": {
       "patterns": [
         { "name": "keyword.control.iso-scene", "match": "\\b(version|include|material|object|render|scale|canvas|sun|ambient|background|place|mirror|anchor|use|merge|origin|for|in|if|else|let|var|true|false)\\b" },
-        { "name": "keyword.other.iso-scene", "match": "\\b(box|cyl|sphere|slantbox|slantcyl|ramp|decal|at|size|radius|height|offset|rise|rot|facing|from|to|back|center|front|left|right|cell)\\b" },
+        { "name": "keyword.other.iso-scene", "match": "\\b(box|cyl|sphere|slantbox|slantcyl|ramp|decal|at|size|radius|height|offset|rise|rot|facing|glow|from|to|back|center|front|left|right|cell)\\b" },
         { "name": "constant.language.iso-scene", "match": "\\b(iso|top|front|side|transparent)\\b" }
       ]
     },
