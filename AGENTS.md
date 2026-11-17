@@ -53,6 +53,15 @@ Pixels are the output, so check them, not only the exit code:
    rasterize with `tmxrasterizer`; compare with `preview.png`.
 3. **Fix** one thing, then build and look again.
 
+For materials, check more than the silhouette:
+
+- a PNG albedo (`[texture].image`) must not stretch, repeat into a visible seam
+  or rely on alpha (the engine treats it as opaque);
+- `outline_width` is in screen pixels (`0..=8`); a thick line must not swallow
+  1 px details; `0` is an explicit choice;
+- a scene `floor <material>;` is drawn in iso/SVG/ortho and supplies the Tiled
+  floor tile; without it the Tiled floor is the neutral grey grid.
+
 Use `iso-scene help <topic>` for one section of the spec and
 `iso-scene limits` for every limit instead of reading all of `docs/spec.md`.
 With MCP (`iso-scene mcp`), the `check`, `render`, `help` and `limits` tools
@@ -93,7 +102,11 @@ asset pipelines. Speed is a feature with the same weight as correctness.
 ## Current state
 
 - Specification: draft v1.
-- Implementation: lexer, parser, evaluator, iso/ortho backends, TOML materials, voxel/Tiled export, walls, scene animations, a language server (`iso-scene lsp`) and an MCP server (`iso-scene mcp`, see `docs/servers.md`).
+- Implementation: lexer, parser, evaluator, iso/ortho backends, TOML materials
+  (flat tones, procedural wood/fabric/glass, PNG albedo images, outline width,
+  emission/glow), optional scene floor, voxel/Tiled export, walls, scene
+  animations, a language server (`iso-scene lsp`) and an MCP server
+  (`iso-scene mcp`, see `docs/servers.md`).
 - Tests: lexer, parser, evaluator, iso/ortho projections and renders, examples, CLI. Generated PNGs are not committed.
 
 ## Adding a feature
