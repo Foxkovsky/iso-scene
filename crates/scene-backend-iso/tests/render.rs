@@ -428,3 +428,93 @@ fn contact_shadow_style_changes_the_sprite() {
     .expect("custom sprite");
     assert_ne!(reference.image.rgba, custom.image.rgba);
 }
+
+#[test]
+fn image_textures_and_outline_width_render() {
+    let dir = std::env::temp_dir().join(format!("iso-scene-texture-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let mut rgba = vec![0_u8; 8 * 8 * 4];
+    for y in 0..8 {
+        for x in 0..8 {
+            let index = (y * 8 + x) * 4;
+            let color = if (x / 2 + y / 2) % 2 == 0 {
+                [220, 60, 40, 255]
+            } else {
+                [40, 80, 200, 255]
+            };
+            rgba[index..index + 4].copy_from_slice(&color);
+        }
+    }
+    scene_render::write_png(
+        &scene_render::Image {
+            width: 8,
+            height: 8,
+            rgba,
+        },
+        &dir.join("checker.png"),
+    )
+    .unwrap();
+    for (name, width) in [("thin", 1.0), ("wide", 4.0)] {
+        fs::write(
+            dir.join(format!("{name}.toml")),
+            format!(
+                "name = \"{name}\"\ncolor = \"#FFFFFF\"\noutline = \"#101010\"\noutline_width = {width}\nspecular = 0.0\n[texture]\nimage = \"checker.png\"\nscale = 1.0\n"
+            ),
+        )
+        .unwrap();
+    }
+    let source = |name: &str| {
+        format!(
+            r#"
+            version 1;
+            material {name} = "{name}.toml";
+            object crate (2, 2) {{ box at (0, 0, 0) size (2, 2, 2) material {name}; }}
+            render iso;
+            scale 16;
+            place crate at (0, 0, 0);
+            "#
+        )
+    };
+    let thin = render(&compile_at(&source("thin"), &dir)).expect("thin render");
+    let wide = render(&compile_at(&source("wide"), &dir)).expect("wide render");
+    let dark = |image: &scene_backend_iso::IsoImage| {
+        image
+            .rgba
+            .chunks_exact(4)
+            .filter(|pixel| pixel[0] < 40 && pixel[1] < 40 && pixel[2] < 40)
+            .count()
+    };
+    assert!(
+        dark(&wide) > dark(&thin),
+        "outline_width did not thicken the line"
+    );
+    let has_red = thin
+        .rgba
+        .chunks_exact(4)
+        .any(|pixel| pixel[0] == 220 && pixel[1] == 60 && pixel[2] == 40);
+    let has_blue = thin
+        .rgba
+        .chunks_exact(4)
+        .any(|pixel| pixel[0] == 40 && pixel[1] == 80 && pixel[2] == 200);
+    assert!(has_red && has_blue, "the albedo image was not sampled");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn scene_floor_is_rendered_under_objects() {
+    let plain = compile_source(
+        "version 1; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material white; } render iso; scale 8; place b at (0, 0, 0);",
+    );
+    let floored = compile_source(
+        "version 1; floor red; canvas (4, 4, 4); object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material white; } render iso; scale 8; place b at (0, 0, 0);",
+    );
+    let plain_image = render(&plain).expect("plain");
+    let floored_image = render(&floored).expect("floor");
+    assert!(floored_image.width > plain_image.width);
+    let has_floor = floored_image
+        .rgba
+        .chunks_exact(4)
+        .any(|pixel| pixel[0] > 100 && pixel[0] > pixel[1] && pixel[0] > pixel[2]);
+    assert!(has_floor, "the floor material did not paint the ground");
+}

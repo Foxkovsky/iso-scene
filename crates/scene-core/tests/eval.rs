@@ -793,3 +793,15 @@ fn shadow_and_halo_ranges_are_validated() {
     assert_eq!(compile_error(&format!("{base} halo (65, 1);")), "E0304");
     assert_eq!(compile_error(&format!("{base} halo (6, 17);")), "E0304");
 }
+
+#[test]
+fn floor_material_is_stored_and_declared_once() {
+    let scene = compile_scene_ok(
+        "version 1; render iso; scale 8; floor red; object a (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } place a at (0, 0, 0);",
+    );
+    assert_eq!(scene.floor.as_deref(), Some("red"));
+    let error = compile_error(
+        "version 1; render iso; scale 8; floor red; floor white; object a (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } place a at (0, 0, 0);",
+    );
+    assert_eq!(error, "E0303");
+}

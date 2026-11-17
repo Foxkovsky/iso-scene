@@ -69,6 +69,7 @@ fn build_demo() -> Option<scene_render::Image> {
     let graph = SceneGraph {
         shadow: scene_core::Shadow::default(),
         halo: scene_core::Halo::default(),
+        floor: None,
         render: RenderKind::Iso,
         scale: 32,
         canvas: None,

@@ -43,6 +43,12 @@ pub struct ImageMap {
     pub image: Arc<Image>,
     /// UV coordinates of the triangle's three points, in image space.
     pub uv: [[f64; 2]; 3],
+    /// Tiling: material textures wrap, decals clamp at the image edge.
+    pub repeat: bool,
+    /// Multiplied into the sampled colour; white keeps the image as is.
+    pub tint: [u8; 3],
+    /// Opaque textures ignore the image alpha byte.
+    pub opaque: bool,
     /// Bloom mask for the image, 0..=255.
     pub glow: u8,
 }
@@ -63,12 +69,13 @@ pub enum Shape {
         /// Bloom mask written with the triangle, 0..=255.
         glow: u8,
     },
-    /// A depth-tested line; `bias` is in world blocks.
+    /// A depth-tested line; `bias` is in world blocks, `width` in pixels.
     Line {
         a: [f64; 3],
         b: [f64; 3],
         color: [u8; 3],
         bias: f64,
+        width: f64,
     },
 }
 
@@ -93,11 +100,15 @@ impl Shape {
             bounds[2] = bounds[2].max(point[0]);
             bounds[3] = bounds[3].max(point[1]);
         }
+        let extra = match self {
+            Self::Line { width, .. } => (width * 0.5).ceil(),
+            Self::Triangle { .. } => 0.0,
+        };
         [
-            bounds[0].floor() - 1.0,
-            bounds[1].floor() - 1.0,
-            bounds[2].ceil() + 2.0,
-            bounds[3].ceil() + 2.0,
+            bounds[0].floor() - 1.0 - extra,
+            bounds[1].floor() - 1.0 - extra,
+            bounds[2].ceil() + 2.0 + extra,
+            bounds[3].ceil() + 2.0 + extra,
         ]
     }
 }
@@ -172,13 +183,14 @@ impl Framebuffer {
         color: [u8; 3],
         texture: Texture,
     ) {
+        let shade = (texture, world);
         self.whole()
-            .triangle(a, b, c, color, Some((texture, world)), None, 0.0, 0);
+            .triangle(a, b, c, color, Some(&shade), None, 0.0, 0);
     }
 
-    /// Draw a depth-tested line. `bias` is in world blocks.
+    /// Draw a depth-tested one-pixel line. `bias` is in world blocks.
     pub fn line(&mut self, a: [f64; 3], b: [f64; 3], color: [u8; 3], bias: f64) {
-        self.whole().line(a, b, color, bias);
+        self.whole().line(a, b, color, bias, 1.0);
     }
 
     /// Draw `shapes` in order, in parallel over horizontal bands. The result
@@ -291,8 +303,25 @@ impl Band<'_> {
                 image,
                 bias,
                 glow,
-            } => self.triangle(*a, *b, *c, *color, *shade, image.as_ref(), *bias, *glow),
-            Shape::Line { a, b, color, bias } => self.line(*a, *b, *color, *bias),
+            } => self.triangle(
+                *a,
+                *b,
+                *c,
+                *color,
+                shade.as_ref(),
+                image.as_ref(),
+                *bias,
+                *glow,
+            ),
+            Shape::Line {
+                a,
+                b,
+                color,
+                bias,
+                width,
+            } => {
+                self.line(*a, *b, *color, *bias, *width);
+            }
         }
     }
 
@@ -303,7 +332,7 @@ impl Band<'_> {
         b: [f64; 3],
         c: [f64; 3],
         base: [u8; 3],
-        shade: Option<(Texture, [[f64; 3]; 3])>,
+        shade: Option<&(Texture, [[f64; 3]; 3])>,
         image: Option<&ImageMap>,
         bias: f64,
         glow: u8,
@@ -373,16 +402,22 @@ impl Band<'_> {
                             u * map.uv[0][1] + v * map.uv[1][1] + w * map.uv[2][1],
                         ];
                         let pixel = sample(map, uv);
-                        if pixel[3] == 0 {
+                        if !map.opaque && pixel[3] == 0 {
                             continue;
                         }
+                        let tinted = [
+                            (u32::from(pixel[0]) * u32::from(map.tint[0]) / 255) as u8,
+                            (u32::from(pixel[1]) * u32::from(map.tint[1]) / 255) as u8,
+                            (u32::from(pixel[2]) * u32::from(map.tint[2]) / 255) as u8,
+                        ];
                         self.depth[index] = z;
-                        self.write_rgba(index, pixel);
-                        self.glow[index] = scale_glow(glow, pixel[3]);
+                        let alpha = if map.opaque { 255 } else { pixel[3] };
+                        self.write_rgba(index, [tinted[0], tinted[1], tinted[2], alpha]);
+                        self.glow[index] = scale_glow(glow, alpha);
                         continue;
                     }
                     self.depth[index] = z;
-                    let color = match &shade {
+                    let color = match shade {
                         Some((texture, world)) => {
                             let point = [
                                 u * world[0][0] + v * world[1][0] + w * world[2][0],
@@ -400,7 +435,30 @@ impl Band<'_> {
         }
     }
 
-    fn line(&mut self, a: [f64; 3], b: [f64; 3], color: [u8; 3], bias: f64) {
+    fn line(&mut self, a: [f64; 3], b: [f64; 3], color: [u8; 3], bias: f64, width: f64) {
+        if width <= 0.0 {
+            return;
+        }
+        let width = width.max(1.0);
+        let steps = width.ceil() as usize;
+        let half = (width - 1.0) / 2.0;
+        let delta_x = b[0] - a[0];
+        let delta_y = b[1] - a[1];
+        let length = delta_x.hypot(delta_y).max(1e-9);
+        let normal = [-delta_y / length, delta_x / length];
+        for step in 0..steps {
+            let shift = step as f64 - half;
+            let offset = [normal[0] * shift, normal[1] * shift];
+            self.line_once(
+                [a[0] + offset[0], a[1] + offset[1], a[2]],
+                [b[0] + offset[0], b[1] + offset[1], b[2]],
+                color,
+                bias,
+            );
+        }
+    }
+
+    fn line_once(&mut self, a: [f64; 3], b: [f64; 3], color: [u8; 3], bias: f64) {
         let delta_x = b[0] - a[0];
         let delta_y = b[1] - a[1];
         let samples = (delta_x.abs().max(delta_y.abs()) * 3.0).ceil().max(1.0) as usize;
@@ -479,8 +537,23 @@ fn scale_glow(glow: u8, alpha: u8) -> u8 {
 fn sample(map: &ImageMap, uv: [f64; 2]) -> [u8; 4] {
     let width = map.image.width.max(1);
     let height = map.image.height.max(1);
-    let x = (uv[0].clamp(0.0, 1.0) * f64::from(width - 1)).round() as u32;
-    let y = ((1.0 - uv[1].clamp(0.0, 1.0)) * f64::from(height - 1)).round() as u32;
+    let (u, v) = if map.repeat {
+        (uv[0].rem_euclid(1.0), uv[1].rem_euclid(1.0))
+    } else {
+        (uv[0].clamp(0.0, 1.0), uv[1].clamp(0.0, 1.0))
+    };
+    let x = if map.repeat {
+        (u * f64::from(width)).floor().min(f64::from(width - 1)) as u32
+    } else {
+        (u * f64::from(width - 1)).round() as u32
+    };
+    let y = if map.repeat {
+        ((1.0 - v) * f64::from(height))
+            .floor()
+            .min(f64::from(height - 1)) as u32
+    } else {
+        ((1.0 - v) * f64::from(height - 1)).round() as u32
+    };
     map.image.pixel(x, y)
 }
 
@@ -593,6 +666,7 @@ mod tests {
             scale: 0.4,
             strength: 0.1,
             seed: 3.0,
+            image: None,
         };
         let mut shapes = Vec::new();
         for index in 0..600 {
@@ -604,12 +678,13 @@ mod tests {
                     b,
                     color: [200, 10, 10],
                     bias: 0.05,
+                    width: 1.0,
                 }
             } else {
                 Shape::Triangle {
                     points: [a, b, c],
                     color: [(index % 255) as u8, 90, 160],
-                    shade: (index % 3 == 0).then_some((texture, [a, b, c])),
+                    shade: (index % 3 == 0).then_some((texture.clone(), [a, b, c])),
                     image: None,
                     bias: 0.0,
                     glow: 0,
@@ -633,9 +708,11 @@ mod tests {
                     shade: Some((texture, world)),
                     ..
                 } => {
-                    sequential.triangle_textured(*a, *b, *c, *world, *color, *texture);
+                    sequential.triangle_textured(*a, *b, *c, *world, *color, texture.clone());
                 }
-                Shape::Line { a, b, color, bias } => sequential.line(*a, *b, *color, *bias),
+                Shape::Line {
+                    a, b, color, bias, ..
+                } => sequential.line(*a, *b, *color, *bias),
             }
         }
         let mut parallel = Framebuffer::new(width, height, [0, 0, 0, 0]);
@@ -685,6 +762,7 @@ mod tests {
                         b,
                         color: [250, 0, 0],
                         bias: 0.05,
+                        width: 1.0,
                     }
                 } else {
                     Shape::Triangle {

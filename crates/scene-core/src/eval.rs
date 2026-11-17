@@ -294,6 +294,7 @@ impl Evaluator {
         let mut ambient = 0.35;
         let mut shadow = crate::geometry::Shadow::default();
         let mut halo = crate::geometry::Halo::default();
+        let mut floor = None;
         let mut background = Background::Transparent;
         let mut animations: Vec<SceneAnimation> = Vec::new();
         self.declare_animations(program);
@@ -345,6 +346,16 @@ impl Evaluator {
                 ItemKind::Halo(value) => {
                     halo = self.halo(value, item.span)?;
                 }
+                ItemKind::Floor(value) => {
+                    if floor.is_some() {
+                        return Err(diag(
+                            "E0303",
+                            "`floor` is declared more than once",
+                            item.span,
+                        ));
+                    }
+                    floor = Some(value.material.clone());
+                }
                 ItemKind::Background(value) => background = *value,
                 ItemKind::Animation(animation) => {
                     let declared = Self::animation(animation, &animations)?;
@@ -384,6 +395,7 @@ impl Evaluator {
             render,
             shadow,
             halo,
+            floor,
             scale,
             canvas,
             sun,

@@ -128,6 +128,7 @@ pub fn render_object_sprite_light(
     let graph = SceneGraph {
         shadow: scene_core::Shadow::default(),
         halo: scene_core::Halo::default(),
+        floor: None,
         render: match view {
             View::Top => RenderKind::Top,
             View::Front => RenderKind::Front,
@@ -155,6 +156,7 @@ pub fn render_object_sprite_light(
 /// # Errors
 ///
 /// Returns the same diagnostics as [`render`].
+#[allow(clippy::too_many_lines)]
 pub fn render_with_origin(scene: &SceneGraph) -> Result<(OrthoImage, [f64; 2]), Diagnostic> {
     let Some(view) = View::from_render(scene.render) else {
         return Err(error(
@@ -251,6 +253,7 @@ pub fn render_with_origin(scene: &SceneGraph) -> Result<(OrthoImage, [f64; 2]), 
                 b: points[(index + 1) % points.len()],
                 color: face.line,
                 bias,
+                width: face.line_width,
             });
         }
     }
@@ -292,6 +295,7 @@ struct Face {
     points: Vec<[f64; 3]>,
     color: [u8; 3],
     line: [u8; 3],
+    line_width: f64,
     outline: bool,
 }
 
@@ -306,6 +310,34 @@ fn collect_faces(
         ambient: scene.ambient,
     };
     let mut faces = Vec::new();
+    if let Some(name) = &scene.floor {
+        let palette = palette_for(Some(name), scene, palettes)?;
+        let width = scene
+            .canvas
+            .map_or(scene.bounds.max[0], |canvas| {
+                canvas[0].max(scene.bounds.max[0])
+            })
+            .max(1.0);
+        let depth = scene
+            .canvas
+            .map_or(scene.bounds.max[1], |canvas| {
+                canvas[1].max(scene.bounds.max[1])
+            })
+            .max(1.0);
+        let normal = [0.0, 0.0, 1.0];
+        faces.push(Face {
+            points: vec![
+                [0.0, 0.0, 0.0],
+                [width, 0.0, 0.0],
+                [width, depth, 0.0],
+                [0.0, depth, 0.0],
+            ],
+            color: view_color(view, &normal, &palette, light),
+            line: palette.line,
+            line_width: palette.outline_width,
+            outline: false,
+        });
+    }
     for (_, instance) in scene.ordered_instances() {
         for part in &instance.object.parts {
             if matches!(part.primitive, Primitive::Decal { .. }) {
@@ -324,8 +356,9 @@ fn collect_faces(
                     .collect();
                 faces.push(Face {
                     points,
-                    color: view_color(view, &normal, palette, light),
+                    color: view_color(view, &normal, &palette, light),
                     line: palette.line,
+                    line_width: palette.outline_width,
                     outline,
                 });
             }
@@ -337,7 +370,7 @@ fn collect_faces(
 fn view_color(
     view: View,
     normal: &[f64; 3],
-    palette: Palette,
+    palette: &Palette,
     light: scene_render::material::Light,
 ) -> [u8; 3] {
     let base = match view {
@@ -369,7 +402,7 @@ fn view_color(
             }
         }
     };
-    scene_render::material::apply_light(base, *normal, &palette, light)
+    scene_render::material::apply_light(base, *normal, palette, light)
 }
 
 fn world_point(point: [f64; 3], instance: &Instance) -> [f64; 3] {
@@ -396,7 +429,7 @@ fn palette_for(
         return Ok(palette);
     }
     if let Some(palette) = palettes.get(name) {
-        return Ok(*palette);
+        return Ok(palette.clone());
     }
     if scene.materials.contains_key(name) {
         return Err(error("E0601", format!("material `{name}` was not loaded")));

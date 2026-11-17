@@ -5,8 +5,9 @@
 
 use crate::ast::{
     Ambient, Anchor, Animation, AssignOp, Axis, Background, BinaryOp, Block, Canvas, Decal,
-    ElseBranch, Expr, ExprKind, Facing, Halo, Include, Item, ItemKind, Material, Object, Origin,
-    Program, Render, RenderKind, Scale, Shadow, Shape, Statement, StatementKind, Sun, UnaryOp,
+    ElseBranch, Expr, ExprKind, Facing, Floor, Halo, Include, Item, ItemKind, Material, Object,
+    Origin, Program, Render, RenderKind, Scale, Shadow, Shape, Statement, StatementKind, Sun,
+    UnaryOp,
 };
 use crate::{Diagnostic, Span, Token, TokenKind, lex};
 
@@ -234,6 +235,12 @@ impl Parser {
             {
                 ItemKind::Halo(self.parse_halo()?)
             }
+            // `floor material;` is contextual: `floor` may be a variable.
+            TokenKind::Ident(word)
+                if word == "floor" && matches!(self.peek_kind(1), TokenKind::Ident(_)) =>
+            {
+                ItemKind::Floor(self.parse_floor()?)
+            }
             // `animation` is contextual: `animation name (` starts the
             // directive, anything else is an ordinary statement.
             TokenKind::Ident(word)
@@ -341,6 +348,13 @@ impl Parser {
         let [reach, strength] = values;
         self.expect(&TokenKind::Semicolon, "`;`")?;
         Ok(Shadow { reach, strength })
+    }
+
+    fn parse_floor(&mut self) -> Result<Floor, Diagnostic> {
+        self.expect_word("floor")?;
+        let (material, _) = self.expect_ident("floor material")?;
+        self.expect(&TokenKind::Semicolon, "`;`")?;
+        Ok(Floor { material })
     }
 
     fn parse_halo(&mut self) -> Result<Halo, Diagnostic> {

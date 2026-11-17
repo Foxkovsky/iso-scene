@@ -34,6 +34,7 @@ pub enum ItemKind {
     Ambient(Ambient),
     Shadow(Shadow),
     Halo(Halo),
+    Floor(Floor),
     Background(Background),
     Animation(Animation),
     Statement(Box<Statement>),
@@ -121,6 +122,12 @@ pub struct Shadow {
 pub struct Halo {
     pub radius: Expr,
     pub strength: Expr,
+}
+
+/// `floor material;`
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Floor {
+    pub material: String,
 }
 
 /// `background #RRGGBB;` or `background transparent;`

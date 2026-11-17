@@ -623,3 +623,24 @@ fn a_turned_object_gets_its_own_sprite() {
     assert_eq!(turns, [0.0, 45.0]);
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn floor_material_tints_the_floor_tile() {
+    let scene = compile(
+        "version 1; floor red; object b (1, 1) { box at (0, 0, 0) size (1, 1, 1) material wood; } render iso; scale 16; place b at (0, 0, 0);",
+    );
+    let dir = temp_dir("floor");
+    export(&scene, &dir).expect("export");
+    let image = scene_render::read_png(&dir.join("floor_tile.png")).expect("floor png");
+    let center = image.pixel(image.width / 2, image.height / 2);
+    assert!(
+        center[0] > center[1] && center[0] > center[2],
+        "floor tile is not the material colour"
+    );
+    let edge = image.pixel(1, image.height / 2);
+    assert!(
+        edge[0] < center[0] && edge != center,
+        "the floor outline was overwritten by the texture"
+    );
+    let _ = fs::remove_dir_all(dir);
+}

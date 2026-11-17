@@ -44,6 +44,7 @@ pub fn model_scene(model: &scene_core::CompiledModel) -> Result<scene_core::Scen
     Ok(scene_core::SceneGraph {
         shadow: scene_core::Shadow::default(),
         halo: scene_core::Halo::default(),
+        floor: None,
         render: scene_syntax::ast::RenderKind::Iso,
         scale,
         canvas: None,

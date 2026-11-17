@@ -187,6 +187,7 @@ pub fn render_object_sprite_with_light(
         render: RenderKind::Iso,
         shadow: contact_shadow,
         halo,
+        floor: None,
         scale,
         canvas: None,
         sun: light.sun,
@@ -367,6 +368,7 @@ fn prepare(scene: &SceneGraph, margin: f64) -> Result<Prepared, Diagnostic> {
     prepare_with(scene, margin, &images)
 }
 
+#[allow(clippy::too_many_lines)]
 fn prepare_with(
     scene: &SceneGraph,
     margin: f64,
@@ -413,20 +415,50 @@ fn prepare_with(
     let mut owners = Vec::with_capacity(buffer.len() * 2);
     for (face, points) in faces.iter().zip(projected.clone()) {
         for index in 1..points.len().saturating_sub(1) {
+            let material_image = face.texture.as_ref().and_then(|texture| {
+                texture.image.as_ref().map(|image| ImageMap {
+                    image: Arc::clone(image),
+                    uv: [
+                        texture_uv(face.points[0], face.normal, texture.scale, image),
+                        texture_uv(face.points[index], face.normal, texture.scale, image),
+                        texture_uv(face.points[index + 1], face.normal, texture.scale, image),
+                    ],
+                    repeat: true,
+                    tint: face.texture_tint,
+                    opaque: true,
+                    glow: 0,
+                })
+            });
+            let procedural = face.image.is_none()
+                && face
+                    .texture
+                    .as_ref()
+                    .is_none_or(|texture| texture.image.is_none());
             shapes.push(Shape::Triangle {
                 points: [points[0], points[index], points[index + 1]],
                 color: face.color,
-                shade: face.texture.map(|texture| {
-                    (
-                        texture,
-                        [face.points[0], face.points[index], face.points[index + 1]],
-                    )
-                }),
-                image: face.image.as_ref().map(|decal| ImageMap {
-                    image: Arc::clone(&decal.image),
-                    uv: [decal.uv[0], decal.uv[index], decal.uv[index + 1]],
-                    glow: decal.glow,
-                }),
+                shade: procedural
+                    .then(|| {
+                        face.texture.clone().map(|texture| {
+                            (
+                                texture,
+                                [face.points[0], face.points[index], face.points[index + 1]],
+                            )
+                        })
+                    })
+                    .flatten(),
+                image: face
+                    .image
+                    .as_ref()
+                    .map(|decal| ImageMap {
+                        image: Arc::clone(&decal.image),
+                        uv: [decal.uv[0], decal.uv[index], decal.uv[index + 1]],
+                        repeat: false,
+                        tint: [255, 255, 255],
+                        opaque: false,
+                        glow: decal.glow,
+                    })
+                    .or(material_image),
                 bias: if face.image.is_some() {
                     DECAL_BIAS
                 } else {
@@ -450,6 +482,7 @@ fn prepare_with(
                 b: points[(index + 1) % points.len()],
                 color: face.line,
                 bias,
+                width: face.line_width,
             });
             owners.push(face.instance);
         }
@@ -661,6 +694,14 @@ pub fn render_svg(scene: &SceneGraph) -> Result<String, Diagnostic> {
         } else {
             "none".to_string()
         };
+        let width = if (face.line_width - 1.0).abs() < 1e-9 {
+            "1".to_owned()
+        } else {
+            format!("{:.3}", face.line_width)
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_owned()
+        };
         if face.outline && face.hidden.iter().any(|&hidden| hidden) {
             // Welded faces keep only their outer edges, so the stroke becomes
             // individual lines instead of one polygon outline.
@@ -676,7 +717,7 @@ pub fn render_svg(scene: &SceneGraph) -> Result<String, Diagnostic> {
                 let end = project_point(face.points[(edge + 1) % face.points.len()], scale);
                 let _ = writeln!(
                     svg,
-                    "<line x1=\"{:.3}\" y1=\"{:.3}\" x2=\"{:.3}\" y2=\"{:.3}\" stroke=\"{stroke}\" stroke-width=\"1\"/>",
+                    "<line x1=\"{:.3}\" y1=\"{:.3}\" x2=\"{:.3}\" y2=\"{:.3}\" stroke=\"{stroke}\" stroke-width=\"{width}\"/>",
                     start[0] - origin[0],
                     start[1] - origin[1],
                     end[0] - origin[0],
@@ -686,7 +727,7 @@ pub fn render_svg(scene: &SceneGraph) -> Result<String, Diagnostic> {
         } else {
             let _ = writeln!(
                 svg,
-                "<polygon points=\"{points}\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"1\" stroke-linejoin=\"round\"/>"
+                "<polygon points=\"{points}\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"{width}\" stroke-linejoin=\"round\"/>"
             );
         }
     }
@@ -938,10 +979,14 @@ struct DecalFace {
 
 struct Face {
     points: Vec<[f64; 3]>,
+    normal: [f64; 3],
     color: [u8; 3],
     line: [u8; 3],
+    line_width: f64,
     outline: bool,
     texture: Option<Texture>,
+    /// White light response for an albedo image; decals use white.
+    texture_tint: [u8; 3],
     image: Option<DecalFace>,
     /// Bloom mask, 0..=255.
     glow: u8,
@@ -985,6 +1030,7 @@ fn preload_decals(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn collect_faces(
     scene: &SceneGraph,
     palettes: &BTreeMap<String, Palette>,
@@ -1030,10 +1076,13 @@ fn collect_faces(
                         .iter()
                         .map(|point| world_point(*point, instance))
                         .collect(),
+                    normal: [0.0, 0.0, 1.0],
                     color: [255, 255, 255],
                     line: [0, 0, 0],
+                    line_width: 1.0,
                     outline: false,
                     texture: None,
+                    texture_tint: [255, 255, 255],
                     image: Some(DecalFace {
                         image,
                         uv: [[u0, 0.0], [u1, 0.0], [u1, 1.0], [u0, 1.0]],
@@ -1060,10 +1109,18 @@ fn collect_faces(
                 let hidden = vec![false; points.len()];
                 faces.push(Face {
                     points,
-                    color: iso_color(&normal, palette, light),
+                    normal,
+                    color: iso_color(&normal, &palette, light),
                     line: palette.line,
+                    line_width: palette.outline_width,
                     outline,
-                    texture: palette.texture,
+                    texture: palette.texture.clone(),
+                    texture_tint: scene_render::material::apply_light(
+                        [255, 255, 255],
+                        normal,
+                        &palette,
+                        light,
+                    ),
                     image: None,
                     glow: palette.glow,
                     group: part.group,
@@ -1072,6 +1129,47 @@ fn collect_faces(
                 });
             }
         }
+    }
+    if let Some(name) = &scene.floor {
+        let palette = palette_for(Some(name), scene, palettes)?;
+        let width = scene
+            .canvas
+            .map_or(scene.bounds.max[0], |canvas| {
+                canvas[0].max(scene.bounds.max[0])
+            })
+            .max(1.0);
+        let depth = scene
+            .canvas
+            .map_or(scene.bounds.max[1], |canvas| {
+                canvas[1].max(scene.bounds.max[1])
+            })
+            .max(1.0);
+        let normal = [0.0, 0.0, 1.0];
+        faces.push(Face {
+            points: vec![
+                [0.0, 0.0, 0.0],
+                [width, 0.0, 0.0],
+                [width, depth, 0.0],
+                [0.0, depth, 0.0],
+            ],
+            normal,
+            color: iso_color(&normal, &palette, light),
+            line: palette.line,
+            line_width: palette.outline_width,
+            outline: false,
+            texture: palette.texture.clone(),
+            texture_tint: scene_render::material::apply_light(
+                [255, 255, 255],
+                normal,
+                &palette,
+                light,
+            ),
+            image: None,
+            glow: palette.glow,
+            group: None,
+            hidden: vec![false; 4],
+            instance: 0,
+        });
     }
     weld_groups(&mut faces);
     Ok(faces)
@@ -1391,7 +1489,24 @@ fn weld_groups(faces: &mut Vec<Face>) {
     }
 }
 
-fn iso_color(normal: &[f64; 3], palette: Palette, light: scene_render::material::Light) -> [u8; 3] {
+fn texture_uv(point: [f64; 3], normal: [f64; 3], scale: f64, image: &Image) -> [f64; 2] {
+    let (u_axis, v_axis) =
+        if normal[2].abs() >= normal[0].abs() && normal[2].abs() >= normal[1].abs() {
+            (0, 1)
+        } else if normal[0].abs() >= normal[1].abs() {
+            (1, 2)
+        } else {
+            (0, 2)
+        };
+    let aspect = f64::from(image.height.max(1)) / f64::from(image.width.max(1));
+    [point[u_axis] / scale, point[v_axis] / (scale * aspect)]
+}
+
+fn iso_color(
+    normal: &[f64; 3],
+    palette: &Palette,
+    light: scene_render::material::Light,
+) -> [u8; 3] {
     if let Some(color) = palette.emission {
         return color;
     }
@@ -1402,7 +1517,7 @@ fn iso_color(normal: &[f64; 3], palette: Palette, light: scene_render::material:
     } else {
         palette.left
     };
-    scene_render::material::apply_light(base, *normal, &palette, light)
+    scene_render::material::apply_light(base, *normal, palette, light)
 }
 
 fn world_point(point: [f64; 3], instance: &Instance) -> [f64; 3] {
@@ -1429,7 +1544,7 @@ fn palette_for(
         return Ok(palette);
     }
     if let Some(palette) = palettes.get(name) {
-        return Ok(*palette);
+        return Ok(palette.clone());
     }
     if scene.materials.contains_key(name) {
         return Err(error("E0601", format!("material `{name}` was not loaded")));
@@ -1462,12 +1577,15 @@ mod tests {
         let hidden = vec![false; points.len()];
         Face {
             points,
+            normal: [0.0, 0.0, 1.0],
             color: [128, 128, 128],
             line: [30, 32, 38],
+            line_width: 1.0,
             outline: true,
             group: None,
             hidden,
             texture: None,
+            texture_tint: [255, 255, 255],
             image: None,
             glow: 0,
             instance: 0,

@@ -14,7 +14,18 @@ by the ratio of its Lambert term to the reference `(135, 45)`/`0.35`, so the
 default light keeps the palette pixels. `specular` adds a sun highlight to lit
 faces, `metallic` tints it with the base colour and lowers the diffuse by up to
 25%, `roughness` sharpens the highlight; all default to `0.5`/`0`/`0`, which is
-flat shading without a highlight. Texture blocks are accepted but ignored.
+flat shading without a highlight. A `[texture]` block is either a procedural
+`wood`/`fabric`/`glass` pattern or an `image` PNG albedo tiled in world space;
+the image replaces the face tone and is multiplied by the scene light. Image
+textures are nearest-neighbour, opaque, and available in the isometric PNG,
+Tiled atlas and sprite sheets; SVG and the ortho backend stay flat.
+`outline_width` (0..=8 px, default 1) thickens or removes the outline.
+A scene may set `floor <material>;`: the iso/SVG/ortho backends draw a ground
+plane at `z = 0` over the canvas or scene bounds, and the Tiled export builds
+its floor tile from that material's top tone, texture and outline. Without it
+the Tiled floor stays the neutral grey grid. Object sprites never include the
+scene floor.
+
 `emission` replaces the visible face colour with a fixed glow colour; `glow`
 (0..=1) feeds the screen-space bloom mask. A scene sets the mask blur with
 `halo (radius, strength);`: the default `6` px / `1.6` is the reference, and a

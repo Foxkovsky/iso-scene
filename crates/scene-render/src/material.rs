@@ -1,10 +1,13 @@
 //! Flat material palettes used by the pixel-art backends.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
+use std::sync::Arc;
+
+use crate::image::{Image, read_png};
 
 /// Procedural surface texture, evaluated per pixel in world coordinates.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Texture {
     pub kind: TextureKind,
     /// `0` — x, `1` — y, `2` — z.
@@ -12,6 +15,8 @@ pub struct Texture {
     pub scale: f64,
     pub strength: f64,
     pub seed: f64,
+    /// Optional albedo image; when present it replaces the procedural pattern.
+    pub image: Option<Arc<Image>>,
 }
 
 /// Supported procedural patterns.
@@ -23,6 +28,8 @@ pub enum TextureKind {
     Fabric,
     /// Diagonal sheen bands.
     Glass,
+    /// An albedo image sampled in world space.
+    Image,
 }
 
 impl Texture {
@@ -48,6 +55,7 @@ impl Texture {
                 0.6 * (distance * TAU / spacing).sin()
                     + 0.4 * ((distance * 2.3 + 1.7) * TAU / spacing).sin()
             }
+            TextureKind::Image => 0.0,
         };
         let factor = 1.0 + self.strength * wave;
         [
@@ -59,7 +67,7 @@ impl Texture {
 }
 
 /// One tone per visible face plus an outline colour.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Palette {
     pub top: [u8; 3],
     pub right: [u8; 3],
@@ -76,6 +84,8 @@ pub struct Palette {
     pub metallic: f64,
     /// Strength of the sun highlight on lit faces; 0 keeps flat shading.
     pub specular: f64,
+    /// Outline thickness in screen pixels; the reference is 1.
+    pub outline_width: f64,
 }
 
 /// Scene lighting: the sun position and the ambient floor.
@@ -169,6 +179,7 @@ fn palette(top: [u8; 3], right: [u8; 3], left: [u8; 3], line: [u8; 3]) -> Palett
         roughness: 0.5,
         metallic: 0.0,
         specular: 0.0,
+        outline_width: 1.0,
     }
 }
 
@@ -286,7 +297,20 @@ pub fn load(path: &Path) -> Result<Palette, String> {
     palette.roughness = properties[0];
     palette.metallic = properties[1];
     palette.specular = properties[2];
-    palette.texture = parse_texture(table.get("texture"))?;
+    palette.outline_width = match table.get("outline_width") {
+        Some(value) => {
+            let number = value
+                .as_float()
+                .or_else(|| value.as_integer().map(|value| value as f64))
+                .ok_or_else(|| "`outline_width` must be a number".to_owned())?;
+            if !(0.0..=8.0).contains(&number) {
+                return Err("`outline_width` must be in 0..=8 pixels".to_owned());
+            }
+            number
+        }
+        None => 1.0,
+    };
+    palette.texture = parse_texture(table.get("texture"), path.parent())?;
     palette.emission = match table.get("emission").and_then(toml::Value::as_str) {
         Some(value) => Some(parse_hex(value)?),
         None => None,
@@ -308,23 +332,49 @@ pub fn load(path: &Path) -> Result<Palette, String> {
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn parse_texture(value: Option<&toml::Value>) -> Result<Option<Texture>, String> {
+fn parse_texture(
+    value: Option<&toml::Value>,
+    base: Option<&Path>,
+) -> Result<Option<Texture>, String> {
     let Some(value) = value else {
         return Ok(None);
     };
     let table = value
         .as_table()
         .ok_or_else(|| "`texture` must be a table".to_owned())?;
-    let kind = match table
-        .get("type")
-        .and_then(toml::Value::as_str)
-        .unwrap_or("none")
-    {
-        "none" => return Ok(None),
-        "wood" => TextureKind::Wood,
-        "fabric" => TextureKind::Fabric,
-        "glass" => TextureKind::Glass,
-        other => return Err(format!("unknown texture type `{other}`")),
+    let image = match table.get("image").and_then(toml::Value::as_str) {
+        Some(relative) => {
+            let relative_path = Path::new(relative);
+            if relative_path.is_absolute()
+                || relative_path
+                    .components()
+                    .any(|component| matches!(component, Component::ParentDir))
+            {
+                return Err(format!(
+                    "texture image `{relative}` must stay in the material directory"
+                ));
+            }
+            let full = base.unwrap_or_else(|| Path::new(".")).join(relative_path);
+            Some(Arc::new(read_png(&full).map_err(|message| {
+                format!("texture `{relative}`: {message}")
+            })?))
+        }
+        None => None,
+    };
+    let kind = if image.is_some() {
+        TextureKind::Image
+    } else {
+        match table
+            .get("type")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("none")
+        {
+            "none" => return Ok(None),
+            "wood" => TextureKind::Wood,
+            "fabric" => TextureKind::Fabric,
+            "glass" => TextureKind::Glass,
+            other => return Err(format!("unknown texture type `{other}`")),
+        }
     };
     let axis = match table
         .get("axis")
@@ -359,6 +409,7 @@ fn parse_texture(value: Option<&toml::Value>) -> Result<Option<Texture>, String>
         scale,
         strength,
         seed: number("seed", 0.0)?,
+        image,
     }))
 }
 
@@ -410,6 +461,7 @@ fn tone_pair(base: [u8; 3], line: [u8; 3]) -> Palette {
         roughness: 0.5,
         metallic: 0.0,
         specular: 0.0,
+        outline_width: 1.0,
     }
 }
 
@@ -494,6 +546,7 @@ mod tests {
             scale: 4.0,
             strength: 0.2,
             seed: 0.0,
+            image: None,
         };
         let first = texture.shade([200, 150, 100], [0.0, 0.0, 0.0]);
         let second = texture.shade([200, 150, 100], [2.0, 0.0, 0.0]);

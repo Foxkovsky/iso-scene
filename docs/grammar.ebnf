@@ -22,6 +22,7 @@ item            = include
                 | ambient
                 | shadow
                 | halo
+                | floor
                 | background
                 | animation
                 | statement ;
@@ -38,6 +39,8 @@ ambient         = "ambient", expr, ";" ;
 (* `shadow (…)` and `halo (…)` are contextual: the words are identifiers. *)
 shadow          = "shadow", "(", expr, ",", expr, ")", ";" ;
 halo            = "halo", "(", expr, ",", expr, ")", ";" ;
+(* `floor` is contextual: the word is an identifier. *)
+floor           = "floor", ident, ";" ;
 background      = "background", ( color | "transparent" ), ";" ;
 (* `animation`, `frames`, `duration` and `once` are contextual words. *)
 animation       = "animation", ident, "(", ident, ")",

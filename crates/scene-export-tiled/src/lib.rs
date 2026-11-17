@@ -20,7 +20,7 @@ pub use collision::{Collision, MAX_FOOTPRINT_CELLS};
 use rayon::prelude::*;
 use scene_backend_iso::{Sprite, project_point, render_object_sprite_at_light};
 use scene_core::SceneGraph;
-use scene_render::{Image, write_png};
+use scene_render::{Image, Palette, builtin, material, write_png};
 use scene_syntax::Diagnostic;
 use scene_syntax::ast::RenderKind;
 use scene_walls::{
@@ -312,7 +312,12 @@ pub fn export_with(
 
     let has_objects = !sprites.is_empty();
 
-    let floor = floor_image(tile_w, tile_h);
+    let floor_palette = floor_palette(scene)?;
+    let light = scene_render::material::Light {
+        sun: scene.sun,
+        ambient: scene.ambient,
+    };
+    let floor = floor_image(tile_w, tile_h, floor_palette.as_ref(), light);
     let floor_path = out_dir.join("floor_tile.png");
     write_png(&floor, &floor_path).map_err(|message| error("E0603", message))?;
 
@@ -781,7 +786,27 @@ fn write_json(path: &Path, value: &Value) -> Result<(), Diagnostic> {
     })
 }
 
-fn floor_image(width: u32, height: u32) -> Image {
+fn floor_palette(scene: &SceneGraph) -> Result<Option<Palette>, Diagnostic> {
+    let Some(name) = &scene.floor else {
+        return Ok(None);
+    };
+    if let Some(palette) = builtin(name) {
+        return Ok(Some(palette));
+    }
+    let Some(path) = scene.materials.get(name) else {
+        return Err(error("E0305", format!("unknown floor material `{name}`")));
+    };
+    material::load(path)
+        .map(Some)
+        .map_err(|message| error("E0601", format!("floor material `{name}`: {message}")))
+}
+
+fn floor_image(
+    width: u32,
+    height: u32,
+    palette: Option<&Palette>,
+    light: scene_render::material::Light,
+) -> Image {
     let mut image = Image {
         width,
         height,
@@ -789,6 +814,10 @@ fn floor_image(width: u32, height: u32) -> Image {
     };
     let half_w = f64::from(width) / 2.0;
     let half_h = f64::from(height) / 2.0;
+    let top = palette.map_or([0xB9, 0xBC, 0xC1], |palette| {
+        scene_render::material::apply_light(palette.top, [0.0, 0.0, 1.0], palette, light)
+    });
+    let edge = palette.map_or([0x6E, 0x72, 0x78], |palette| palette.line);
     for y in 0..height {
         for x in 0..width {
             let dx = ((f64::from(x) + 0.5) - half_w).abs() / half_w;
@@ -797,13 +826,32 @@ fn floor_image(width: u32, height: u32) -> Image {
             if distance > 1.0 {
                 continue;
             }
-            let color = if distance > 0.94 {
-                [0x6E, 0x72, 0x78, 255]
-            } else {
-                [0xB9, 0xBC, 0xC1, 255]
-            };
+            let mut color = if distance > 0.94 { edge } else { top };
+            // The dark rim is the material outline; the texture must not paint it.
+            if distance <= 0.94 {
+                if let Some(palette) = palette {
+                    if let Some(texture) = &palette.texture {
+                        let u = f64::from(x) / f64::from(width);
+                        let v = f64::from(y) / f64::from(height);
+                        if let Some(image) = &texture.image {
+                            let tx = (u.rem_euclid(1.0) * f64::from(image.width.max(1)))
+                                .floor()
+                                .min(f64::from(image.width.saturating_sub(1)))
+                                as u32;
+                            let ty = ((1.0 - v.rem_euclid(1.0)) * f64::from(image.height.max(1)))
+                                .floor()
+                                .min(f64::from(image.height.saturating_sub(1)))
+                                as u32;
+                            let pixel = image.pixel(tx, ty);
+                            color = [pixel[0], pixel[1], pixel[2]];
+                        } else {
+                            color = texture.shade(top, [u * texture.scale, v * texture.scale, 0.0]);
+                        }
+                    }
+                }
+            }
             let index = ((y * width + x) * 4) as usize;
-            image.rgba[index..index + 4].copy_from_slice(&color);
+            image.rgba[index..index + 4].copy_from_slice(&[color[0], color[1], color[2], 255]);
         }
     }
     image

@@ -288,7 +288,7 @@ pub fn render_tiles(layout: &WallLayout, scale: u32) -> Result<WallTiles, Diagno
     };
 
     for mask in 0..16_u8 {
-        let tile = wall_tile(mask, layout.palette, s, body, tile_width, tile_height);
+        let tile = wall_tile(mask, &layout.palette, s, body, tile_width, tile_height);
         let offset = u32::from(mask) * tile_width;
         for y in 0..tile_height {
             for x in 0..tile_width {
@@ -491,7 +491,7 @@ pub fn layer_data_where(
     data
 }
 
-fn wall_tile(mask: u8, palette: Palette, s: f64, body: f64, width: u32, height: u32) -> Vec<u8> {
+fn wall_tile(mask: u8, palette: &Palette, s: f64, body: f64, width: u32, height: u32) -> Vec<u8> {
     let mut fb = Framebuffer::new(width as usize, height as usize, [0, 0, 0, 0]);
     let top = [[s, 0.0], [2.0 * s, s / 2.0], [s, s], [0.0, s / 2.0]];
     let right = [

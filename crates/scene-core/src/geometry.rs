@@ -452,6 +452,8 @@ pub struct SceneGraph {
     pub shadow: Shadow,
     /// Screen-space bloom style.
     pub halo: Halo,
+    /// Material of the optional ground plane.
+    pub floor: Option<String>,
     pub scale: u32,
     pub canvas: Option<[f64; 3]>,
     pub sun: [f64; 2],
