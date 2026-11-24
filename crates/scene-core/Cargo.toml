@@ -10,4 +10,5 @@ publish = false
 workspace = true
 
 [dependencies]
+scene-fs = { path = "../scene-fs" }
 scene-syntax = { path = "../scene-syntax" }

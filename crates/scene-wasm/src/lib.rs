@@ -19,6 +19,8 @@ use wasm_bindgen::prelude::*;
 
 /// The last rendered image; width and height are returned separately.
 static IMAGE: Mutex<Option<scene_render::Image>> = Mutex::new(None);
+/// Why the last scene render failed, or an empty string.
+static ERROR: Mutex<String> = Mutex::new(String::new());
 
 /// Render a built-in isometric box and return its RGBA bytes.
 ///
@@ -36,6 +38,77 @@ pub fn render_demo() -> Vec<u8> {
     let bytes = image.rgba.clone();
     *slot = Some(image);
     bytes
+}
+
+/// Add one file to the in-memory tree used by [`render_scene`].
+///
+/// # Errors
+///
+/// Returns an error for an empty path or a poisoned filesystem lock.
+#[wasm_bindgen]
+pub fn set_file(path: &str, bytes: Vec<u8>) -> Result<(), JsValue> {
+    scene_fs::set_file(path, bytes).map_err(|message| JsValue::from_str(&message))
+}
+
+/// Drop the in-memory files before loading another scene folder.
+#[wasm_bindgen]
+pub fn clear_files() {
+    scene_fs::clear_files();
+}
+
+/// Render a `.scene` against the files added with [`set_file`].
+///
+/// `base` is the scene file's directory; includes and material paths resolve
+/// from it. Returns RGBA bytes; read the size with [`scene_width`] and
+/// [`scene_height`], and a failure with [`scene_error`].
+#[wasm_bindgen]
+pub fn render_scene(source: &str, base: &str) -> Vec<u8> {
+    let result = (|| -> Result<scene_render::Image, String> {
+        let program = scene_syntax::parse(source)
+            .map_err(|error| format!("{}: {}", error.code, error.message))?;
+        let scene = scene_core::compile_scene(&program, Path::new(base), Path::new(""))
+            .map_err(|error| format!("{}: {}", error.code, error.message))?;
+        scene_backend_iso::render(&scene)
+            .map_err(|error| format!("{}: {}", error.code, error.message))
+    })();
+    match result {
+        Ok(image) => {
+            if let Ok(mut error) = ERROR.lock() {
+                error.clear();
+            }
+            let bytes = image.rgba.clone();
+            if let Ok(mut slot) = IMAGE.lock() {
+                *slot = Some(image);
+            }
+            bytes
+        }
+        Err(message) => {
+            if let Ok(mut error) = ERROR.lock() {
+                *error = message;
+            }
+            Vec::new()
+        }
+    }
+}
+
+/// Last [`render_scene`] error, or an empty string after success.
+#[wasm_bindgen]
+pub fn scene_error() -> String {
+    ERROR.lock().map(|error| error.clone()).unwrap_or_default()
+}
+
+/// Width of the last [`render_scene`] image in pixels.
+#[wasm_bindgen]
+#[must_use]
+pub fn scene_width() -> u32 {
+    demo_width()
+}
+
+/// Height of the last [`render_scene`] image in pixels.
+#[wasm_bindgen]
+#[must_use]
+pub fn scene_height() -> u32 {
+    demo_height()
 }
 
 /// Width of the last [`render_demo`] image in pixels.
@@ -93,14 +166,49 @@ fn build_demo() -> Option<scene_render::Image> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex as TestMutex;
+
+    static TEST_LOCK: TestMutex<()> = TestMutex::new(());
 
     #[test]
     fn the_demo_renders_a_non_empty_box() {
+        let _guard = TEST_LOCK.lock().expect("test lock");
         let bytes = render_demo();
         let width = demo_width();
         let height = demo_height();
         assert!(width > 0 && height > 0, "demo size is {width}x{height}");
         assert_eq!(bytes.len(), (width as usize) * (height as usize) * 4);
         assert!(bytes.chunks_exact(4).any(|pixel| pixel[3] == 255));
+    }
+
+    #[test]
+    fn a_scene_with_includes_and_materials_renders_from_memory() {
+        let _guard = TEST_LOCK.lock().expect("test lock");
+        scene_fs::clear_files();
+        scene_fs::set_file(
+            "box.model",
+            b"version 1; material paint = \"paint.toml\"; object box1 (1, 1) { box at (0, 0, 0) size (1, 1, 1) material paint; }".to_vec(),
+        )
+        .expect("model");
+        scene_fs::set_file(
+            "paint.toml",
+            b"color = \"#C03030\"\nspecular = 0.0\n".to_vec(),
+        )
+        .expect("material");
+        let source =
+            "version 1; include \"box.model\"; render iso; scale 8; place box1 at (0, 0, 0);";
+        let bytes = render_scene(source, "");
+        assert!(scene_error().is_empty(), "{}", scene_error());
+        assert!(scene_width() > 0 && scene_height() > 0);
+        assert_eq!(
+            bytes.len(),
+            (scene_width() as usize) * (scene_height() as usize) * 4
+        );
+        assert!(
+            bytes
+                .chunks_exact(4)
+                .any(|pixel| pixel[0] > pixel[1] && pixel[0] > pixel[2])
+        );
+        scene_fs::clear_files();
     }
 }

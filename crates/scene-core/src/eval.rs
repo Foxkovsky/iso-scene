@@ -4,7 +4,6 @@
 //! It never panics on user input; every failure is a [`Diagnostic`].
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -1534,14 +1533,14 @@ impl Evaluator {
                 span,
             ));
         }
-        let metadata = fs::metadata(&path).map_err(|error| {
+        let length = scene_fs::len(&path).map_err(|error| {
             diag(
                 "E0501",
                 format!("cannot read `{}`: {error}", path.display()),
                 span,
             )
         })?;
-        let length = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+        let length = usize::try_from(length).unwrap_or(usize::MAX);
         self.included_bytes = self.included_bytes.saturating_add(length);
         if self.included_bytes > MAX_INCLUDED_BYTES {
             return Err(diag(
@@ -1550,7 +1549,7 @@ impl Evaluator {
                 span,
             ));
         }
-        let source = fs::read_to_string(&path).map_err(|error| {
+        let source = scene_fs::read_to_string(&path).map_err(|error| {
             diag(
                 "E0501",
                 format!("cannot read `{}`: {error}", path.display()),
@@ -1719,10 +1718,10 @@ fn escapes_base(base_dir: &Path, path: &Path) -> bool {
     } else {
         base_dir
     };
-    let Ok(base) = base_dir.canonicalize() else {
+    let Ok(base) = scene_fs::canonicalize(base_dir) else {
         return false;
     };
-    matches!(path.canonicalize(), Ok(canonical) if !canonical.starts_with(&base))
+    matches!(scene_fs::canonicalize(path), Ok(canonical) if !canonical.starts_with(&base))
 }
 
 fn resolve_include(
@@ -1739,8 +1738,8 @@ fn resolve_include(
             span,
         ));
     }
-    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let resolved = base_dir.join(relative).canonicalize().map_err(|error| {
+    let root = scene_fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let resolved = scene_fs::canonicalize(&base_dir.join(relative)).map_err(|error| {
         diag(
             "E0501",
             format!("cannot resolve include `{path}`: {error}"),

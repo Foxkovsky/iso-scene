@@ -459,6 +459,7 @@ dependencies = [
 name = "scene-core"
 version = "0.1.0"
 dependencies = [
+ "scene-fs",
  "scene-syntax",
 ]
 
@@ -494,12 +495,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "scene-fs"
+version = "0.1.0"
+
+[[package]]
 name = "scene-render"
 version = "0.1.0"
 dependencies = [
  "png",
  "rayon",
  "scene-core",
+ "scene-fs",
  "toml",
 ]
 
@@ -537,6 +543,7 @@ version = "0.1.0"
 dependencies = [
  "scene-backend-iso",
  "scene-core",
+ "scene-fs",
  "scene-render",
  "scene-syntax",
  "wasm-bindgen",

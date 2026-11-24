@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 workspace = true
 
 [dependencies]
+scene-fs = { path = "../scene-fs" }
 scene-backend-iso = { path = "../scene-backend-iso" }
 scene-core = { path = "../scene-core" }
 scene-render = { path = "../scene-render" }

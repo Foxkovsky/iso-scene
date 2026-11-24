@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/scene-fs",
     "crates/scene-syntax",
     "crates/scene-core",
     "crates/scene-render",

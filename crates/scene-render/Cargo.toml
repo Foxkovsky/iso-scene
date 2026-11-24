@@ -10,6 +10,7 @@ publish = false
 workspace = true
 
 [dependencies]
+scene-fs = { path = "../scene-fs" }
 png = "0.17"
 rayon = "1.12"
 scene-core = { path = "../scene-core" }

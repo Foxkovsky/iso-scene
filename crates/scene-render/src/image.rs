@@ -1,7 +1,7 @@
 //! Shared raster image and PNG writer.
 
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufWriter, Cursor};
 use std::path::Path;
 
 use scene_core::{MAX_DECAL_PIXELS, MAX_DECAL_SIDE};
@@ -100,9 +100,9 @@ pub(crate) fn over(src: [u8; 4], dst: [u8; 4]) -> [u8; 4] {
 /// Returns a human-readable message if the file is missing, malformed or
 /// larger than the decal limits in [`scene_core`].
 pub fn read_png(path: &Path) -> Result<Image, String> {
-    let file =
-        File::open(path).map_err(|cause| format!("cannot open `{}`: {cause}", path.display()))?;
-    let mut decoder = png::Decoder::new(BufReader::new(file));
+    let bytes = scene_fs::read(path)
+        .map_err(|cause| format!("cannot open `{}`: {cause}", path.display()))?;
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_transformations(
         png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
     );

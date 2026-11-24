@@ -1,6 +1,5 @@
 //! Flat material palettes used by the pixel-art backends.
 
-use std::fs;
 use std::path::{Component, Path};
 use std::sync::Arc;
 
@@ -154,14 +153,16 @@ pub fn apply_light(color: [u8; 3], normal: [f64; 3], palette: &Palette, light: L
         let gloss = (1.0 - palette.roughness).clamp(0.0, 1.0);
         let strength = palette.specular * (0.35 + 0.65 * gloss) * dot.powf(1.0 + 4.0 * gloss);
         // A metal tints its highlight with the base colour, a dielectric with white.
+        // Each pair already sums to <= 255 in exact arithmetic; rounding can
+        // reach 256, so saturate instead of overflowing on a u8 add.
         let tint = [
-            tone(255, 1.0 - palette.metallic) + tone(color[0], palette.metallic),
-            tone(255, 1.0 - palette.metallic) + tone(color[1], palette.metallic),
-            tone(255, 1.0 - palette.metallic) + tone(color[2], palette.metallic),
+            tone(255, 1.0 - palette.metallic).saturating_add(tone(color[0], palette.metallic)),
+            tone(255, 1.0 - palette.metallic).saturating_add(tone(color[1], palette.metallic)),
+            tone(255, 1.0 - palette.metallic).saturating_add(tone(color[2], palette.metallic)),
         ];
         for (channel, target) in shaded.iter_mut().zip(tint) {
-            *channel = tone(*channel, 1.0 - strength.clamp(0.0, 1.0))
-                + tone(target, strength.clamp(0.0, 1.0));
+            let strength = strength.clamp(0.0, 1.0);
+            *channel = tone(*channel, 1.0 - strength).saturating_add(tone(target, strength));
         }
     }
     shaded
@@ -251,7 +252,7 @@ pub fn builtin(name: &str) -> Option<Palette> {
     clippy::cast_sign_loss
 )]
 pub fn load(path: &Path) -> Result<Palette, String> {
-    let text = fs::read_to_string(path)
+    let text = scene_fs::read_to_string(path)
         .map_err(|cause| format!("cannot read `{}`: {cause}", path.display()))?;
     let value: toml::Value = text
         .parse()
