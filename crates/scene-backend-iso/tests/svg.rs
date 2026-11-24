@@ -151,3 +151,36 @@ fn merge_hides_the_seam_between_same_colour_parts() {
     assert!(merged.contains("<line "), "merged faces are drawn as edges");
     assert!(!loose.contains("<line "), "loose parts keep their outlines");
 }
+
+#[test]
+fn a_floor_gets_cast_shadows_in_svg() {
+    let document = svg(r"
+        version 1;
+        floor white;
+        canvas (6, 6, 4);
+        sun (135, 45);
+        object crate (1, 1) { box at (2, 2, 0) size (1, 1, 4) material red; }
+        render iso;
+        scale 8;
+        place crate at (0, 0, 0);
+        ");
+    assert!(
+        document.contains("fill-opacity=\"0."),
+        "cast shadow polygon is missing"
+    );
+    let off = svg(r"
+        version 1;
+        floor white;
+        shadow (0.4, 0);
+        canvas (6, 6, 4);
+        sun (135, 45);
+        object crate (1, 1) { box at (2, 2, 0) size (1, 1, 4) material red; }
+        render iso;
+        scale 8;
+        place crate at (0, 0, 0);
+        ");
+    assert!(
+        !off.contains("fill-opacity"),
+        "strength 0 still emitted a shadow"
+    );
+}

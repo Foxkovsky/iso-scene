@@ -60,7 +60,7 @@ For materials, check more than the silhouette:
 - `outline_width` is in screen pixels (`0..=8`); a thick line must not swallow
   1 px details; `0` is an explicit choice;
 - a scene `floor <material>;` is drawn in iso/SVG/ortho, receives projected
-  cast shadows in the iso PNG and supplies the Tiled floor tile; without it the
+  cast shadows in the iso PNG/SVG and supplies the Tiled floor tile; without it the
   Tiled floor is the neutral grey grid.
 
 Use `iso-scene help <topic>` for one section of the spec and

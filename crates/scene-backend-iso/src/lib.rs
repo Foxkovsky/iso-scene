@@ -388,6 +388,12 @@ fn floor_extent(scene: &SceneGraph) -> Option<(f64, f64)> {
     Some((width, depth))
 }
 
+fn cast_shadow_alpha(scene: &SceneGraph) -> u8 {
+    (0.3 * scene.shadow.strength.clamp(0.0, 4.0) * 255.0)
+        .round()
+        .clamp(0.0, 255.0) as u8
+}
+
 #[allow(clippy::too_many_lines)]
 fn prepare_with(
     scene: &SceneGraph,
@@ -508,9 +514,7 @@ fn prepare_with(
             owners.push(face.instance);
         }
     }
-    let shadow_alpha = (0.3 * scene.shadow.strength.clamp(0.0, 4.0) * 255.0)
-        .round()
-        .clamp(0.0, 255.0) as u8;
+    let shadow_alpha = cast_shadow_alpha(scene);
     if shadow_alpha > 0 && floor_extent(scene).is_some() {
         for (owner, polygon) in shadows::cast_shadows(scene) {
             let projected: Vec<[f64; 3]> = polygon
@@ -681,6 +685,7 @@ pub fn write_png(image: &IsoImage, path: &Path) -> Result<(), Diagnostic> {
 ///
 /// Returns `E0604` for a non-iso scene, `E0601`/`E0605` for materials and
 /// `E0602` for an output that is too large.
+#[allow(clippy::too_many_lines)]
 pub fn render_svg(scene: &SceneGraph) -> Result<String, Diagnostic> {
     use std::fmt::Write as _;
 
@@ -773,6 +778,31 @@ pub fn render_svg(scene: &SceneGraph) -> Result<String, Diagnostic> {
                 svg,
                 "<polygon points=\"{points}\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-width=\"{width}\" stroke-linejoin=\"round\"/>"
             );
+        }
+        if face.floor {
+            let alpha = cast_shadow_alpha(scene);
+            if alpha > 0 {
+                for (_, polygon) in shadows::cast_shadows(scene) {
+                    let mut shadow_points = String::new();
+                    for (position, point) in polygon.iter().enumerate() {
+                        let projected = project_point([point[0], point[1], 0.0], scale);
+                        if position > 0 {
+                            shadow_points.push(' ');
+                        }
+                        let _ = write!(
+                            shadow_points,
+                            "{:.3},{:.3}",
+                            projected[0] - origin[0],
+                            projected[1] - origin[1]
+                        );
+                    }
+                    let _ = writeln!(
+                        svg,
+                        "<polygon points=\"{shadow_points}\" fill=\"#000000\" fill-opacity=\"{:.3}\"/>",
+                        f64::from(alpha) / 255.0
+                    );
+                }
+            }
         }
     }
     let _ = writeln!(svg, "</svg>");
@@ -1034,6 +1064,8 @@ struct Face {
     image: Option<DecalFace>,
     /// Bloom mask, 0..=255.
     glow: u8,
+    /// The scene's ground plane; the SVG inserts cast shadows after it.
+    floor: bool,
     /// Parts in one merge group are welded: internal faces and shared seams go.
     group: Option<u32>,
     hidden: Vec<bool>,
@@ -1133,6 +1165,7 @@ fn collect_faces(
                         glow: *glow,
                     }),
                     glow: *glow,
+                    floor: false,
                     group: None,
                     hidden: vec![false; 4],
                     instance: owner,
@@ -1167,6 +1200,7 @@ fn collect_faces(
                     ),
                     image: None,
                     glow: palette.glow,
+                    floor: false,
                     group: part.group,
                     hidden,
                     instance: owner,
@@ -1210,6 +1244,7 @@ fn collect_faces(
             ),
             image: None,
             glow: palette.glow,
+            floor: true,
             group: None,
             hidden: vec![false; 4],
             instance: 0,
@@ -1626,6 +1661,7 @@ mod tests {
             line: [30, 32, 38],
             line_width: 1.0,
             outline: true,
+            floor: false,
             group: None,
             hidden,
             texture: None,
