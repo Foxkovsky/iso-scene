@@ -512,7 +512,7 @@ fn prepare_with(
         .round()
         .clamp(0.0, 255.0) as u8;
     if shadow_alpha > 0 && floor_extent(scene).is_some() {
-        for polygon in shadows::cast_shadows(scene) {
+        for (owner, polygon) in shadows::cast_shadows(scene) {
             let projected: Vec<[f64; 3]> = polygon
                 .iter()
                 .map(|point| project_vertex([point[0], point[1], 0.01], scale, origin))
@@ -527,7 +527,7 @@ fn prepare_with(
                     bias: 0.0,
                     glow: 0,
                 });
-                owners.push(0);
+                owners.push(owner);
             }
         }
     }

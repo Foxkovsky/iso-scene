@@ -113,8 +113,8 @@ fn clip_rect(points: &[[f64; 2]], width: f64, depth: f64) -> Vec<[f64; 2]> {
     }
 }
 
-/// Footprint polygons in world cells for every instance that can cast.
-pub(crate) fn cast_shadows(scene: &SceneGraph) -> Vec<Vec<[f64; 2]>> {
+/// Footprint polygons in world cells, with the instance index that owns each.
+pub(crate) fn cast_shadows(scene: &SceneGraph) -> Vec<(usize, Vec<[f64; 2]>)> {
     let Some((width, depth)) = floor_extent(scene) else {
         return Vec::new();
     };
@@ -126,7 +126,7 @@ pub(crate) fn cast_shadows(scene: &SceneGraph) -> Vec<Vec<[f64; 2]>> {
     let azimuth = scene.sun[0].to_radians();
     let direction = [-azimuth.cos(), -azimuth.sin()];
     let mut shadows = Vec::new();
-    for instance in &scene.instances {
+    for (owner, instance) in scene.instances.iter().enumerate() {
         let bounds = instance.world_bounds();
         let bottom = bounds.min[2].max(0.0);
         let top = bounds.max[2];
@@ -148,7 +148,7 @@ pub(crate) fn cast_shadows(scene: &SceneGraph) -> Vec<Vec<[f64; 2]>> {
         }
         let clipped = clip_rect(&convex_hull(&points), width, depth);
         if clipped.len() >= 3 {
-            shadows.push(clipped);
+            shadows.push((owner, clipped));
         }
     }
     shadows
