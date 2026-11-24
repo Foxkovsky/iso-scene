@@ -518,3 +518,44 @@ fn scene_floor_is_rendered_under_objects() {
         .any(|pixel| pixel[0] > 100 && pixel[0] > pixel[1] && pixel[0] > pixel[2]);
     assert!(has_floor, "the floor material did not paint the ground");
 }
+
+#[test]
+fn floor_receives_cast_shadows() {
+    let source = |shadow: &str, sun: &str| {
+        format!(
+            r"
+            version 1;
+            floor white;
+            canvas (6, 6, 4);
+            {sun}
+            shadow (0.4, {shadow});
+            object crate (1, 1) {{ box at (2, 2, 0) size (1, 1, 4) material red; }}
+            render iso;
+            scale 8;
+            place crate at (0, 0, 0);
+            "
+        )
+    };
+    let lit = render(&compile_source(&source("1", "sun (135, 45);"))).expect("lit");
+    let off = render(&compile_source(&source("0", "sun (135, 45);"))).expect("off");
+    assert_ne!(
+        lit.rgba, off.rgba,
+        "shadow strength 0 did not remove the cast"
+    );
+    let noon = render(&compile_source(&source("1", "sun (135, 90);"))).expect("noon");
+    assert_ne!(
+        lit.rgba, noon.rgba,
+        "sun altitude did not change the shadow"
+    );
+    let dark = |image: &scene_backend_iso::IsoImage| {
+        image
+            .rgba
+            .chunks_exact(4)
+            .filter(|pixel| pixel[0] < 240 && pixel[1] < 240 && pixel[2] < 240)
+            .count()
+    };
+    assert!(
+        dark(&lit) > dark(&off),
+        "the floor did not receive a shadow"
+    );
+}

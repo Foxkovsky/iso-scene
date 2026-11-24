@@ -24,7 +24,11 @@ A scene may set `floor <material>;`: the iso/SVG/ortho backends draw a ground
 plane at `z = 0` over the canvas or scene bounds, and the Tiled export builds
 its floor tile from that material's top tone, texture and outline. Without it
 the Tiled floor stays the neutral grey grid. Object sprites never include the
-scene floor.
+scene floor. The isometric PNG also projects every instance's box onto the
+floor along the sun (length `height / tan(altitude)`, opacity
+`0.3 * shadow.strength`) and clips it to the floor; this cast layer is not in
+SVG, sprite sheets or the Tiled floor data, though the Tiled preview uses the
+iso renderer.
 
 `emission` replaces the visible face colour with a fixed glow colour; `glow`
 (0..=1) feeds the screen-space bloom mask. A scene sets the mask blur with

@@ -64,6 +64,8 @@ pub enum Shape {
         color: [u8; 3],
         shade: Option<(Texture, [[f64; 3]; 3])>,
         image: Option<ImageMap>,
+        /// Flat-colour opacity; images carry their own alpha.
+        alpha: u8,
         /// Added to the depth before testing; used to lift decals off a wall.
         bias: f64,
         /// Bloom mask written with the triangle, 0..=255.
@@ -169,7 +171,8 @@ impl Framebuffer {
 
     /// Fill a triangle. The third coordinate is view depth (larger is closer).
     pub fn triangle(&mut self, a: [f64; 3], b: [f64; 3], c: [f64; 3], color: [u8; 3]) {
-        self.whole().triangle(a, b, c, color, None, None, 0.0, 0);
+        self.whole()
+            .triangle(a, b, c, color, None, None, 255, 0.0, 0);
     }
 
     /// Fill a triangle and shade every pixel with a procedural texture.
@@ -185,7 +188,7 @@ impl Framebuffer {
     ) {
         let shade = (texture, world);
         self.whole()
-            .triangle(a, b, c, color, Some(&shade), None, 0.0, 0);
+            .triangle(a, b, c, color, Some(&shade), None, 255, 0.0, 0);
     }
 
     /// Draw a depth-tested one-pixel line. `bias` is in world blocks.
@@ -301,6 +304,7 @@ impl Band<'_> {
                 color,
                 shade,
                 image,
+                alpha,
                 bias,
                 glow,
             } => self.triangle(
@@ -310,6 +314,7 @@ impl Band<'_> {
                 *color,
                 shade.as_ref(),
                 image.as_ref(),
+                *alpha,
                 *bias,
                 *glow,
             ),
@@ -334,6 +339,7 @@ impl Band<'_> {
         base: [u8; 3],
         shade: Option<&(Texture, [[f64; 3]; 3])>,
         image: Option<&ImageMap>,
+        alpha: u8,
         bias: f64,
         glow: u8,
     ) {
@@ -428,7 +434,11 @@ impl Band<'_> {
                         }
                         None => base,
                     };
-                    self.write(index, color);
+                    if alpha == 255 {
+                        self.write(index, color);
+                    } else {
+                        self.write_alpha(index, color, alpha);
+                    }
                     self.glow[index] = glow;
                 }
             }
@@ -512,6 +522,18 @@ impl Band<'_> {
         self.pixels[base + 1] = color[1];
         self.pixels[base + 2] = color[2];
         self.pixels[base + 3] = 255;
+    }
+
+    fn write_alpha(&mut self, index: usize, color: [u8; 3], alpha: u8) {
+        let base = index * 4;
+        let dst = [
+            self.pixels[base],
+            self.pixels[base + 1],
+            self.pixels[base + 2],
+            self.pixels[base + 3],
+        ];
+        self.pixels[base..base + 4]
+            .copy_from_slice(&over([color[0], color[1], color[2], alpha], dst));
     }
 
     fn write_rgba(&mut self, index: usize, color: [u8; 4]) {
@@ -686,6 +708,7 @@ mod tests {
                     color: [(index % 255) as u8, 90, 160],
                     shade: (index % 3 == 0).then_some((texture.clone(), [a, b, c])),
                     image: None,
+                    alpha: 255,
                     bias: 0.0,
                     glow: 0,
                 }
@@ -770,6 +793,7 @@ mod tests {
                         color: [(index * 2) as u8, 99, 7],
                         shade: None,
                         image: None,
+                        alpha: 255,
                         bias: 0.0,
                         glow: 0,
                     }

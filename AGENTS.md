@@ -59,8 +59,9 @@ For materials, check more than the silhouette:
   or rely on alpha (the engine treats it as opaque);
 - `outline_width` is in screen pixels (`0..=8`); a thick line must not swallow
   1 px details; `0` is an explicit choice;
-- a scene `floor <material>;` is drawn in iso/SVG/ortho and supplies the Tiled
-  floor tile; without it the Tiled floor is the neutral grey grid.
+- a scene `floor <material>;` is drawn in iso/SVG/ortho, receives projected
+  cast shadows in the iso PNG and supplies the Tiled floor tile; without it the
+  Tiled floor is the neutral grey grid.
 
 Use `iso-scene help <topic>` for one section of the spec and
 `iso-scene limits` for every limit instead of reading all of `docs/spec.md`.
@@ -104,7 +105,7 @@ asset pipelines. Speed is a feature with the same weight as correctness.
 - Specification: draft v1.
 - Implementation: lexer, parser, evaluator, iso/ortho backends, TOML materials
   (flat tones, procedural wood/fabric/glass, PNG albedo images, outline width,
-  emission/glow), optional scene floor, voxel/Tiled export, walls, scene
+  emission/glow), optional scene floor with cast shadows, voxel/Tiled export, walls, scene
   animations, a language server (`iso-scene lsp`) and an MCP server
   (`iso-scene mcp`, see `docs/servers.md`).
 - Tests: lexer, parser, evaluator, iso/ortho projections and renders, examples, CLI. Generated PNGs are not committed.

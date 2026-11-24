@@ -17,6 +17,8 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 use scene_core::{CompiledObject, Instance, Primitive, SceneGraph, rotate_xy};
+mod shadows;
+
 use scene_render::{
     Framebuffer, ImageMap, MeshFace, Palette, Shape, Texture, builtin, primitive_faces, read_png,
     region_of,
@@ -368,6 +370,24 @@ fn prepare(scene: &SceneGraph, margin: f64) -> Result<Prepared, Diagnostic> {
     prepare_with(scene, margin, &images)
 }
 
+/// Floor dimensions from the canvas or scene bounds, when a floor is set.
+fn floor_extent(scene: &SceneGraph) -> Option<(f64, f64)> {
+    scene.floor.as_ref()?;
+    let width = scene
+        .canvas
+        .map_or(scene.bounds.max[0], |canvas| {
+            canvas[0].max(scene.bounds.max[0])
+        })
+        .max(1.0);
+    let depth = scene
+        .canvas
+        .map_or(scene.bounds.max[1], |canvas| {
+            canvas[1].max(scene.bounds.max[1])
+        })
+        .max(1.0);
+    Some((width, depth))
+}
+
 #[allow(clippy::too_many_lines)]
 fn prepare_with(
     scene: &SceneGraph,
@@ -459,6 +479,7 @@ fn prepare_with(
                         glow: decal.glow,
                     })
                     .or(material_image),
+                alpha: 255,
                 bias: if face.image.is_some() {
                     DECAL_BIAS
                 } else {
@@ -485,6 +506,29 @@ fn prepare_with(
                 width: face.line_width,
             });
             owners.push(face.instance);
+        }
+    }
+    let shadow_alpha = (0.3 * scene.shadow.strength.clamp(0.0, 4.0) * 255.0)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    if shadow_alpha > 0 && floor_extent(scene).is_some() {
+        for polygon in shadows::cast_shadows(scene) {
+            let projected: Vec<[f64; 3]> = polygon
+                .iter()
+                .map(|point| project_vertex([point[0], point[1], 0.01], scale, origin))
+                .collect();
+            for index in 1..projected.len().saturating_sub(1) {
+                shapes.push(Shape::Triangle {
+                    points: [projected[0], projected[index], projected[index + 1]],
+                    color: [0, 0, 0],
+                    shade: None,
+                    image: None,
+                    alpha: shadow_alpha,
+                    bias: 0.0,
+                    glow: 0,
+                });
+                owners.push(0);
+            }
         }
     }
     Ok(Prepared {
