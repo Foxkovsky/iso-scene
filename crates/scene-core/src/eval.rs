@@ -79,8 +79,7 @@ pub fn compile_scene_frame(
     animation: &str,
     frame: u32,
 ) -> Result<SceneGraph, Diagnostic> {
-    let mut evaluator = Evaluator::new(DEFAULT_FUEL);
-    evaluator.frame = Some((animation.to_owned(), frame));
+    let mut evaluator = Evaluator::new(DEFAULT_FUEL).with_frame(animation, frame);
     let mut scene = evaluator.scene(program, base_dir, root)?;
     let Some(declared) = scene.animations.iter().find(|a| a.name == animation) else {
         return Err(diag(
@@ -211,6 +210,11 @@ struct Evaluator {
 }
 
 impl Evaluator {
+    fn with_frame(mut self, animation: &str, frame: u32) -> Self {
+        self.frame = Some((animation.to_owned(), frame));
+        self
+    }
+
     fn new(fuel: u64) -> Self {
         Self {
             fuel,

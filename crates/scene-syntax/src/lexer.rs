@@ -126,6 +126,14 @@ impl<'a> Lexer<'a> {
         self.bytes.get(self.pos).copied()
     }
 
+    fn tokens(&self) -> usize {
+        self.tokens
+    }
+
+    fn count_token(&mut self) {
+        self.tokens += 1;
+    }
+
     fn peek_at(&self, offset: usize) -> Option<u8> {
         self.bytes.get(self.pos + offset).copied()
     }
@@ -470,7 +478,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
     let mut lexer = Lexer::new(source);
     let mut tokens = Vec::new();
     loop {
-        if lexer.tokens >= MAX_TOKENS {
+        if lexer.tokens() >= MAX_TOKENS {
             return Err(Diagnostic::new(
                 "E0402",
                 format!("more than {MAX_TOKENS} tokens"),
@@ -478,7 +486,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, Diagnostic> {
             ));
         }
         let token = lexer.token()?;
-        lexer.tokens += 1;
+        lexer.count_token();
         let eof = token.kind == TokenKind::Eof;
         tokens.push(token);
         if eof {

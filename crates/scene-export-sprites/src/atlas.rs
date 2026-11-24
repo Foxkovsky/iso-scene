@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 
 use crate::SheetOptions;
-use crate::layout::{Cell, Page, cell_origin};
+use crate::grid::{Cell, Page, cell_origin};
 
 /// Key of a cell in the atlas: `object/view` for a static view and
 /// `animation#frame` for an animation frame.

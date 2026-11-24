@@ -21,6 +21,7 @@
 pub mod animate;
 mod atlas;
 mod debug;
+mod grid;
 mod layout;
 mod manifest;
 #[cfg(test)]
@@ -31,7 +32,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::layout::{Cell, Job, Page, PageFiles, cell_metrics, split_view, write_page};
+use crate::grid::{Cell, Page};
+use crate::layout::{Job, PageFiles, cell_metrics, split_view, write_page};
 use crate::manifest::manifest_json;
 use rayon::prelude::*;
 use scene_backend_ortho::View;

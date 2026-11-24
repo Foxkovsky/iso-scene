@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use crate::layout::{Cell, Page, cell_origin};
+use crate::grid::{Cell, Page, cell_origin};
 use crate::{MANIFEST_FORMAT, MANIFEST_VERSION, Projection, SheetOptions};
 
 /// Degrees as a JSON number: an integer when whole, so quarter turns keep

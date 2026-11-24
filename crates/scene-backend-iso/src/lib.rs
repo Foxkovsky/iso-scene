@@ -1287,6 +1287,10 @@ impl GroupVertices {
         point.map(|value| (value / cell).floor() as i64)
     }
 
+    fn point(&self, index: usize) -> [f64; 3] {
+        self.points[index]
+    }
+
     /// Indices, in their original order, of every vertex inside the segment's
     /// bounding box widened by the tolerance; any vertex on the segment is
     /// among them.
@@ -1390,7 +1394,7 @@ fn split_group_edges(faces: &mut [Face]) {
             }
             let mut hits: Vec<(f64, [f64; 3])> = Vec::new();
             for index in group_vertices.near_segment(a, b) {
-                let vertex = &group_vertices.points[index];
+                let vertex = group_vertices.point(index);
                 if (vertex[0] - a[0]).abs() < 1e-9
                     && (vertex[1] - a[1]).abs() < 1e-9
                     && (vertex[2] - a[2]).abs() < 1e-9
@@ -1420,7 +1424,7 @@ fn split_group_edges(faces: &mut [Face]) {
                 let dy = vertex[1] - projected[1];
                 let dz = vertex[2] - projected[2];
                 if dx * dx + dy * dy + dz * dz < 1e-12 {
-                    hits.push((t, *vertex));
+                    hits.push((t, vertex));
                 }
             }
             hits.sort_by(|left, right| left.0.total_cmp(&right.0));

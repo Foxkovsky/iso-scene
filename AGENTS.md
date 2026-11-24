@@ -43,6 +43,21 @@ Before claiming success, run `cargo test --workspace` and `cargo clippy
 --workspace --all-targets -- -D warnings`. For changes that can affect speed,
 also run `make bench` (see "Performance").
 
+## Architecture lints
+
+[`deslop-please`](https://github.com/deterministic-machines/deslop-please) checks
+Rust module cycles, tangles, field leaks, shallow modules, wide directories and
+long files. It needs `rustup component add rust-analyzer`:
+
+```bash
+cargo install deslop-please
+deslop-please
+```
+
+Fix a finding from first principles: find the missing layer or narrow the
+interface. Do not add entries to a `--allow` file just to silence it; an allow
+file is only for debt that is explicitly being paid down.
+
 ## Working on scenes and renders
 
 Pixels are the output, so check them, not only the exit code:

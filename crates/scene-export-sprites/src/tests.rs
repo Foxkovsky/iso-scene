@@ -1,7 +1,8 @@
 //! Unit tests of the sprite sheet exporter.
 
 use super::*;
-use crate::layout::{Cell, footprint_pivot, split_view};
+use crate::grid::Cell;
+use crate::layout::{footprint_pivot, split_view};
 use crate::manifest::degrees_json;
 use scene_backend_iso::{Sprite, render_object_sprite_with};
 use scene_render::{Image, composite_over};

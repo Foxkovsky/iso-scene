@@ -3,7 +3,7 @@
 use scene_render::{Image, composite_over};
 
 use crate::SheetOptions;
-use crate::layout::{Page, cell_origin};
+use crate::grid::{Page, cell_origin};
 
 /// The sheet on a light background with cell borders, anchor crosses and a
 /// `name/view` (or `name#frame`) label in each cell, for checking that nothing

@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 
 use crate::SheetOptions;
-use crate::layout::Page;
+use crate::grid::Page;
 use crate::manifest::{degrees_json, view_degrees};
 
 /// Tiled layer a tileset is tuned for.
